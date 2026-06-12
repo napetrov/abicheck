@@ -552,7 +552,7 @@ IMPORT_CYCLE_ALLOWLIST: frozenset[frozenset[str]] = frozenset(
         frozenset({"cli", "cli_compare_release"}),
         frozenset({"cli", "cli_baseline"}),
         frozenset({"cli", "cli_debian_symbols"}),
-        frozenset({"cli", "cli_evidence"}),
+        frozenset({"cli", "cli_buildsource"}),
         frozenset({"cli", "cli_appcompat"}),
         frozenset({"cli", "cli_plugin"}),
         frozenset({"cli", "cli_pr_comment"}),
@@ -560,6 +560,13 @@ IMPORT_CYCLE_ALLOWLIST: frozenset[frozenset[str]] = frozenset(
         frozenset({"cli", "cli_stack"}),
         frozenset({"cli", "cli_suggest"}),
         frozenset({"cli", "cli_surface"}),
+        # TYPE_CHECKING-only typing cycle (no runtime import): AbiSnapshot
+        # annotates an embedded BuildSourcePack; pack annotates SourceGraphSummary;
+        # source_graph annotates Change from checker_types; checker_types annotates
+        # model. Every edge in this loop is under `if TYPE_CHECKING`, so it never
+        # executes — the single-artifact embed feature needs the snapshot to name
+        # the pack type.
+        frozenset({"buildsource.pack", "buildsource.source_graph", "checker_types", "model"}),
     }
 )
 

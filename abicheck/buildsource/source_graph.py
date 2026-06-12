@@ -24,7 +24,7 @@ This module implements the MVP scope of the ADR:
 - **Phase 1** — the node/edge schema, the compact ``SourceGraphSummary``
   container, content addressing, and round-trip (de)serialization.
 - **Phase 2** — :func:`build_source_graph`, which folds an ADR-029
-  :class:`~abicheck.evidence.build_evidence.BuildEvidence` into a
+  :class:`~abicheck.buildsource.build_evidence.BuildEvidence` into a
   target/source/header/compile-unit/build-option graph.
 - A structural :func:`diff_source_graph` (Phase 5 seed) that powers the
   ``compare-graph`` command for explanation and triage.
@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     from .source_abi import SourceAbiSurface, SourceEntity
 
 #: Evidence-boundary label stamped on every source-graph finding (ADR-031 D9),
-#: mirroring ``EvidenceLayer.L5_SOURCE_GRAPH``. It keeps a graph-derived risk
+#: mirroring ``DataLayer.L5_SOURCE_GRAPH``. It keeps a graph-derived risk
 #: visibly distinct from an artifact-proven shipped-ABI break (ADR-028 D3).
 EVIDENCE_TIER_L5 = "L5_SOURCE_GRAPH"
 

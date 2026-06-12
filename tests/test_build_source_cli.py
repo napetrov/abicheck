@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CLI tests for `collect-evidence`, `dump --evidence`, and
-`compare --old/--new-evidence` (ADR-028 D6 / ADR-029)."""
+"""CLI tests for `collect`, `dump --evidence`, and
+`compare --old/--new-build-info` (ADR-028 D6 / ADR-029)."""
 from __future__ import annotations
 
 import json
 
 from click.testing import CliRunner
 
+from abicheck.buildsource.pack import BuildSourcePack
 from abicheck.cli import main
-from abicheck.evidence.pack import EvidencePack
 from abicheck.model import AbiSnapshot
 from abicheck.serialization import load_snapshot, save_snapshot
 
@@ -41,11 +41,11 @@ def test_collect_evidence_creates_pack(tmp_path):
     cdb = _write_cdb(tmp_path, "c++20")
     out = tmp_path / "libfoo.evidence"
     result = CliRunner().invoke(
-        main, ["collect-evidence", "--compile-db", str(cdb), "-o", str(out)],
+        main, ["collect", "--compile-db", str(cdb), "-o", str(out)],
     )
     assert result.exit_code == 0, result.output
     assert "Evidence pack written" in result.output
-    pack = EvidencePack.load(out)
+    pack = BuildSourcePack.load(out)
     assert pack.build_evidence is not None
     assert len(pack.build_evidence.compile_units) == 1
     cov = pack.manifest.coverage_for("L3_build")
@@ -56,15 +56,15 @@ def test_collect_evidence_redacts_manifest_paths(tmp_path, monkeypatch):
     """Codex: provenance paths in manifest.json are home-redacted before write."""
     # Pretend tmp_path is under the user's home so redaction rewrites it.
     monkeypatch.setenv("HOME", str(tmp_path))
-    from abicheck.evidence.redaction import RedactionPolicy
+    from abicheck.buildsource.redaction import RedactionPolicy
     monkeypatch.setattr(
-        "abicheck.cli_evidence.DEFAULT_REDACTION",
+        "abicheck.cli_buildsource.DEFAULT_REDACTION",
         RedactionPolicy(home_replacements={str(tmp_path): "~"}),
     )
     cdb = _write_cdb(tmp_path, "c++20")
     out = tmp_path / "e"
     result = CliRunner().invoke(main, [
-        "collect-evidence", "--compile-db", str(cdb), "--binary", str(tmp_path / "libfoo.so"),
+        "collect", "--compile-db", str(cdb), "--binary", str(tmp_path / "libfoo.so"),
         "-o", str(out),
     ])
     assert result.exit_code == 0, result.output
@@ -78,14 +78,14 @@ def test_collect_evidence_redacts_manifest_paths(tmp_path, monkeypatch):
 
 def test_collect_evidence_requires_output(tmp_path):
     cdb = _write_cdb(tmp_path, "c++20")
-    result = CliRunner().invoke(main, ["collect-evidence", "--compile-db", str(cdb)])
+    result = CliRunner().invoke(main, ["collect", "--compile-db", str(cdb)])
     assert result.exit_code != 0
     assert "output" in result.output.lower() or "missing" in result.output.lower()
 
 
 def test_collect_evidence_cmake_requires_build_dir(tmp_path):
     result = CliRunner().invoke(
-        main, ["collect-evidence", "--cmake", "-o", str(tmp_path / "e")],
+        main, ["collect", "--cmake", "-o", str(tmp_path / "e")],
     )
     assert result.exit_code != 0
     assert "build-dir" in result.output
@@ -95,36 +95,52 @@ def test_dump_attach_evidence_ref(tmp_path):
     # Build an evidence pack first.
     cdb = _write_cdb(tmp_path, "c++20")
     ev_dir = tmp_path / "e"
-    CliRunner().invoke(main, ["collect-evidence", "--compile-db", str(cdb), "-o", str(ev_dir)])
+    CliRunner().invoke(main, ["collect", "--compile-db", str(cdb), "-o", str(ev_dir)])
 
     # Attach it to an existing snapshot via dump on a JSON snapshot is not
     # supported (dump takes a binary), so attach directly through the helper
     # path exercised by `dump --evidence`: load pack and to_ref.
-    pack = EvidencePack.load(ev_dir)
+    pack = BuildSourcePack.load(ev_dir)
     snap = AbiSnapshot(library="libfoo.so", version="1.0")
-    snap.evidence_pack = pack.to_ref(path_hint=str(ev_dir))
+    snap.build_source_pack = pack.to_ref(path_hint=str(ev_dir))
     out = tmp_path / "snap.json"
     save_snapshot(snap, out)
 
     reloaded = load_snapshot(out)
-    assert reloaded.evidence_pack is not None
-    assert reloaded.evidence_pack.content_hash == pack.content_hash()
+    assert reloaded.build_source_pack is not None
+    assert reloaded.build_source_pack.content_hash == pack.content_hash()
 
 
-def test_dump_invalid_evidence_dir_errors(tmp_path):
-    # A directory with no manifest is not a valid pack.
+def test_dump_empty_build_info_dir_is_noop(tmp_path):
+    # Source-tree-centric model: a plain directory with no manifest and no
+    # compile DB is a build dir that yields no L3 facts — graceful, not an error
+    # (ADR-028 D3). Nothing is embedded.
     bad = tmp_path / "bad"
     bad.mkdir()
     snap = AbiSnapshot(library="l", version="1")
     save_snapshot(snap, tmp_path / "s.json")
-    # Exercise the attach helper directly (dump needs a real binary).
+
+    from abicheck.cli_buildsource import embed_build_source
+
+    embed_build_source(snap, bad, None)
+    assert snap.build_source is None
+
+
+def test_dump_malformed_pack_dir_errors(tmp_path):
+    # A directory *with* a manifest.json is treated as a pack; a malformed one
+    # is still a hard error so a corrupt collect output is not silently ignored.
     import click
     import pytest
 
-    from abicheck.cli_evidence import attach_evidence_pack
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / "manifest.json").write_text("{ this is not json", encoding="utf-8")
+    snap = AbiSnapshot(library="l", version="1")
+
+    from abicheck.cli_buildsource import embed_build_source
 
     with pytest.raises(click.ClickException):
-        attach_evidence_pack(snap, bad)
+        embed_build_source(snap, bad, None)
 
 
 def _make_snap(tmp_path, name, version):
@@ -136,7 +152,7 @@ def _make_snap(tmp_path, name, version):
 
 def test_compare_with_source_graph_packs_runs_graph_diff(tmp_path):
     """ADR-031: two --source-graph packs drive the graph-diff wiring in
-    collect_compare_evidence (folded into the verdict pipeline). Build-only
+    diff_embedded_build_source (folded into the verdict pipeline). Build-only
     graphs yield no graph findings, but the L5 coverage must read present and
     the comparison must still succeed."""
     old_cdb = _write_cdb(tmp_path, "c++17")
@@ -144,23 +160,23 @@ def test_compare_with_source_graph_packs_runs_graph_diff(tmp_path):
     ev_old = tmp_path / "old.evidence"
     ev_new = tmp_path / "new.evidence"
     runner = CliRunner()
-    runner.invoke(main, ["collect-evidence", "--compile-db", str(old_cdb),
+    runner.invoke(main, ["collect", "--compile-db", str(old_cdb),
                          "--source-graph", "summary", "-o", str(ev_old)])
-    runner.invoke(main, ["collect-evidence", "--compile-db", str(new_cdb),
+    runner.invoke(main, ["collect", "--compile-db", str(new_cdb),
                          "--source-graph", "summary", "-o", str(ev_new)])
-    assert EvidencePack.load(ev_old).source_graph is not None
-    assert EvidencePack.load(ev_new).source_graph is not None
+    assert BuildSourcePack.load(ev_old).source_graph is not None
+    assert BuildSourcePack.load(ev_new).source_graph is not None
 
     old_snap = _make_snap(tmp_path, "old.json", "1.0")
     new_snap = _make_snap(tmp_path, "new.json", "2.0")
     result = runner.invoke(main, [
         "compare", str(old_snap), str(new_snap),
-        "--old-evidence", str(ev_old), "--new-evidence", str(ev_new),
+        "--old-build-info", str(ev_old), "--new-build-info", str(ev_new),
         "--format", "json",
     ])
     assert result.exit_code in (0, 1, 2, 4), result.output
     payload = json.loads(result.stdout)
-    cov = {row["layer"]: row for row in payload["evidence_coverage"]}
+    cov = {row["layer"]: row for row in payload["layer_coverage"]}
     assert cov["L5_source_graph"]["status"] == "present"
 
 
@@ -170,15 +186,15 @@ def test_compare_with_evidence_emits_coverage_and_findings(tmp_path):
     ev_old = tmp_path / "old.evidence"
     ev_new = tmp_path / "new.evidence"
     runner = CliRunner()
-    runner.invoke(main, ["collect-evidence", "--compile-db", str(old_cdb), "-o", str(ev_old)])
-    runner.invoke(main, ["collect-evidence", "--compile-db", str(new_cdb), "-o", str(ev_new)])
+    runner.invoke(main, ["collect", "--compile-db", str(old_cdb), "-o", str(ev_old)])
+    runner.invoke(main, ["collect", "--compile-db", str(new_cdb), "-o", str(ev_new)])
 
     old_snap = _make_snap(tmp_path, "old.json", "1.0")
     new_snap = _make_snap(tmp_path, "new.json", "2.0")
 
     result = runner.invoke(main, [
         "compare", str(old_snap), str(new_snap),
-        "--old-evidence", str(ev_old), "--new-evidence", str(ev_new),
+        "--old-build-info", str(ev_old), "--new-build-info", str(ev_new),
         "--format", "markdown",
     ])
     assert result.exit_code in (0, 2, 4), result.output
@@ -189,44 +205,65 @@ def test_compare_with_evidence_emits_coverage_and_findings(tmp_path):
     assert "COMPATIBLE_WITH_RISK" in result.stdout or "Deployment Risk" in result.stdout
 
 
-def test_compare_json_carries_evidence_coverage_block(tmp_path):
-    """ADR-028 D7: the JSON report carries a structured evidence_coverage block."""
+def test_compare_json_carries_layer_coverage_block(tmp_path):
+    """ADR-028 D7: the JSON report carries a structured layer_coverage block."""
     cdb = _write_cdb(tmp_path, "c++20")
     ev_new = tmp_path / "new.evidence"
     runner = CliRunner()
-    runner.invoke(main, ["collect-evidence", "--compile-db", str(cdb), "-o", str(ev_new)])
+    runner.invoke(main, ["collect", "--compile-db", str(cdb), "-o", str(ev_new)])
     old_snap = _make_snap(tmp_path, "old.json", "1.0")
     new_snap = _make_snap(tmp_path, "new.json", "2.0")
 
     result = runner.invoke(main, [
-        "compare", str(old_snap), str(new_snap), "--new-evidence", str(ev_new),
+        "compare", str(old_snap), str(new_snap), "--new-build-info", str(ev_new),
         "--format", "json",
     ])
     assert result.exit_code in (0, 2, 4), result.output
     payload = json.loads(result.stdout)
-    assert payload["report_schema_version"] == "1.2"
-    cov = {row["layer"]: row for row in payload["evidence_coverage"]}
+    assert payload["report_schema_version"] == "2.0"
+    cov = {row["layer"]: row for row in payload["layer_coverage"]}
     assert set(cov) >= {"L0", "L1", "L2", "L3_build", "L4_source_abi", "L5_source_graph"}
     assert cov["L3_build"]["status"] == "present"
 
 
+def test_compare_asymmetric_old_only_reports_target_not_collected(tmp_path):
+    """Only --old-build-info: the target (new) side has no build facts, so the
+    coverage table must report L3 not_collected — not reuse the old pack and
+    claim source/build checks ran for this scan (Codex review)."""
+    cdb = _write_cdb(tmp_path, "c++20")
+    ev_old = tmp_path / "old.evidence"
+    runner = CliRunner()
+    runner.invoke(main, ["collect", "--compile-db", str(cdb), "-o", str(ev_old)])
+    old_snap = _make_snap(tmp_path, "old.json", "1.0")
+    new_snap = _make_snap(tmp_path, "new.json", "2.0")
+
+    result = runner.invoke(main, [
+        "compare", str(old_snap), str(new_snap), "--old-build-info", str(ev_old),
+        "--format", "json",
+    ])
+    assert result.exit_code in (0, 2, 4), result.output
+    payload = json.loads(result.stdout)
+    cov = {row["layer"]: row for row in payload["layer_coverage"]}
+    assert cov["L3_build"]["status"] == "not_collected"
+
+
 def test_compare_json_without_evidence_omits_coverage(tmp_path):
-    """No evidence → no evidence_coverage key (additive, opt-in)."""
+    """No evidence → no layer_coverage key (additive, opt-in)."""
     old_snap = _make_snap(tmp_path, "old.json", "1.0")
     new_snap = _make_snap(tmp_path, "new.json", "2.0")
     result = CliRunner().invoke(main, ["compare", str(old_snap), str(new_snap), "--format", "json"])
     assert result.exit_code == 0, result.output
-    assert "evidence_coverage" not in json.loads(result.stdout)
+    assert "layer_coverage" not in json.loads(result.stdout)
 
 
-def test_compare_evidence_mode_without_packs_is_noted(tmp_path):
+def test_compare_collect_mode_without_packs_is_noted(tmp_path):
     old_snap = _make_snap(tmp_path, "old.json", "1.0")
     new_snap = _make_snap(tmp_path, "new.json", "2.0")
     result = CliRunner().invoke(main, [
-        "compare", str(old_snap), str(new_snap), "--evidence-mode", "build",
+        "compare", str(old_snap), str(new_snap), "--collect-mode", "build",
     ])
     assert result.exit_code in (0, 2, 4), result.output
-    assert "evidence-mode build" in result.stderr
+    assert "collect-mode build" in result.stderr
 
 
 def test_compare_without_evidence_is_unchanged(tmp_path):
@@ -249,14 +286,14 @@ def test_collect_evidence_source_abi_graceful_without_tool(tmp_path):
     cdb = _write_cdb(tmp_path, "c++17")
     out = tmp_path / "ev"
     result = CliRunner().invoke(main, [
-        "collect-evidence", "--compile-db", str(cdb),
+        "collect", "--compile-db", str(cdb),
         "--source-abi", "--source-abi-scope", "full",
         "--clang-bin", "clang-definitely-not-installed-xyz",
         "-o", str(out),
     ])
     assert result.exit_code == 0, result.output
     assert "source-only checks disabled" in result.output
-    pack = EvidencePack.load(out)
+    pack = BuildSourcePack.load(out)
     cov = pack.manifest.coverage_for("L4_source_abi")
     # Replay ran but the tool was absent → partial, not present (and not silent).
     assert cov is not None and cov.status.value == "partial"
@@ -272,11 +309,11 @@ def test_collect_evidence_source_abi_android_dump(tmp_path):
     }))
     out = tmp_path / "ev"
     result = CliRunner().invoke(main, [
-        "collect-evidence", "--source-abi", "--source-abi-extractor", "android",
+        "collect", "--source-abi", "--source-abi-extractor", "android",
         "--android-dump", str(dump), "-o", str(out),
     ])
     assert result.exit_code == 0, result.output
-    pack = EvidencePack.load(out)
+    pack = BuildSourcePack.load(out)
     assert pack.source_abi is not None
     assert any(e.qualified_name == "Foo" for e in pack.source_abi.reachable_types)
     cov = pack.manifest.coverage_for("L4_source_abi")
@@ -285,7 +322,7 @@ def test_collect_evidence_source_abi_android_dump(tmp_path):
 
 def test_collect_evidence_android_requires_dump(tmp_path):
     result = CliRunner().invoke(main, [
-        "collect-evidence", "--source-abi", "--source-abi-extractor", "android",
+        "collect", "--source-abi", "--source-abi-extractor", "android",
         "-o", str(tmp_path / "ev"),
     ])
     assert result.exit_code != 0
@@ -294,8 +331,12 @@ def test_collect_evidence_android_requires_dump(tmp_path):
 
 def _ev_with_default_arg(tmp_path, name, default):
     """Write an evidence pack whose L4 surface has one function with a default arg."""
-    from abicheck.evidence.source_abi import SourceAbiTu, SourceEntity, SourceLocation
-    from abicheck.evidence.source_link import link_source_abi
+    from abicheck.buildsource.source_abi import (
+        SourceAbiTu,
+        SourceEntity,
+        SourceLocation,
+    )
+    from abicheck.buildsource.source_link import link_source_abi
 
     ent = SourceEntity(
         id="id", kind="function", qualified_name="add", mangled_name="_Z3addii",
@@ -304,7 +345,7 @@ def _ev_with_default_arg(tmp_path, name, default):
         visibility="public_header", api_relevant=True,
     )
     tu = SourceAbiTu(tu_id="cu://a", functions=[ent], public_header_roots=["include/foo.h"])
-    pack = EvidencePack.empty(tmp_path / name)
+    pack = BuildSourcePack.empty(tmp_path / name)
     pack.source_abi = link_source_abi([tu], library="libfoo.so")
     pack.write()
     return tmp_path / name
@@ -320,7 +361,7 @@ def test_compare_source_abi_findings_and_capabilities(tmp_path):
 
     result = CliRunner().invoke(main, [
         "compare", str(old_snap), str(new_snap),
-        "--old-evidence", str(ev_old), "--new-evidence", str(ev_new),
+        "--old-build-info", str(ev_old), "--new-build-info", str(ev_new),
         "--format", "json",
     ])
     assert result.exit_code in (0, 2, 4), result.output
@@ -344,7 +385,11 @@ def test_compare_source_abi_findings_and_capabilities(tmp_path):
 
 def _fake_clang_extractor():
     """A drop-in ClangSourceExtractor replacement that needs no real clang."""
-    from abicheck.evidence.source_abi import SourceAbiTu, SourceEntity, SourceLocation
+    from abicheck.buildsource.source_abi import (
+        SourceAbiTu,
+        SourceEntity,
+        SourceLocation,
+    )
 
     class _Fake:
         name = "clang-source"
@@ -373,20 +418,20 @@ def _fake_clang_extractor():
 
 def test_collect_evidence_source_abi_success(tmp_path, monkeypatch):
     """The clang collection path writes a populated L4 surface and PRESENT row."""
-    import abicheck.evidence.source_extractors as se
+    import abicheck.buildsource.source_extractors as se
     monkeypatch.setattr(se, "ClangSourceExtractor", _fake_clang_extractor())
 
     cdb = _write_cdb(tmp_path, "c++17")
     out = tmp_path / "ev"
     result = CliRunner().invoke(main, [
-        "collect-evidence", "--compile-db", str(cdb),
+        "collect", "--compile-db", str(cdb),
         "--source-abi", "--source-abi-scope", "full",
         "--source-abi-cache", str(tmp_path / "cache"),
         "-o", str(out),
     ])
     assert result.exit_code == 0, result.output
     assert "L4 source ABI replay: clang extractor" in result.output
-    pack = EvidencePack.load(out)
+    pack = BuildSourcePack.load(out)
     assert pack.source_abi is not None
     assert any(e.qualified_name == "add" for e in pack.source_abi.reachable_declarations)
     cov = pack.manifest.coverage_for("L4_source_abi")
@@ -395,9 +440,9 @@ def test_collect_evidence_source_abi_success(tmp_path, monkeypatch):
 
 def test_include_map_for_replay_helper(monkeypatch):
     """_include_map_for_replay returns the depfile map, or None when clang is absent."""
-    import abicheck.evidence.include_graph as ig
-    from abicheck.cli_evidence import _include_map_for_replay
-    from abicheck.evidence.build_evidence import BuildEvidence
+    import abicheck.buildsource.include_graph as ig
+    from abicheck.buildsource.build_evidence import BuildEvidence
+    from abicheck.cli_buildsource import _include_map_for_replay
 
     class _Avail:
         clang_bin = "clang++"
@@ -426,8 +471,8 @@ def test_include_map_for_replay_helper(monkeypatch):
 
 def test_collect_evidence_source_abi_uses_include_graph(tmp_path, monkeypatch):
     """headers-only/changed scopes feed the depfile include map into replay."""
-    import abicheck.cli_evidence as ce
-    import abicheck.evidence.source_extractors as se
+    import abicheck.buildsource.source_extractors as se
+    import abicheck.cli_buildsource as ce
 
     monkeypatch.setattr(se, "ClangSourceExtractor", _fake_clang_extractor())
     monkeypatch.setattr(
@@ -437,12 +482,12 @@ def test_collect_evidence_source_abi_uses_include_graph(tmp_path, monkeypatch):
     cdb = _write_cdb(tmp_path, "c++17")
     out = tmp_path / "ev"
     result = CliRunner().invoke(main, [
-        "collect-evidence", "--compile-db", str(cdb),
+        "collect", "--compile-db", str(cdb),
         "--source-abi", "--source-abi-scope", "headers-only",
         "-o", str(out),
     ])
     assert result.exit_code == 0, result.output
-    pack = EvidencePack.load(out)
+    pack = BuildSourcePack.load(out)
     assert pack.source_abi is not None
     assert pack.source_abi.coverage.get("include_graph_used") is True
 
@@ -452,14 +497,14 @@ def test_collect_evidence_source_abi_castxml_unavailable(tmp_path):
     cdb = _write_cdb(tmp_path, "c++17")
     out = tmp_path / "ev"
     result = CliRunner().invoke(main, [
-        "collect-evidence", "--compile-db", str(cdb),
+        "collect", "--compile-db", str(cdb),
         "--source-abi", "--source-abi-extractor", "castxml",
         "-o", str(out),
     ])
     assert result.exit_code == 0, result.output
     # Either castxml ran (present) or it was unavailable (graceful) — both fine,
     # but the run must not crash and must record an L4 row.
-    pack = EvidencePack.load(out)
+    pack = BuildSourcePack.load(out)
     cov = pack.manifest.coverage_for("L4_source_abi")
     assert cov is not None and cov.status.value in ("present", "partial")
 
@@ -468,7 +513,7 @@ def test_collect_evidence_source_abi_without_compile_units(tmp_path):
     """--source-abi with no L3 build context reports the missing prerequisite."""
     out = tmp_path / "ev"
     result = CliRunner().invoke(main, [
-        "collect-evidence", "--source-abi", "--source-abi-extractor", "clang",
+        "collect", "--source-abi", "--source-abi-extractor", "clang",
         "-o", str(out),
     ])
     assert result.exit_code == 0, result.output
@@ -478,9 +523,112 @@ def test_collect_evidence_source_abi_without_compile_units(tmp_path):
 def test_exported_symbols_from_binary_edge_cases(tmp_path):
     from pathlib import Path
 
-    from abicheck.cli_evidence import _exported_symbols_from_binary
+    from abicheck.cli_buildsource import _exported_symbols_from_binary
     assert _exported_symbols_from_binary(None) == []
     assert _exported_symbols_from_binary(Path(tmp_path / "missing")) == []
     junk = tmp_path / "x.txt"
     junk.write_text("not a binary")
     assert _exported_symbols_from_binary(junk) == []
+
+
+# ── Source-tree-centric inline collection (ADR-028..033 amendment) ────────────
+
+
+def test_embed_build_info_compile_db_inline(tmp_path):
+    """`--build-info compile_commands.json` collects L3 inline (no pack dir)."""
+    from abicheck.cli_buildsource import embed_build_source
+
+    cdb = _write_cdb(tmp_path, "c++17")
+    snap = AbiSnapshot(library="libfoo.so", version="1")
+    embed_build_source(snap, cdb, None)
+
+    assert snap.build_source is not None
+    assert snap.build_source.build_evidence is not None
+    assert len(snap.build_source.build_evidence.compile_units) == 1
+    cov = snap.build_source.manifest.coverage_for("L3_build")
+    assert cov is not None and cov.status.value == "present"
+
+
+def test_embed_build_info_autodiscovers_compile_db_in_tree(tmp_path):
+    """A compile DB inside the --sources tree is auto-discovered for L3."""
+    from abicheck.cli_buildsource import embed_build_source
+
+    tree = tmp_path / "src"
+    tree.mkdir()
+    cdb = [{
+        "directory": str(tree),
+        "file": "foo.cpp",
+        "arguments": ["c++", "-std=c++17", "-c", "foo.cpp"],
+    }]
+    (tree / "compile_commands.json").write_text(json.dumps(cdb))
+
+    snap = AbiSnapshot(library="libfoo.so", version="1")
+    # No --build-info: the tree's compile_commands.json is found automatically.
+    embed_build_source(snap, None, tree)
+    assert snap.build_source is not None
+    assert snap.build_source.build_evidence is not None
+    assert len(snap.build_source.build_evidence.compile_units) == 1
+
+
+def test_embed_sources_without_tool_is_graceful(tmp_path):
+    """`--sources` with a compile DB but no clang yields partial L4, not abort."""
+    from abicheck.cli_buildsource import embed_build_source
+
+    tree = tmp_path / "src"
+    tree.mkdir()
+    cdb = [{
+        "directory": str(tree),
+        "file": "foo.cpp",
+        "arguments": ["c++", "-std=c++17", "-c", "foo.cpp"],
+    }]
+    (tree / "compile_commands.json").write_text(json.dumps(cdb))
+
+    snap = AbiSnapshot(library="libfoo.so", version="1")
+    # clang is almost certainly absent under the fast unit lane; replay degrades
+    # to partial coverage and the dump still succeeds (ADR-028 D3).
+    embed_build_source(snap, None, tree, clang_bin="definitely-not-a-real-clang")
+    assert snap.build_source is not None
+    l4 = snap.build_source.manifest.coverage_for("L4_source_abi")
+    assert l4 is not None and l4.status.value in ("partial", "present")
+
+
+def test_build_query_skipped_without_allow_flag(tmp_path):
+    """build.query is not executed unless --allow-build-query (ADR-032 D5)."""
+    from abicheck.buildsource.inline import BuildConfig, collect_inline_pack
+
+    tree = tmp_path / "src"
+    tree.mkdir()
+    cfg = BuildConfig(query="this-tool-should-never-run --emit", compile_db="cc.json")
+    pack = collect_inline_pack(
+        sources=tree, build_info=None, build_config=cfg, allow_build_query=False,
+    )
+    # Nothing ran, nothing discovered → no facts at all.
+    assert pack is None
+
+
+def test_merge_combines_binary_and_source_snapshots(tmp_path):
+    """`merge` keeps the binary base and folds in the source side's L3 facts."""
+    from abicheck.cli_buildsource import embed_build_source
+
+    # Source/build side: a snapshot carrying only L3 build facts.
+    src_snap = AbiSnapshot(library="libfoo.so", version="1")
+    embed_build_source(src_snap, _write_cdb(tmp_path, "c++17"), None)
+    src_path = tmp_path / "libfoo.src.json"
+    save_snapshot(src_snap, src_path)
+
+    # Binary side: a snapshot with an ABI surface (faked ELF marker) and no pack.
+    from abicheck.elf_metadata import ElfMetadata
+
+    bin_snap = AbiSnapshot(library="libfoo.so", version="1")
+    bin_snap.elf = ElfMetadata()
+    bin_path = tmp_path / "libfoo.bin.json"
+    save_snapshot(bin_snap, bin_path)
+
+    out = tmp_path / "baseline.json"
+    result = CliRunner().invoke(main, ["merge", str(bin_path), str(src_path), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+
+    merged = load_snapshot(out)
+    assert merged.elf is not None          # base ABI surface preserved
+    assert merged.build_source is not None  # source-side facts folded in
+    assert merged.build_source.build_evidence is not None

@@ -14,7 +14,7 @@
 
 """Optional source/build/graph evidence layers (ADR-028).
 
-This sub-package implements the *EvidencePack* architecture: an optional,
+This sub-package implements the *BuildSourcePack* architecture: an optional,
 content-addressed, independently-versioned artifact that augments an
 ``AbiSnapshot`` with build-context (L3), source ABI replay (L4), and
 source/implementation graph (L5) evidence.
@@ -54,8 +54,8 @@ from .extractor import (
     CollectionContext,
     CollectionMode,
     CollectionResult,
+    DataExtractor,
     DiscoveryResult,
-    EvidenceExtractor,
     ExtractorCapabilities,
     ExtractorError,
     NormalizationResult,
@@ -81,16 +81,16 @@ from .include_graph import (
     parse_depfile,
 )
 from .model import (
-    EVIDENCE_PACK_VERSION,
-    EvidenceConfidence,
-    EvidenceEntity,
-    EvidenceLayer,
-    EvidencePackManifest,
-    EvidencePackRef,
+    BUILD_SOURCE_PACK_VERSION,
+    BuildSourceEntity,
+    BuildSourceManifest,
+    BuildSourceRef,
+    DataLayer,
     ExtractorRecord,
+    LayerConfidence,
     LayerCoverage,
 )
-from .pack import EvidencePack
+from .pack import BuildSourcePack
 from .source_abi import (
     SOURCE_ABI_VERSION,
     SourceAbiSurface,
@@ -127,7 +127,7 @@ from .source_replay import (
 
 __all__ = [
     "DEFAULT_ALLOWED_ACTIONS",
-    "EVIDENCE_PACK_VERSION",
+    "BUILD_SOURCE_PACK_VERSION",
     "REPLAY_SCOPES",
     "SOURCE_ABI_VERSION",
     "SOURCE_GRAPH_VERSION",
@@ -146,13 +146,13 @@ __all__ = [
     "CollectionResult",
     "CompileUnit",
     "DiscoveryResult",
-    "EvidenceConfidence",
-    "EvidenceEntity",
-    "EvidenceExtractor",
-    "EvidenceLayer",
-    "EvidencePack",
-    "EvidencePackManifest",
-    "EvidencePackRef",
+    "LayerConfidence",
+    "BuildSourceEntity",
+    "DataExtractor",
+    "DataLayer",
+    "BuildSourcePack",
+    "BuildSourceManifest",
+    "BuildSourceRef",
     "ExternalCliExtractor",
     "ExtractorCapabilities",
     "ExtractorError",

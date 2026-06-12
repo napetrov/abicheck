@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""On-disk EvidencePack: directory layout, content addressing, I/O (ADR-028 D1, D4).
+"""On-disk BuildSourcePack: directory layout, content addressing, I/O (ADR-028 D1, D4).
 
 Layout::
 
@@ -34,12 +34,14 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .build_evidence import BuildEvidence
-from .model import EvidencePackManifest, EvidencePackRef
+from .model import BuildSourceManifest, BuildSourceRef
 from .source_abi import SourceAbiSurface
-from .source_graph import SourceGraphSummary
+
+if TYPE_CHECKING:
+    from .source_graph import SourceGraphSummary
 
 MANIFEST_NAME = "manifest.json"
 BUILD_EVIDENCE_REL = "build/build_evidence.json"
@@ -52,7 +54,7 @@ _PACK_SUBDIRS = ("build", "source", "graph", "toolchain", "raw", "normalized")
 
 
 @dataclass
-class EvidencePack:
+class BuildSourcePack:
     """In-memory view of an evidence pack rooted at ``root``.
 
     ``manifest`` is always present (Phase 0 supports an empty, manifest-only
@@ -61,7 +63,7 @@ class EvidencePack:
     """
 
     root: Path
-    manifest: EvidencePackManifest = field(default_factory=EvidencePackManifest)
+    manifest: BuildSourceManifest = field(default_factory=BuildSourceManifest)
     build_evidence: BuildEvidence | None = None
     source_abi: SourceAbiSurface | None = None
     source_graph: SourceGraphSummary | None = None
@@ -69,25 +71,25 @@ class EvidencePack:
     # -- construction -------------------------------------------------------
 
     @classmethod
-    def empty(cls, root: Path | str, abicheck_version: str = "", created_at: str = "") -> EvidencePack:
+    def empty(cls, root: Path | str, abicheck_version: str = "", created_at: str = "") -> BuildSourcePack:
         """Create a manifest-only pack in memory (not yet written)."""
-        manifest = EvidencePackManifest(
+        manifest = BuildSourceManifest(
             abicheck_version=abicheck_version,
             created_at=created_at,
         )
         return cls(root=Path(root), manifest=manifest)
 
     @classmethod
-    def load(cls, root: Path | str) -> EvidencePack:
+    def load(cls, root: Path | str) -> BuildSourcePack:
         """Load a pack from disk. Raises ``FileNotFoundError`` if no manifest."""
         root = Path(root)
         manifest_path = root / MANIFEST_NAME
         if not manifest_path.is_file():
             raise FileNotFoundError(
-                f"No evidence-pack manifest at {manifest_path}. "
-                f"Expected a directory produced by `abicheck collect-evidence`."
+                f"No build-source pack manifest at {manifest_path}. "
+                f"Expected a directory produced by `abicheck collect`."
             )
-        manifest = EvidencePackManifest.from_dict(_read_json(manifest_path))
+        manifest = BuildSourceManifest.from_dict(_read_json(manifest_path))
         build_evidence: BuildEvidence | None = None
         be_path = root / BUILD_EVIDENCE_REL
         if be_path.is_file():
@@ -99,6 +101,7 @@ class EvidencePack:
         source_graph: SourceGraphSummary | None = None
         sg_path = root / SOURCE_GRAPH_REL
         if sg_path.is_file():
+            from .source_graph import SourceGraphSummary
             source_graph = SourceGraphSummary.from_dict(_read_json(sg_path))
         return cls(
             root=root,
@@ -186,7 +189,7 @@ class EvidencePack:
         evidence collected at different times hash the same.
         """
         ident = {
-            "evidence_pack_version": self.manifest.evidence_pack_version,
+            "build_source_pack_version": self.manifest.build_source_pack_version,
             "artifacts": sorted(self.manifest.artifacts or self._artifact_digests()),
             "coverage": [c.to_dict() for c in self.manifest.coverage],
             "extractors": [e.name + "@" + e.version for e in self.manifest.extractors],
@@ -209,10 +212,53 @@ class EvidencePack:
             return True
         return recorded == self._artifact_digests()
 
-    def to_ref(self, path_hint: str = "") -> EvidencePackRef:
+    # -- inline embedding (single-artifact UX) ------------------------------
+
+    def to_embedded_dict(self) -> dict[str, Any]:
+        """Serialize the normalized facts for embedding *inline* in a snapshot.
+
+        This is the single-artifact path: instead of leaving the pack as an
+        out-of-band directory referenced by hash, the normalized L3/L4/L5 facts
+        ride inside the ``.abi.json`` so ``compare old.json new.json`` works with
+        no pack directories. Raw provenance under ``raw/`` is never embedded
+        (ADR-028 D4) — only the normalized facts that feed comparison.
+        """
+        out: dict[str, Any] = {"manifest": self.manifest.to_dict()}
+        if self.build_evidence is not None:
+            out["build_evidence"] = self.build_evidence.to_dict()
+        if self.source_abi is not None:
+            out["source_abi"] = self.source_abi.to_dict()
+        if self.source_graph is not None:
+            out["source_graph"] = self.source_graph.to_dict()
+        return out
+
+    @classmethod
+    def from_embedded_dict(cls, data: dict[str, Any], root: Path | str = "") -> BuildSourcePack:
+        """Reconstruct an in-memory pack from snapshot-embedded facts.
+
+        ``root`` is empty for an embedded pack (it has no on-disk directory).
+        Defensive ``.get()`` parsing keeps a newer/hand-edited snapshot loadable.
+        """
+        manifest = BuildSourceManifest.from_dict(data.get("manifest", {}))
+        be = data.get("build_evidence")
+        sa = data.get("source_abi")
+        sg = data.get("source_graph")
+        source_graph = None
+        if sg:
+            from .source_graph import SourceGraphSummary
+            source_graph = SourceGraphSummary.from_dict(sg)
+        return cls(
+            root=Path(root),
+            manifest=manifest,
+            build_evidence=BuildEvidence.from_dict(be) if be else None,
+            source_abi=SourceAbiSurface.from_dict(sa) if sa else None,
+            source_graph=source_graph,
+        )
+
+    def to_ref(self, path_hint: str = "") -> BuildSourceRef:
         """Build the lightweight snapshot reference (ADR-028 D8)."""
-        return EvidencePackRef(
-            schema_version=self.manifest.evidence_pack_version,
+        return BuildSourceRef(
+            schema_version=self.manifest.build_source_pack_version,
             content_hash=self.content_hash(),
             path_hint=path_hint or str(self.root),
             coverage_summary={

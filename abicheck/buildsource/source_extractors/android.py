@@ -40,7 +40,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from ..model import EvidenceConfidence
+from ..model import LayerConfidence
 from ..source_abi import SourceAbiTu, SourceEntity, SourceLocation
 from .base import SourceExtractionError
 
@@ -81,7 +81,7 @@ def _record_entity(rec: dict[str, Any]) -> SourceEntity:
         source_location=_location(_str(rec.get("source_file"))),
         visibility="public_header",
         api_relevant=True,
-        confidence=EvidenceConfidence.HIGH,
+        confidence=LayerConfidence.HIGH,
     )
 
 
@@ -101,7 +101,7 @@ def _enum_entity(en: dict[str, Any]) -> SourceEntity:
         source_location=_location(_str(en.get("source_file"))),
         visibility="public_header",
         api_relevant=True,
-        confidence=EvidenceConfidence.HIGH,
+        confidence=LayerConfidence.HIGH,
     )
 
 
@@ -122,7 +122,7 @@ def _function_entity(fn: dict[str, Any]) -> SourceEntity:
         source_location=_location(_str(fn.get("source_file"))),
         visibility="public_header",
         api_relevant=True,
-        confidence=EvidenceConfidence.HIGH,
+        confidence=LayerConfidence.HIGH,
     )
 
 
@@ -138,7 +138,7 @@ def _global_var_entity(var: dict[str, Any]) -> SourceEntity:
         source_location=_location(_str(var.get("source_file"))),
         visibility="public_header",
         api_relevant=True,
-        confidence=EvidenceConfidence.HIGH,
+        confidence=LayerConfidence.HIGH,
     )
 
 

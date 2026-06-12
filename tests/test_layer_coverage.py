@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Round-trip, edge-case, and adapter-path coverage for the EvidencePack
-modules (ADR-028 / ADR-029). Complements test_evidence_pack.py and
+"""Round-trip, edge-case, and adapter-path coverage for the BuildSourcePack
+modules (ADR-028 / ADR-029). Complements test_build_source_pack.py and
 test_evidence_cli.py."""
 from __future__ import annotations
 
@@ -21,12 +21,10 @@ import json
 
 from click.testing import CliRunner
 
-from abicheck.checker_policy import ChangeKind
-from abicheck.cli import main
-from abicheck.evidence.adapters import CMakeFileApiAdapter, NinjaAdapter
-from abicheck.evidence.adapters.base import derive_build_options
-from abicheck.evidence.build_diff import diff_build_evidence
-from abicheck.evidence.build_evidence import (
+from abicheck.buildsource.adapters import CMakeFileApiAdapter, NinjaAdapter
+from abicheck.buildsource.adapters.base import derive_build_options
+from abicheck.buildsource.build_diff import diff_build_evidence
+from abicheck.buildsource.build_evidence import (
     BuildEvidence,
     BuildOption,
     CompileUnit,
@@ -37,16 +35,18 @@ from abicheck.evidence.build_evidence import (
     TargetKind,
     Toolchain,
 )
-from abicheck.evidence.model import (
+from abicheck.buildsource.model import (
+    BuildSourceEntity,
+    BuildSourceManifest,
     CoverageStatus,
-    EvidenceConfidence,
-    EvidenceEntity,
-    EvidenceLayer,
-    EvidencePackManifest,
+    DataLayer,
     ExtractorRecord,
+    LayerConfidence,
     LayerCoverage,
 )
-from abicheck.evidence.pack import EvidencePack
+from abicheck.buildsource.pack import BuildSourcePack
+from abicheck.checker_policy import ChangeKind
+from abicheck.cli import main
 
 # ── BuildEvidence model round-trips (ADR-029 D1/D2) ──────────────────────────
 
@@ -111,13 +111,13 @@ def test_derive_build_options_dedups_across_units():
 
 
 def test_evidence_entity_roundtrip():
-    e = EvidenceEntity(
+    e = BuildSourceEntity(
         entity_id="sha256:1", kind="function",
         names={"mangled": "_Z3foov"}, locations=[{"path": "a.h", "line": 1}],
         binary_refs=["elf:symbol:_Z3foov"], build_refs=["target://foo"],
-        confidence=EvidenceConfidence.HIGH,
+        confidence=LayerConfidence.HIGH,
     )
-    e2 = EvidenceEntity.from_dict(e.to_dict())
+    e2 = BuildSourceEntity.from_dict(e.to_dict())
     assert e2.to_dict() == e.to_dict()
 
 
@@ -129,7 +129,7 @@ def test_extractor_record_roundtrip():
 
 def test_layer_coverage_present_and_roundtrip():
     c = LayerCoverage(layer="L3_build", status=CoverageStatus.PARTIAL,
-                      confidence=EvidenceConfidence.REDUCED, detail="changed only")
+                      confidence=LayerConfidence.REDUCED, detail="changed only")
     assert c.present is True
     c2 = LayerCoverage.from_dict(c.to_dict())
     assert c2.status is CoverageStatus.PARTIAL and c2.present
@@ -138,14 +138,14 @@ def test_layer_coverage_present_and_roundtrip():
 def test_layer_coverage_invalid_enums_fall_back():
     c = LayerCoverage.from_dict({"layer": "L3_build", "status": "bogus", "confidence": "weird"})
     assert c.status is CoverageStatus.NOT_COLLECTED
-    assert c.confidence is EvidenceConfidence.UNKNOWN
+    assert c.confidence is LayerConfidence.UNKNOWN
     assert c.present is False
 
 
 def test_manifest_coverage_for_lookup():
-    m = EvidencePackManifest(coverage=[LayerCoverage(layer="L3_build", status=CoverageStatus.PRESENT)])
-    assert m.coverage_for(EvidenceLayer.L3_BUILD) is not None
-    assert m.coverage_for(EvidenceLayer.L4_SOURCE_ABI) is None
+    m = BuildSourceManifest(coverage=[LayerCoverage(layer="L3_build", status=CoverageStatus.PRESENT)])
+    assert m.coverage_for(DataLayer.L3_BUILD) is not None
+    assert m.coverage_for(DataLayer.L4_SOURCE_ABI) is None
     assert m.coverage_for("L3_build") is not None
 
 
@@ -153,13 +153,13 @@ def test_manifest_coverage_for_lookup():
 
 
 def test_pack_load_with_build_evidence(tmp_path):
-    pack = EvidencePack.empty(tmp_path / "p")
+    pack = BuildSourcePack.empty(tmp_path / "p")
     pack.build_evidence = BuildEvidence(
         compile_units=[CompileUnit(id="cu://a", source="a.cpp", language="CXX", standard="c++20")],
         build_options=[BuildOption("std:CXX", "c++20", abi_relevant=True)],
     )
     pack.write()
-    loaded = EvidencePack.load(tmp_path / "p")
+    loaded = BuildSourcePack.load(tmp_path / "p")
     assert loaded.build_evidence is not None
     assert loaded.build_evidence.compile_units[0].standard == "c++20"
     # The build evidence contributes an artifact digest to the content hash.
@@ -170,7 +170,7 @@ def test_pack_load_with_build_evidence(tmp_path):
 def test_pack_rewrite_removes_stale_build_evidence(tmp_path):
     """Codex P2: a rerun with no build evidence must drop the old L3 file."""
     root = tmp_path / "p"
-    first = EvidencePack.empty(root)
+    first = BuildSourcePack.empty(root)
     first.build_evidence = BuildEvidence(
         compile_units=[CompileUnit(id="cu://a", source="a.cpp", language="CXX", standard="c++20")],
     )
@@ -178,17 +178,17 @@ def test_pack_rewrite_removes_stale_build_evidence(tmp_path):
     assert (root / "build" / "build_evidence.json").is_file()
 
     # Rerun into the same directory producing no build evidence.
-    second = EvidencePack.empty(root)
+    second = BuildSourcePack.empty(root)
     second.build_evidence = None
     second.write()
     assert not (root / "build" / "build_evidence.json").exists()
-    assert EvidencePack.load(root).build_evidence is None
+    assert BuildSourcePack.load(root).build_evidence is None
 
 
 def test_pack_to_ref_coverage_summary(tmp_path):
-    pack = EvidencePack.empty(tmp_path / "p")
+    pack = BuildSourcePack.empty(tmp_path / "p")
     pack.manifest.coverage = [LayerCoverage(layer="L3_build", status=CoverageStatus.PRESENT,
-                                            confidence=EvidenceConfidence.HIGH)]
+                                            confidence=LayerConfidence.HIGH)]
     pack.write()
     ref = pack.to_ref()
     assert ref.coverage_summary["L3_build"]["status"] == "present"
@@ -263,7 +263,7 @@ def test_ninja_live_query_disabled_diagnostic(tmp_path):
 
 
 def test_ninja_executable_missing_diagnostic(tmp_path, monkeypatch):
-    monkeypatch.setattr("abicheck.evidence.adapters.ninja.shutil.which", lambda _x: None)
+    monkeypatch.setattr("abicheck.buildsource.adapters.ninja.shutil.which", lambda _x: None)
     ev = NinjaAdapter(build_dir=tmp_path, allow_query=True).collect()
     assert any("executable not found" in d for d in ev.diagnostics)
 
@@ -279,8 +279,8 @@ def test_ninja_query_invokes_subprocess(tmp_path, monkeypatch):
         out = compdb if "compdb" in cmd else "digraph {}"
         return _sp.CompletedProcess(cmd, 0, stdout=out, stderr="")
 
-    monkeypatch.setattr("abicheck.evidence.adapters.ninja.shutil.which", lambda _x: "/usr/bin/ninja")
-    monkeypatch.setattr("abicheck.evidence.adapters.ninja.subprocess.run", fake_run)
+    monkeypatch.setattr("abicheck.buildsource.adapters.ninja.shutil.which", lambda _x: "/usr/bin/ninja")
+    monkeypatch.setattr("abicheck.buildsource.adapters.ninja.subprocess.run", fake_run)
     ev = NinjaAdapter(build_dir=tmp_path).collect()
     assert len(ev.compile_units) == 1
     assert any(o.key == "std:CXX" for o in ev.build_options)
@@ -292,8 +292,8 @@ def test_ninja_query_nonzero_exit_diagnostic(tmp_path, monkeypatch):
     def fake_run(cmd, **kwargs):
         return _sp.CompletedProcess(cmd, 1, stdout="", stderr="boom")
 
-    monkeypatch.setattr("abicheck.evidence.adapters.ninja.shutil.which", lambda _x: "/usr/bin/ninja")
-    monkeypatch.setattr("abicheck.evidence.adapters.ninja.subprocess.run", fake_run)
+    monkeypatch.setattr("abicheck.buildsource.adapters.ninja.shutil.which", lambda _x: "/usr/bin/ninja")
+    monkeypatch.setattr("abicheck.buildsource.adapters.ninja.subprocess.run", fake_run)
     ev = NinjaAdapter(build_dir=tmp_path).collect()
     assert any("exited 1" in d for d in ev.diagnostics)
 
@@ -395,15 +395,15 @@ def test_diff_multi_value_order_independent():
     assert diff_build_evidence(a, b) == []
 
 
-# ── collect-evidence CLI variants (ADR-028 D6) ───────────────────────────────
+# ── collect CLI variants (ADR-028 D6) ───────────────────────────────
 
 
 def test_collect_evidence_empty_pack_when_no_adapters(tmp_path):
     out = tmp_path / "e"
-    result = CliRunner().invoke(main, ["collect-evidence", "-o", str(out)])
+    result = CliRunner().invoke(main, ["collect", "-o", str(out)])
     assert result.exit_code == 0, result.output
     assert "not collected" in result.output
-    pack = EvidencePack.load(out)
+    pack = BuildSourcePack.load(out)
     assert pack.build_evidence is None
     cov = pack.manifest.coverage_for("L3_build")
     assert cov is not None and cov.status is CoverageStatus.NOT_COLLECTED
@@ -412,10 +412,10 @@ def test_collect_evidence_empty_pack_when_no_adapters(tmp_path):
 def test_collect_evidence_failed_compile_db_records_extractor(tmp_path):
     bad = tmp_path / "missing.json"
     out = tmp_path / "e"
-    result = CliRunner().invoke(main, ["collect-evidence", "--compile-db", str(bad), "-o", str(out)])
+    result = CliRunner().invoke(main, ["collect", "--compile-db", str(bad), "-o", str(out)])
     # The adapter failure is recorded as a diagnostic/extractor status, not a crash.
     assert result.exit_code == 0, result.output
-    pack = EvidencePack.load(out)
+    pack = BuildSourcePack.load(out)
     assert any(e.name == "compile_commands" and e.status == "failed"
                for e in pack.manifest.extractors)
 
@@ -425,9 +425,9 @@ def test_collect_evidence_ninja_compdb(tmp_path):
     compdb.write_text(json.dumps([{"directory": str(tmp_path), "file": "a.cpp",
                                    "arguments": ["c++", "-std=c++20", "-c", "a.cpp"]}]))
     out = tmp_path / "e"
-    result = CliRunner().invoke(main, ["collect-evidence", "--ninja-compdb", str(compdb), "-o", str(out)])
+    result = CliRunner().invoke(main, ["collect", "--ninja-compdb", str(compdb), "-o", str(out)])
     assert result.exit_code == 0, result.output
-    pack = EvidencePack.load(out)
+    pack = BuildSourcePack.load(out)
     assert pack.build_evidence is not None
     assert any(o.key == "std:CXX" for o in pack.build_evidence.build_options)
 
@@ -443,7 +443,7 @@ def test_compare_drift_fires_without_compile_db_context(tmp_path):
                                     "arguments": ["c++", "-std=c++20", "-c", "a.cpp"]}]))
     ev_new = tmp_path / "new.evidence"
     runner = CliRunner()
-    runner.invoke(main, ["collect-evidence", "--compile-db", str(new_cdb), "-o", str(ev_new)])
+    runner.invoke(main, ["collect", "--compile-db", str(new_cdb), "-o", str(ev_new)])
 
     for v in ("old", "new"):
         save_snapshot(AbiSnapshot(library="libfoo.so", version=v, from_headers=True),
@@ -452,7 +452,7 @@ def test_compare_drift_fires_without_compile_db_context(tmp_path):
     result = runner.invoke(main, [
         "compare", str(tmp_path / "old.json"), str(tmp_path / "new.json"),
         "-H", str(tmp_path),  # headers present, but NOT parsed with -p
-        "--new-evidence", str(ev_new), "--format", "json",
+        "--new-build-info", str(ev_new), "--format", "json",
     ])
     assert result.exit_code in (0, 2, 4), result.output
     assert "header_parse_context_drift" in result.stdout
@@ -468,7 +468,7 @@ def test_compare_drift_suppressed_when_dumped_with_build_context(tmp_path):
                                     "arguments": ["c++", "-std=c++20", "-c", "a.cpp"]}]))
     ev_new = tmp_path / "new.evidence"
     runner = CliRunner()
-    runner.invoke(main, ["collect-evidence", "--compile-db", str(new_cdb), "-o", str(ev_new)])
+    runner.invoke(main, ["collect", "--compile-db", str(new_cdb), "-o", str(ev_new)])
 
     # New side was dumped WITH the build's compile DB → no drift.
     save_snapshot(AbiSnapshot(library="libfoo.so", version="old", from_headers=True),
@@ -480,7 +480,7 @@ def test_compare_drift_suppressed_when_dumped_with_build_context(tmp_path):
     )
     result = runner.invoke(main, [
         "compare", str(tmp_path / "old.json"), str(tmp_path / "new.json"),
-        "--new-evidence", str(ev_new), "--format", "json",
+        "--new-build-info", str(ev_new), "--format", "json",
     ])
     assert result.exit_code in (0, 2, 4), result.output
     assert "header_parse_context_drift" not in result.stdout
@@ -496,7 +496,7 @@ def test_compare_binary_only_skips_header_drift(tmp_path):
                                     "arguments": ["c++", "-std=c++20", "-c", "a.cpp"]}]))
     ev_new = tmp_path / "new.evidence"
     runner = CliRunner()
-    runner.invoke(main, ["collect-evidence", "--compile-db", str(new_cdb), "-o", str(ev_new)])
+    runner.invoke(main, ["collect", "--compile-db", str(new_cdb), "-o", str(ev_new)])
 
     # Binary-only snapshots: from_headers is False, so there is no L2 AST.
     for v in ("old", "new"):
@@ -505,7 +505,7 @@ def test_compare_binary_only_skips_header_drift(tmp_path):
 
     result = runner.invoke(main, [
         "compare", str(tmp_path / "old.json"), str(tmp_path / "new.json"),
-        "--new-evidence", str(ev_new), "--format", "json",
+        "--new-build-info", str(ev_new), "--format", "json",
     ])
     assert result.exit_code in (0, 2, 4), result.output
     assert "header_parse_context_drift" not in result.stdout
@@ -532,23 +532,23 @@ def _asym_snap(*, dwarf=False, headers=False, version="1.0"):
 
 
 def _pack_with(tmp_path, name, *, build=False, source_abi=False):
-    """An in-memory EvidencePack with selectable L3/L4 coverage."""
-    from abicheck.evidence.build_evidence import BuildEvidence, BuildOption
-    from abicheck.evidence.model import (
+    """An in-memory BuildSourcePack with selectable L3/L4 coverage."""
+    from abicheck.buildsource.build_evidence import BuildEvidence, BuildOption
+    from abicheck.buildsource.model import (
         CoverageStatus,
-        EvidenceLayer,
+        DataLayer,
         LayerCoverage,
     )
-    from abicheck.evidence.pack import EvidencePack
+    from abicheck.buildsource.pack import BuildSourcePack
 
-    pack = EvidencePack.empty(tmp_path / name)
+    pack = BuildSourcePack.empty(tmp_path / name)
     if build:
         pack.build_evidence = BuildEvidence(
             build_options=[BuildOption("std:CXX", "c++20", abi_relevant=True)],
         )
     if source_abi:
         pack.manifest.coverage = [LayerCoverage(
-            layer=EvidenceLayer.L4_SOURCE_ABI.value, status=CoverageStatus.PRESENT,
+            layer=DataLayer.L4_SOURCE_ABI.value, status=CoverageStatus.PRESENT,
         )]
     return pack
 
@@ -557,7 +557,7 @@ def test_detect_coverage_asymmetry_target_missing_debug_and_build(tmp_path):
     """Full base (debug + headers + build + source) vs binary+headers target
     yields ONE finding naming exactly the layers the target lacks."""
     from abicheck.checker_policy import ChangeKind
-    from abicheck.cli_evidence import _detect_coverage_asymmetry
+    from abicheck.cli_buildsource import _detect_coverage_asymmetry
 
     old_snap = _asym_snap(dwarf=True, headers=True)
     new_snap = _asym_snap(dwarf=False, headers=True)  # target lost debug info
@@ -579,7 +579,7 @@ def test_detect_coverage_asymmetry_target_missing_debug_and_build(tmp_path):
 
 def test_detect_coverage_asymmetry_symmetric_is_silent(tmp_path):
     """Equal coverage on both sides → no finding."""
-    from abicheck.cli_evidence import _detect_coverage_asymmetry
+    from abicheck.cli_buildsource import _detect_coverage_asymmetry
 
     old_snap = _asym_snap(dwarf=True, headers=True)
     new_snap = _asym_snap(dwarf=True, headers=True)
@@ -591,7 +591,7 @@ def test_detect_coverage_asymmetry_symmetric_is_silent(tmp_path):
 def test_detect_coverage_asymmetry_richer_target_is_silent(tmp_path):
     """A target richer than the base does not undermine the compare → no finding
     (only the base→target degradation direction is reported)."""
-    from abicheck.cli_evidence import _detect_coverage_asymmetry
+    from abicheck.cli_buildsource import _detect_coverage_asymmetry
 
     old_snap = _asym_snap(dwarf=False, headers=False)
     new_snap = _asym_snap(dwarf=True, headers=True)
@@ -611,7 +611,7 @@ def test_coverage_asymmetry_is_risk_not_breaking():
 
 def test_compare_cli_reports_coverage_asymmetry(tmp_path):
     """End-to-end: a base evidence pack with build context compared against a
-    target that has none surfaces evidence_coverage_asymmetric in the report."""
+    target that has none surfaces layer_coverage_asymmetric in the report."""
     from abicheck.model import AbiSnapshot
     from abicheck.serialization import save_snapshot
 
@@ -620,7 +620,7 @@ def test_compare_cli_reports_coverage_asymmetry(tmp_path):
                                      "arguments": ["c++", "-std=c++20", "-c", "a.cpp"]}]))
     ev_base = tmp_path / "base.evidence"
     runner = CliRunner()
-    runner.invoke(main, ["collect-evidence", "--compile-db", str(base_cdb), "-o", str(ev_base)])
+    runner.invoke(main, ["collect", "--compile-db", str(base_cdb), "-o", str(ev_base)])
 
     # Base and target both header-aware; only the base carries build evidence.
     save_snapshot(AbiSnapshot(library="libfoo.so", version="old", from_headers=True),
@@ -630,8 +630,8 @@ def test_compare_cli_reports_coverage_asymmetry(tmp_path):
 
     result = runner.invoke(main, [
         "compare", str(tmp_path / "old.json"), str(tmp_path / "new.json"),
-        "--old-evidence", str(ev_base), "--format", "json",
+        "--old-build-info", str(ev_base), "--format", "json",
     ])
     assert result.exit_code in (0, 2, 4), result.output
-    assert "evidence_coverage_asymmetric" in result.stdout
+    assert "layer_coverage_asymmetric" in result.stdout
     assert "L3 build context" in result.stdout

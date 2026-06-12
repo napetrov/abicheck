@@ -30,7 +30,7 @@ This module is split so the hard part stays testable:
   only run on the ``integration`` lane (it needs a real ``clang``); a missing
   compiler degrades gracefully, exactly like the L4 source extractors.
 - :func:`augment_graph_with_calls` folds the resulting edges into a
-  :class:`~abicheck.evidence.source_graph.SourceGraphSummary`.
+  :class:`~abicheck.buildsource.source_graph.SourceGraphSummary`.
 """
 from __future__ import annotations
 

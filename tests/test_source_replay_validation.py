@@ -33,19 +33,19 @@ from __future__ import annotations
 
 import pytest
 
+from abicheck.buildsource.source_abi import (
+    EVIDENCE_TIER_L4,
+    SourceAbiSurface,
+    SourceEntity,
+    SourceLocation,
+)
+from abicheck.buildsource.source_diff import diff_source_abi
 from abicheck.checker_policy import (
     API_BREAK_KINDS,
     BREAKING_KINDS,
     RISK_KINDS,
     ChangeKind,
 )
-from abicheck.evidence.source_abi import (
-    EVIDENCE_TIER_L4,
-    SourceAbiSurface,
-    SourceEntity,
-    SourceLocation,
-)
-from abicheck.evidence.source_diff import diff_source_abi
 
 
 def _ent(

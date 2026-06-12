@@ -182,7 +182,7 @@ when you need more confidence:
 | **L1** | + debug info (`-g` build / sidecar) | **Medium** | Struct/class layout, field offsets, enum *values*, vtable slots, calling convention |
 | **L2** | + headers (`-H include/`) | **High** | Public API surface: signatures, overloads, access, `noexcept`, templates, public/internal scoping |
 | **L3** | + build data (`-p build/`) | **Higher** | The flags the library was *actually* built with: `-std`, `_GLIBCXX_USE_CXX11_ABI`, `-fvisibility`, sysroot, export maps |
-| **L4** | + sources (evidence pack via `compare --old-evidence/--new-evidence`) | **Best** | Facts that never reach the binary: macro/`constexpr` values, default-argument *values*, uninstantiated templates |
+| **L4** | + sources (build/source pack via `compare --old-build-info/--new-build-info`) | **Best** | Facts that never reach the binary: macro/`constexpr` values, default-argument *values*, uninstantiated templates |
 
 The layers are **additive, not a fallback chain**: artifact-backed evidence
 (L0/L1/L2) is authoritative for the shipped-ABI verdict, while build/source
@@ -196,7 +196,7 @@ Run `abicheck dump libfoo.so --show-data-sources` to see which layers abicheck
 found for a binary. For the full picture see [Evidence &
 Detectability](concepts/evidence-and-detectability.md) and the per-layer
 [Tool Modes](user-guide/tool-modes.md#abicheck-native-modes-by-evidence-source-l0l4)
-reference; build data (L3) and source evidence packs (L4) are documented under
+reference; build data (L3) and source build/source packs (L4) are documented under
 [CLI Usage → Evidence packs](user-guide/cli-usage.md#evidence-packs-build-source-context-l3-l4).
 For stripped production builds, point abicheck at separate debug files
 (`--debug-root1/2`) or fetch them with `--debuginfod` — see

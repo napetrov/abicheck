@@ -14,7 +14,7 @@ just binary       L0 — exported symbol table / linker    a stripped ``.so``/``
 debug symbols     L1 — DWARF / PDB / BTF / CTF            a ``-g`` build, no headers
 headers           L2 — public-header AST (castxml)        ``-H include/``
 build data        L3 — compile DB / flags / target graph  ``-p build/``
-sources           L4 — per-TU source ABI replay           an EvidencePack (ADR-030)
+sources           L4 — per-TU source ABI replay           an BuildSourcePack (ADR-030)
 ================  =====================================  =========================
 
 This module is the **single source of truth** for *which evidence layer each
@@ -47,7 +47,7 @@ TIER_LABELS: dict[str, str] = {
     "L1": "binary + debug info (DWARF/PDB layout)",
     "L2": "binary + debug + public headers (castxml AST)",
     "L3": "+ build context (compile DB / flags)",
-    "L4": "+ source ABI replay (EvidencePack)",
+    "L4": "+ source ABI replay (BuildSourcePack)",
 }
 
 
@@ -146,7 +146,7 @@ EVIDENCE_TIER_BY_KIND: dict[str, str] = {
     # ── L3: build-system context (compile DB) uniquely required ──
     # The dedicated L3 build-evidence kinds (abi_relevant_build_flag_changed,
     # toolchain_version_changed, link_export_policy_changed, …) are produced by
-    # the EvidencePack build diff (ADR-029); the example catalog has no case that
+    # the BuildSourcePack build diff (ADR-029); the example catalog has no case that
     # *only* L3 can see yet — the one flag-drift case (103) is already visible at
     # L1 via DWARF-recorded flags — so no kind maps here today.
 }

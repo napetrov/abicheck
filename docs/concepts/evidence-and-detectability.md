@@ -28,7 +28,7 @@ own. abicheck names them with the layer codes `L0`–`L4` used throughout the
 docs. You can see which **artifact** layers (`L0`–`L2`) a given input exposes
 with `abicheck dump --show-data-sources`; the build/source layers (`L3`/`L4`)
 are not reported there — they surface in the pack-aware `compare`
-`evidence_coverage` table once you supply an EvidencePack:
+`layer_coverage` table once you supply a build/source pack:
 
 | # | Source you provide | Layer | abicheck input | What it newly reveals |
 |---|--------------------|:-----:|----------------|------------------------|
@@ -36,7 +36,7 @@ are not reported there — they surface in the pack-aware `compare`
 | 2 | **+ Debug symbols** | **L1** | a `-g` build (DWARF/PDB) or sidecar debug file | Type **layout**: struct/class sizes, field offsets, enum *values*, vtable slots, calling convention, packing/alignment |
 | 3 | **+ Public headers** | **L2** | `-H include/` (parsed by castxml) | Source-level **API**: signatures, overloads, access (`public`/`private`), `final`/`explicit`/`noexcept`, templates, declared default args, public/internal **scoping** |
 | 4 | **+ Build system data & options** | **L3** | `-p build/` (compile DB, CMake/Ninja/Bazel/Make) | The **flags the library was actually built with**: `-std`, `_GLIBCXX_USE_CXX11_ABI`, `-fvisibility`, `-fabi-version`, toolchain/sysroot, target graph, export maps |
-| 5 | **+ Sources** | **L4** | an EvidencePack (per-TU source ABI replay, ADR-030) | Facts that never reach the binary: macro constants, `constexpr` values, default-argument *values*, inline/template **bodies**, uninstantiated templates |
+| 5 | **+ Sources** | **L4** | a build/source pack (per-TU source ABI replay, ADR-030) | Facts that never reach the binary: macro constants, `constexpr` values, default-argument *values*, inline/template **bodies**, uninstantiated templates |
 
 Read this as a staircase: **each step up the table can both *find* breaks the
 step below is blind to and *prevent false positives* the step below would
@@ -49,7 +49,7 @@ struct is non-public ([case118](../examples/case118_internal_struct_field_added_
 
 The layers are **independent and additive**, not a fallback chain — abicheck
 overlays every source you give it and lets the strongest evidence win, under
-one rule (the *authority rule*, see [Evidence Packs](evidence-pack.md)):
+one rule (the *authority rule*, see [Build & Source Packs](build-source-data.md)):
 
 > **Artifact-backed evidence (L0/L1/L2) is authoritative for the shipped-ABI
 > verdict.** Build/source evidence (L3/L4) *explains, localizes, scopes, or
@@ -68,7 +68,7 @@ the per-case evidence each example needs is benchmarked in
 > **Best input you can give abicheck:** old + new library, **matching public
 > headers**, **debug info**, and the **build's compile database** — L0+L1+L2+L3
 > together. With less, abicheck degrades *down the staircase* and tells you
-> exactly which layers it had via the `--show-data-sources` / `evidence_coverage`
+> exactly which layers it had via the `--show-data-sources` / `layer_coverage`
 > report.
 
 ### Why call it "evidence"?
@@ -102,7 +102,7 @@ and "tier" or "level" would imply the wrong ones:
   *authority rule* ([ADR-028](../development/adr/028-source-build-evidence-pack.md)).
 - **Honest about what it had.** Because the verdict is only as strong as the
   evidence behind it, every run reports the evidence it actually collected (the
-  `evidence_coverage` table and the "checks enabled… and why others are not"
+  `layer_coverage` table and the "checks enabled… and why others are not"
   capability report). The output literally says *"here is the evidence I had, so
   here is what I could and couldn't check."*
 
@@ -127,9 +127,10 @@ what can a checker conclude — and what is it structurally blind to?*
 | **Runtime app swap / integration test** | Real loader/linker behavior and tested execution paths | Untested public API, *future* consumers, silent layout corruption (unless a test happens to expose it) |
 | **Bundle scan** (multi-library) | Cross-DSO dependency / provider / entry-point problems | Pure source compatibility and semantic behavior not represented in artifacts or manifests |
 
-> The first four rows are exactly the five sources of [§0](#0-the-five-sources-of-information)
-> (L0/L1/L2 and the L4 source row); the last two — runtime app swap and bundle
-> scan — are *orthogonal* evidence axes, not extra rungs on the staircase.
+> The first four rows are the artifact + source sources of [§0](#0-the-five-sources-of-information)
+> (L0/L1/L2 and the L4 source row); **L3 build-context is a separate corroborating
+> layer and is intentionally not a row here**. The last two — runtime app swap and
+> bundle scan — are *orthogonal* evidence axes, not extra rungs on the staircase.
 
 ### Why abicheck combines layers
 

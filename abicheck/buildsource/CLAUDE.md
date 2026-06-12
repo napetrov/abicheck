@@ -1,8 +1,32 @@
-# CLAUDE.md — `abicheck/evidence/`
+# CLAUDE.md — `abicheck/buildsource/`
 
-Optional source/build/graph evidence layers (ADR-028 umbrella; ADR-029–033).
+Optional build-info + source/graph data layers (ADR-028 umbrella; ADR-029–033).
+The opaque "EvidencePack" container was renamed to concrete build-info/sources
+vocabulary; the L0–L5 "evidence layer" *detectability* model (and the
+`min_evidence` ground-truth field) is a separate concept and keeps its name.
 See `docs/development/adr/028-source-build-evidence-pack.md` for the
-architecture and `docs/concepts/evidence-pack.md` for the user-facing guide.
+architecture and `docs/concepts/build-source-data.md` for the user-facing guide.
+
+## Storage: embedded vs out-of-band
+
+The normalized facts can ride **inline inside the `.abi.json`** (single-artifact
+UX): `dump --build-info/--sources` calls `cli_buildsource.embed_build_source()`,
+which sets `AbiSnapshot.build_source` (a `BuildSourcePack` with `root=""`),
+serialized under the `build_source` key via `BuildSourcePack.to_embedded_dict()`.
+`compare` reads each side's facts from that embedded payload unless an
+out-of-band `--old/new-build-info` / `--old/new-sources` pack directory overrides
+it (`_resolve_side_pack`). The on-disk pack directory from `collect` remains the
+provenance/raw-artifact home.
+
+**Source-tree-centric inputs (ADR-028..033 amendment).** `--sources <tree>` is a
+*source checkout* (not a pack): `embed_build_source` calls
+`inline.collect_inline_pack()`, which resolves a compile DB → L3, runs L4 replay
+and folds the L5 graph, all inline. `--build-info <path>` is the optional,
+decoupled L3 input (build dir / `compile_commands.json` / pack), auto-discovered
+inside the tree when omitted. A path that *is* a pack directory (has
+`manifest.json`, via `inline.is_pack_dir()`) is loaded as that pack for
+back-compat. `merge` (in `cli_buildsource.py`) folds independently-produced
+dumps' embedded packs into one baseline via `_combine_packs`.
 
 ## The one rule that governs everything here
 
@@ -18,8 +42,9 @@ L3/L4/L5 are ordinary `ChangeKind` entries that default to `API_BREAK_KINDS`
 
 | Module | Role | ADR |
 |--------|------|-----|
-| `model.py` | `EvidencePackManifest`, `EvidencePackRef`, `LayerCoverage`, `EvidenceEntity`, `EvidenceLayer`/`EvidenceConfidence`/`CoverageStatus` enums | 028 D1/D5/D7/D8 |
-| `pack.py` | `EvidencePack` — on-disk layout, content addressing, write/load, `to_ref()` | 028 D1/D4 |
+| `model.py` | `BuildSourceManifest`, `BuildSourceRef`, `LayerCoverage`, `BuildSourceEntity`, `DataLayer`/`LayerConfidence`/`CoverageStatus` enums | 028 D1/D5/D7/D8 |
+| `pack.py` | `BuildSourcePack` — on-disk layout + inline embedding (`to_embedded_dict`), content addressing, write/load, `to_ref()` | 028 D1/D4 |
+| `inline.py` | Source-tree-centric inline collection for `dump --sources`/`--build-info`: `collect_inline_pack()` (resolve compile DB → L3, replay → L4, fold → L5), `BuildConfig`/`load_build_config()`/`discover_build_config()` (`.abicheck.yml` `build:`/`sources:`), `is_pack_dir()`, the `query_build_system` subprocess (gated by `--allow-build-query`) | 028–033 amendment |
 | `build_evidence.py` | `BuildEvidence` normalized model: `Target`, `CompileUnit`, `LinkUnit`, `Toolchain`, `Generator`, `BuildOption` | 029 D1/D2 |
 | `build_diff.py` | `diff_build_evidence()` → build-flag/toolchain drift findings | 029 D9 |
 | `source_abi.py` | `SourceAbiTu` (per-TU dump) + `SourceAbiSurface` (linked `source_abi.json`) schemas, `SourceEntity`/`SourceLocation`, `L4_SOURCE_ABI` boundary | 030 D4/D5/D10 |
@@ -31,7 +56,7 @@ L3/L4/L5 are ordinary `ChangeKind` entries that default to `API_BREAK_KINDS`
 | `graph_backends.py` | `ingest_kythe_entries()` / `ingest_codeql_call_results()` — fold **pre-captured** Kythe/CodeQL exports into the graph (non-executing), recording the store in `external_graph_refs` | 031 D5 (phase 7) |
 | `source_extractors/` | `SourceAbiExtractor` interface + castxml (phase 2), clang (phase 5, body fingerprints), Android adapter (phase 6) | 030 D3 |
 | `source_replay.py` | `select_compile_units()` (D7 scopes), `SourceAbiCache` (D8 per-TU cache), `run_source_replay()` driver, `scope_for_ci_mode()` | 030 D7/D8 (phase 7) |
-| `extractor.py` | `EvidenceExtractor` protocol (`discover`/`collect`/`normalize`/`validate`), `CollectionContext`, `ExtractorCapabilities`, `CollectionAction`/`CollectionMode`, `resolve_allowed_actions()`/`require_action()` — the plugin interface + security model | 032 D1/D2/D4/D5/D9 |
+| `extractor.py` | `DataExtractor` protocol (`discover`/`collect`/`normalize`/`validate`), `CollectionContext`, `ExtractorCapabilities`, `CollectionAction`/`CollectionMode`, `resolve_allowed_actions()`/`require_action()` — the plugin interface + security model | 032 D1/D2/D4/D5/D9 |
 | `extractor_manifest.py` | `ExtractorManifest` + `load_extractor_manifest()` (trusted-by-operator YAML), `render_command()`, `ExternalCliExtractor` + `run_external_extractor()` — external CLI extractors over a subprocess boundary (no shell, sanitized env, action ceiling) | 032 D3/D8/D10 |
 | `redaction.py` | `RedactionPolicy` — strip secrets/abs paths from command lines | 032 D7 |
 | `adapters/compile_db.py` | `compile_commands.json` → `CompileUnit`s (reuses `build_context.py`) | 029 D3 |
@@ -44,12 +69,12 @@ L3/L4/L5 are ordinary `ChangeKind` entries that default to `API_BREAK_KINDS`
 ## Versioning
 
 Five *independent* schema versions — do not conflate:
-- `EVIDENCE_PACK_VERSION` (`model.py`) — pack manifest/layout.
+- `BUILD_SOURCE_PACK_VERSION` (`model.py`) — pack manifest/layout.
 - `BUILD_EVIDENCE_VERSION` (`build_evidence.py`) — L3 normalized model.
 - `SOURCE_ABI_VERSION` (`source_abi.py`) — L4 `SourceAbiTu`/`SourceAbiSurface`.
 - `SOURCE_GRAPH_VERSION` (`source_graph.py`) — L5 `SourceGraphSummary`.
-- `serialization.SCHEMA_VERSION` — the `AbiSnapshot`, which only stores an
-  `EvidencePackRef` (so old snapshot readers ignore it; ADR-015).
+- `serialization.SCHEMA_VERSION` — the `AbiSnapshot`, which only stores an embedded `build_source` payload or an
+  `BuildSourceRef` (old snapshot readers ignore both; ADR-015).
 
 ## Conventions
 

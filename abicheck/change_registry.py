@@ -311,7 +311,7 @@ REGISTRY = ChangeKindRegistry([
 
     # ── DWARF layout (Sprint 3) ───────────────────────────────────────────
     _E("dwarf_info_missing", _C),
-    _E("evidence_coverage_asymmetric", _R,
+    _E("layer_coverage_asymmetric", _R,
        impact="The base snapshot was analyzed with evidence layers the target "
               "lacks (e.g. debug info, build context, or source ABI). The "
               "comparison is scoped to the layers both sides share, so changes "
@@ -951,7 +951,7 @@ REGISTRY = ChangeKindRegistry([
               "header. Informational; emitted only with --surface-metrics."),
 
     # ── Build-context evidence (ADR-028 L3 / ADR-029 D9) ────────────────────
-    # Produced by the build-evidence diff over two EvidencePacks. Per ADR-028
+    # Produced by the build-evidence diff over two BuildSourcePacks. Per ADR-028
     # D3 these are never BREAKING on their own: a build change that actually
     # breaks the ABI is caught by the artifact diff (L0/L1/L2) as a separate,
     # artifact-backed finding; these explain and localize it.

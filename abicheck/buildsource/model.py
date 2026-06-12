@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""EvidencePack manifest and coverage model (ADR-028 D1, D5, D7, D8).
+"""BuildSourcePack manifest and coverage model (ADR-028 D1, D5, D7, D8).
 
 These dataclasses are the abicheck-owned, JSON-serializable schema for the
 evidence pack. They version *independently* from the ABI snapshot schema
-(``EVIDENCE_PACK_VERSION`` here vs. ``serialization.SCHEMA_VERSION``) so that
+(``BUILD_SOURCE_PACK_VERSION`` here vs. ``serialization.SCHEMA_VERSION``) so that
 heavyweight source graphs and raw build dumps never bloat ordinary ABI dumps.
 
 Nothing here parses binaries or runs external tools — the model is pure data.
@@ -30,10 +30,10 @@ from typing import Any
 #: Evidence-pack schema version. Bumped on any breaking change to the manifest
 #: or normalized-fact layout. Independent of ``serialization.SCHEMA_VERSION``
 #: (ADR-028 D8): the snapshot only stores a lightweight reference.
-EVIDENCE_PACK_VERSION: int = 1
+BUILD_SOURCE_PACK_VERSION: int = 1
 
 
-class EvidenceLayer(str, Enum):
+class DataLayer(str, Enum):
     """Optional evidence layers added by ADR-028 on top of L0/L1/L2.
 
     L0 (binary), L1 (debug info), and L2 (header AST) are intrinsic to the
@@ -46,7 +46,7 @@ class EvidenceLayer(str, Enum):
     L5_SOURCE_GRAPH = "L5_source_graph"  # include/type/call/build graph (ADR-031)
 
 
-class EvidenceConfidence(str, Enum):
+class LayerConfidence(str, Enum):
     """Confidence qualifier for an evidence layer or joined entity (ADR-028 D5).
 
     ``HIGH`` — facts are directly observed (e.g. exact compile command, exported
@@ -76,9 +76,9 @@ class LayerCoverage:
     artifact-proven vs. build-context-only vs. source/graph-assisted.
     """
 
-    layer: str                      # EvidenceLayer value OR "L0"/"L1"/"L2" for intrinsic layers
+    layer: str                      # DataLayer value OR "L0"/"L1"/"L2" for intrinsic layers
     status: CoverageStatus = CoverageStatus.NOT_COLLECTED
-    confidence: EvidenceConfidence = EvidenceConfidence.UNKNOWN
+    confidence: LayerConfidence = LayerConfidence.UNKNOWN
     detail: str = ""                # human-readable note, e.g. "CMake+Ninja, 142 compile units"
 
     @property
@@ -104,7 +104,7 @@ class LayerCoverage:
 
 
 @dataclass
-class EvidenceEntity:
+class BuildSourceEntity:
     """Cross-layer canonical identity joining build/source/debug/binary facts.
 
     The ``entity_id`` is a stable content hash. ``binary_refs`` and
@@ -118,7 +118,7 @@ class EvidenceEntity:
     locations: list[dict[str, Any]] = field(default_factory=list)  # {path, line, column, origin}
     binary_refs: list[str] = field(default_factory=list)  # "elf:symbol:_ZN..."
     build_refs: list[str] = field(default_factory=list)   # "target://libfoo", "compile-unit://src/bar.cpp"
-    confidence: EvidenceConfidence = EvidenceConfidence.UNKNOWN
+    confidence: LayerConfidence = LayerConfidence.UNKNOWN
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -132,7 +132,7 @@ class EvidenceEntity:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> EvidenceEntity:
+    def from_dict(cls, d: dict[str, Any]) -> BuildSourceEntity:
         return cls(
             entity_id=str(d["entity_id"]),
             kind=str(d.get("kind", "")),
@@ -215,7 +215,7 @@ class ExtractorRecord:
 
 
 @dataclass
-class EvidencePackManifest:
+class BuildSourceManifest:
     """The pack ``manifest.json`` (ADR-028 D8).
 
     ``source_root`` is redaction-aware: the real path is never stored, only a
@@ -224,7 +224,7 @@ class EvidencePackManifest:
     at report time, not stored here.
     """
 
-    evidence_pack_version: int = EVIDENCE_PACK_VERSION
+    build_source_pack_version: int = BUILD_SOURCE_PACK_VERSION
     abicheck_version: str = ""
     created_at: str = ""            # ISO 8601
     source_root: dict[str, Any] = field(
@@ -236,8 +236,8 @@ class EvidencePackManifest:
     coverage: list[LayerCoverage] = field(default_factory=list)
     redaction: dict[str, Any] = field(default_factory=dict)
 
-    def coverage_for(self, layer: EvidenceLayer | str) -> LayerCoverage | None:
-        key = layer.value if isinstance(layer, EvidenceLayer) else layer
+    def coverage_for(self, layer: DataLayer | str) -> LayerCoverage | None:
+        key = layer.value if isinstance(layer, DataLayer) else layer
         for c in self.coverage:
             if c.layer == key:
                 return c
@@ -245,7 +245,7 @@ class EvidencePackManifest:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "evidence_pack_version": self.evidence_pack_version,
+            "build_source_pack_version": self.build_source_pack_version,
             "abicheck_version": self.abicheck_version,
             "created_at": self.created_at,
             "source_root": dict(self.source_root),
@@ -257,10 +257,15 @@ class EvidencePackManifest:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> EvidencePackManifest:
-        ver = int(d.get("evidence_pack_version", EVIDENCE_PACK_VERSION))
+    def from_dict(cls, d: dict[str, Any]) -> BuildSourceManifest:
+        # Back-compat: packs written before the evidence→buildsource rename
+        # store the version under the legacy ``evidence_pack_version`` key.
+        ver = int(
+            d.get("build_source_pack_version")
+            or d.get("evidence_pack_version", BUILD_SOURCE_PACK_VERSION)
+        )
         return cls(
-            evidence_pack_version=ver,
+            build_source_pack_version=ver,
             abicheck_version=str(d.get("abicheck_version", "")),
             created_at=str(d.get("created_at", "")),
             source_root=dict(d.get("source_root", {"path_redacted": True, "repo_hash": ""})),
@@ -273,7 +278,7 @@ class EvidencePackManifest:
 
 
 @dataclass
-class EvidencePackRef:
+class BuildSourceRef:
     """Lightweight reference stored *inside* the ``AbiSnapshot`` (ADR-028 D8).
 
     Keeps old snapshot readers functional (ADR-015): this is an optional field,
@@ -281,7 +286,7 @@ class EvidencePackRef:
     ``content_hash``.
     """
 
-    schema_version: int = EVIDENCE_PACK_VERSION
+    schema_version: int = BUILD_SOURCE_PACK_VERSION
     content_hash: str = ""          # "sha256:..." of the pack manifest+artifacts
     path_hint: str = ""             # e.g. "libfoo.evidence/" — advisory only
     coverage_summary: dict[str, Any] = field(default_factory=dict)
@@ -295,20 +300,20 @@ class EvidencePackRef:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> EvidencePackRef:
+    def from_dict(cls, d: dict[str, Any]) -> BuildSourceRef:
         return cls(
-            schema_version=int(d.get("schema_version", EVIDENCE_PACK_VERSION)),
+            schema_version=int(d.get("schema_version", BUILD_SOURCE_PACK_VERSION)),
             content_hash=str(d.get("content_hash", "")),
             path_hint=str(d.get("path_hint", "")),
             coverage_summary=dict(d.get("coverage_summary", {})),
         )
 
 
-def _confidence(raw: Any) -> EvidenceConfidence:
+def _confidence(raw: Any) -> LayerConfidence:
     try:
-        return EvidenceConfidence(raw if raw is not None else "unknown")
+        return LayerConfidence(raw if raw is not None else "unknown")
     except ValueError:
-        return EvidenceConfidence.UNKNOWN
+        return LayerConfidence.UNKNOWN
 
 
 def _coverage_status(raw: Any) -> CoverageStatus:

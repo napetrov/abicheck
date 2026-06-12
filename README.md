@@ -40,7 +40,7 @@ abicheck treats compatibility analysis as a question of **evidence**: the more i
 | **L1** | **+ Debug symbols** — a `-g` build or sidecar debug file | DWARF, PDB, BTF, CTF | Type **layout**: struct/class sizes, field offsets, enum *values*, vtable slots, calling convention, packing/alignment |
 | **L2** | **+ Public headers** — `-H include/` | castxml AST | Source-level **API**: signatures, overloads, access (`public`/`private`), `final`/`explicit`/`noexcept`, templates, default args, public/internal scoping |
 | **L3** | **+ Build system data & options** — `-p build/` | compile DB / CMake / Ninja / Bazel / Make | The flags the library was *actually* built with: `-std`, `_GLIBCXX_USE_CXX11_ABI`, `-fvisibility`, `-fabi-version`, toolchain/sysroot, export maps |
-| **L4** | **+ Sources** — an evidence pack | per-TU source ABI replay | Facts that never reach the binary: macro/`constexpr` values, default-argument *values*, inline/template bodies, uninstantiated templates |
+| **L4** | **+ Sources** — a build/source pack | per-TU source ABI replay | Facts that never reach the binary: macro/`constexpr` values, default-argument *values*, inline/template bodies, uninstantiated templates |
 
 The layers are **independent and additive, not a fallback chain** — abicheck overlays every source you give it and computes one worst-wins verdict, under the *authority rule*: artifact-backed evidence (L0/L1/L2) is authoritative for the shipped-ABI verdict, while build/source evidence (L3/L4) *explains, localizes, scopes, or adds confidence* to a finding (and can raise its own source-/API-level findings) but never silently deletes an artifact-proven break.
 

@@ -261,8 +261,9 @@ pipeline four times:
 | **L2** + public headers | `-g` `.so`, `-H include/` | Full (AST + DWARF) | 30 / 30 |
 | **L3** + build context | L2 plus `-p build/` (when a compile DB exists) | Full + build evidence | 30 / 30 + L3 |
 
-> **L4 (source ABI replay)** needs an EvidencePack from `collect-evidence`, which
-> is not yet a packaged CLI command, so the tiered benchmark reports L4 as `n/a`.
+> **L4 (source ABI replay)** uses the build/source pack produced by `collect`;
+> the tiered benchmark runner does not exercise that mode yet, so it reports L4
+> as `n/a`.
 > The one catalog case that *only* L4 could see
 > ([case122](../examples/case122_template_signature_uninstantiated.md), an
 > uninstantiated-template change) is a documented gap whose correct verdict is
@@ -318,7 +319,7 @@ Two directions matter, not just one:
 > `compile_commands.json`) to be present in the benchmark environment; where a
 > source is unavailable the runner records the tier as `n/a`/`ERROR` rather than
 > a miss, so read the tiered numbers together with the
-> [evidence-coverage](../concepts/evidence-pack.md#evidence-coverage) report for
+> [evidence-coverage](../concepts/build-source-data.md#evidence-coverage) report for
 > the run.
 
 ---

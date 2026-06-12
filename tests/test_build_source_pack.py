@@ -12,27 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the optional source/build EvidencePack (ADR-028) and the
+"""Tests for the optional source/build BuildSourcePack (ADR-028) and the
 build-evidence adapters/diff (ADR-029)."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
-from abicheck.checker_policy import (
-    BREAKING_KINDS,
-    COMPATIBLE_KINDS,
-    RISK_KINDS,
-    ChangeKind,
-)
-from abicheck.evidence import (
+from abicheck.buildsource import (
     BuildEvidence,
-    EvidencePack,
-    EvidencePackManifest,
-    EvidencePackRef,
+    BuildSourceManifest,
+    BuildSourcePack,
+    BuildSourceRef,
 )
-from abicheck.evidence.adapters import (
+from abicheck.buildsource.adapters import (
     CMakeFileApiAdapter,
     CompileDbAdapter,
     NinjaAdapter,
@@ -40,15 +35,24 @@ from abicheck.evidence.adapters import (
     detect_language,
     extract_abi_relevant_flags,
 )
-from abicheck.evidence.build_diff import check_header_parse_drift, diff_build_evidence
-from abicheck.evidence.build_evidence import (
+from abicheck.buildsource.build_diff import (
+    check_header_parse_drift,
+    diff_build_evidence,
+)
+from abicheck.buildsource.build_evidence import (
     BuildOption,
     Generator,
     LinkUnit,
     Toolchain,
 )
-from abicheck.evidence.model import CoverageStatus, EvidenceLayer
-from abicheck.evidence.redaction import RedactionPolicy
+from abicheck.buildsource.model import CoverageStatus, DataLayer
+from abicheck.buildsource.redaction import RedactionPolicy
+from abicheck.checker_policy import (
+    BREAKING_KINDS,
+    COMPATIBLE_KINDS,
+    RISK_KINDS,
+    ChangeKind,
+)
 from abicheck.model import AbiSnapshot
 from abicheck.serialization import snapshot_from_dict, snapshot_to_dict
 
@@ -56,9 +60,9 @@ from abicheck.serialization import snapshot_from_dict, snapshot_to_dict
 
 
 def test_empty_pack_write_load_roundtrip(tmp_path):
-    pack = EvidencePack.empty(tmp_path / "p.evidence", abicheck_version="9.9", created_at="t0")
+    pack = BuildSourcePack.empty(tmp_path / "p.evidence", abicheck_version="9.9", created_at="t0")
     pack.write()
-    loaded = EvidencePack.load(tmp_path / "p.evidence")
+    loaded = BuildSourcePack.load(tmp_path / "p.evidence")
     assert loaded.manifest.abicheck_version == "9.9"
     # All standard subdirs were created.
     for sub in ("build", "source", "graph", "toolchain", "raw", "normalized"):
@@ -68,50 +72,50 @@ def test_empty_pack_write_load_roundtrip(tmp_path):
 def test_load_missing_manifest_raises(tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(FileNotFoundError):
-        EvidencePack.load(tmp_path / "empty")
+        BuildSourcePack.load(tmp_path / "empty")
 
 
 def test_content_hash_is_stable_across_created_at(tmp_path):
     """Two packs with identical evidence but different timestamps hash equal."""
-    p1 = EvidencePack.empty(tmp_path / "a", created_at="2026-01-01")
+    p1 = BuildSourcePack.empty(tmp_path / "a", created_at="2026-01-01")
     p1.write()
-    p2 = EvidencePack.empty(tmp_path / "b", created_at="2099-12-31")
+    p2 = BuildSourcePack.empty(tmp_path / "b", created_at="2099-12-31")
     p2.write()
     assert p1.content_hash() == p2.content_hash()
     assert p1.content_hash().startswith("sha256:")
 
 
 def test_content_hash_changes_with_build_evidence(tmp_path):
-    p1 = EvidencePack.empty(tmp_path / "a")
+    p1 = BuildSourcePack.empty(tmp_path / "a")
     p1.write()
-    p2 = EvidencePack.empty(tmp_path / "b")
+    p2 = BuildSourcePack.empty(tmp_path / "b")
     p2.build_evidence = BuildEvidence(build_options=[BuildOption(key="std:CXX", value="c++20")])
     p2.write()
     assert p1.content_hash() != p2.content_hash()
 
 
 def test_to_ref_roundtrip(tmp_path):
-    pack = EvidencePack.empty(tmp_path / "p")
+    pack = BuildSourcePack.empty(tmp_path / "p")
     pack.manifest.coverage = []
     pack.write()
     ref = pack.to_ref(path_hint="p.evidence/")
-    ref2 = EvidencePackRef.from_dict(ref.to_dict())
+    ref2 = BuildSourceRef.from_dict(ref.to_dict())
     assert ref2.content_hash == ref.content_hash
     assert ref2.path_hint == "p.evidence/"
 
 
 def test_manifest_dict_roundtrip():
-    m = EvidencePackManifest(abicheck_version="1.0")
-    m2 = EvidencePackManifest.from_dict(m.to_dict())
+    m = BuildSourceManifest(abicheck_version="1.0")
+    m2 = BuildSourceManifest.from_dict(m.to_dict())
     assert m2.abicheck_version == "1.0"
-    assert m2.evidence_pack_version == m.evidence_pack_version
+    assert m2.build_source_pack_version == m.build_source_pack_version
 
 
 def test_unknown_manifest_keys_are_ignored():
     """A newer pack with unknown keys still loads (forward-compat)."""
-    raw = {"evidence_pack_version": 1, "future_field": {"x": 1}, "coverage": []}
-    m = EvidencePackManifest.from_dict(raw)
-    assert m.evidence_pack_version == 1
+    raw = {"build_source_pack_version": 1, "future_field": {"x": 1}, "coverage": []}
+    m = BuildSourceManifest.from_dict(raw)
+    assert m.build_source_pack_version == 1
 
 
 # ── Snapshot integration (schema v7) ─────────────────────────────────────────
@@ -120,35 +124,177 @@ def test_unknown_manifest_keys_are_ignored():
 def test_snapshot_v7_evidence_ref_roundtrip():
     snap = AbiSnapshot(
         library="libfoo.so", version="1.0",
-        evidence_pack=EvidencePackRef(content_hash="sha256:abc", path_hint="e/"),
+        build_source_pack=BuildSourceRef(content_hash="sha256:abc", path_hint="e/"),
     )
     d = snapshot_to_dict(snap)
-    assert d["schema_version"] == 7
-    assert d["evidence_pack"]["content_hash"] == "sha256:abc"
+    assert d["schema_version"] == 8
+    assert d["build_source_pack"]["content_hash"] == "sha256:abc"
     back = snapshot_from_dict(d)
-    assert back.evidence_pack is not None
-    assert back.evidence_pack.content_hash == "sha256:abc"
+    assert back.build_source_pack is not None
+    assert back.build_source_pack.content_hash == "sha256:abc"
 
 
 def test_snapshot_without_evidence_serializes_none():
     snap = AbiSnapshot(library="l", version="1")
     d = snapshot_to_dict(snap)
-    assert d["evidence_pack"] is None
-    assert snapshot_from_dict(d).evidence_pack is None
+    assert d["build_source_pack"] is None
+    assert snapshot_from_dict(d).build_source_pack is None
 
 
 def test_legacy_v6_snapshot_without_evidence_key_loads():
-    """Backward-compat (ADR-015): a v6 snapshot has no evidence_pack key."""
+    """Backward-compat (ADR-015): a v6 snapshot has no build_source_pack key."""
     d = snapshot_to_dict(AbiSnapshot(library="l", version="1"))
     d["schema_version"] = 6
-    d.pop("evidence_pack", None)
-    assert snapshot_from_dict(d).evidence_pack is None
+    d.pop("build_source_pack", None)
+    assert snapshot_from_dict(d).build_source_pack is None
 
 
 def test_malformed_evidence_ref_is_ignored():
     d = snapshot_to_dict(AbiSnapshot(library="l", version="1"))
-    d["evidence_pack"] = "not-a-dict"
-    assert snapshot_from_dict(d).evidence_pack is None
+    d["build_source_pack"] = "not-a-dict"
+    assert snapshot_from_dict(d).build_source_pack is None
+
+
+def test_legacy_evidence_pack_key_still_loads():
+    """Snapshots written before the evidence→buildsource rename store the ref
+    under the legacy ``evidence_pack`` key; it must still load (back-compat)."""
+    d = snapshot_to_dict(AbiSnapshot(library="l", version="1"))
+    d.pop("build_source_pack", None)
+    d["evidence_pack"] = {"content_hash": "sha256:legacy", "path_hint": "old.evidence/"}
+    back = snapshot_from_dict(d)
+    assert back.build_source_pack is not None
+    assert back.build_source_pack.content_hash == "sha256:legacy"
+
+
+def test_new_key_wins_over_legacy_evidence_pack_key():
+    """If both keys are present the new ``build_source_pack`` takes precedence."""
+    d = snapshot_to_dict(AbiSnapshot(
+        library="l", version="1",
+        build_source_pack=BuildSourceRef(content_hash="sha256:new", path_hint="n/"),
+    ))
+    d["evidence_pack"] = {"content_hash": "sha256:legacy", "path_hint": "old/"}
+    assert snapshot_from_dict(d).build_source_pack.content_hash == "sha256:new"
+
+
+# ── Inline embedding (single-artifact UX, ADR-028 D8) ─────────────────────────
+
+
+def test_embedded_dict_roundtrip(tmp_path):
+    """to_embedded_dict/from_embedded_dict preserve the normalized facts."""
+    pack = BuildSourcePack.empty(tmp_path / "p")
+    pack.build_evidence = BuildEvidence(
+        build_options=[BuildOption(key="std:CXX", value="c++20")]
+    )
+    embedded = pack.to_embedded_dict()
+    assert "manifest" in embedded
+    assert embedded["build_evidence"]["build_options"][0]["value"] == "c++20"
+
+    back = BuildSourcePack.from_embedded_dict(embedded)
+    assert back.root == Path("")
+    assert back.build_evidence is not None
+    assert back.build_evidence.build_options[0].key == "std:CXX"
+    assert back.source_abi is None
+    assert back.source_graph is None
+
+
+def test_snapshot_embedded_build_source_roundtrips(tmp_path):
+    """A snapshot carrying embedded build/source facts survives (de)serialization."""
+    pack = BuildSourcePack.empty(tmp_path / "p")
+    pack.build_evidence = BuildEvidence(
+        build_options=[BuildOption(key="fvisibility", value="hidden")]
+    )
+    snap = AbiSnapshot(library="libfoo.so", version="1.0", build_source=pack)
+    d = snapshot_to_dict(snap)
+    assert d["build_source"]["build_evidence"]["build_options"][0]["value"] == "hidden"
+
+    back = snapshot_from_dict(d)
+    assert back.build_source is not None
+    assert back.build_source.build_evidence.build_options[0].key == "fvisibility"
+
+
+def test_snapshot_without_embedded_build_source_omits_key():
+    d = snapshot_to_dict(AbiSnapshot(library="l", version="1"))
+    assert "build_source" not in d
+    assert snapshot_from_dict(d).build_source is None
+
+
+def test_embed_filters_coverage_to_layers_actually_embedded(tmp_path):
+    """Attaching only --build-info from a pack that also collected source ABI
+    must not let the embedded manifest advertise L4 as present."""
+    from abicheck.buildsource.model import LayerCoverage
+    from abicheck.cli_buildsource import embed_build_source
+
+    pack = BuildSourcePack.empty(tmp_path / "p")
+    pack.build_evidence = BuildEvidence(build_options=[BuildOption(key="std:CXX", value="c++20")])
+    # The pack's manifest claims L3 *and* L4 coverage, but we only attach L3.
+    pack.manifest.coverage = [
+        LayerCoverage(layer=DataLayer.L3_BUILD.value, status=CoverageStatus.PRESENT),
+        LayerCoverage(layer=DataLayer.L4_SOURCE_ABI.value, status=CoverageStatus.PRESENT),
+    ]
+    pack.write()
+
+    snap = AbiSnapshot(library="libfoo.so", version="1.0")
+    embed_build_source(snap, build_info=tmp_path / "p", sources=None)
+
+    assert snap.build_source is not None
+    cov = {c.layer: c for c in snap.build_source.manifest.coverage}
+    assert cov[DataLayer.L3_BUILD.value].status == CoverageStatus.PRESENT
+    # L4 was advertised by the source pack but not actually embedded → the row
+    # is kept (ADR-028 D7 shows every layer) but downgraded to not_collected,
+    # never left claiming "present".
+    assert cov[DataLayer.L4_SOURCE_ABI.value].status == CoverageStatus.NOT_COLLECTED
+
+
+def test_embed_merges_coverage_from_both_packs(tmp_path):
+    """--build-info and --sources pointing at *different* packs must yield an
+    embedded manifest advertising every layer that was actually embedded."""
+    from abicheck.buildsource.model import ExtractorRecord, LayerCoverage
+    from abicheck.buildsource.source_abi import SourceAbiSurface
+    from abicheck.cli_buildsource import embed_build_source
+
+    bi = BuildSourcePack.empty(tmp_path / "bi")
+    bi.build_evidence = BuildEvidence(build_options=[BuildOption(key="std:CXX", value="c++20")])
+    bi.manifest.coverage = [
+        LayerCoverage(layer=DataLayer.L3_BUILD.value, status=CoverageStatus.PRESENT),
+    ]
+    bi.manifest.extractors = [ExtractorRecord(name="compile-db", version="1")]
+    bi.write()
+
+    src = BuildSourcePack.empty(tmp_path / "src")
+    src.source_abi = SourceAbiSurface(library="libfoo.so")
+    src.manifest.coverage = [
+        LayerCoverage(layer=DataLayer.L4_SOURCE_ABI.value, status=CoverageStatus.PRESENT),
+    ]
+    src.manifest.extractors = [ExtractorRecord(name="clang-source", version="2")]
+    src.write()
+
+    snap = AbiSnapshot(library="libfoo.so", version="1.0")
+    embed_build_source(snap, build_info=tmp_path / "bi", sources=tmp_path / "src")
+
+    assert snap.build_source is not None
+    assert snap.build_source.build_evidence is not None
+    assert snap.build_source.source_abi is not None
+    layers = {c.layer for c in snap.build_source.manifest.coverage}
+    assert DataLayer.L3_BUILD.value in layers
+    assert DataLayer.L4_SOURCE_ABI.value in layers  # from the *other* pack
+    # Provenance from BOTH packs must survive into the combined ref (Codex):
+    # extractors are kept verbatim; each pack contributes its own normalized
+    # artifact digest, so the merged manifest carries both.
+    names = {e.name for e in snap.build_source.manifest.extractors}
+    assert names == {"compile-db", "clang-source"}
+    assert len(set(snap.build_source.manifest.artifacts)) == 2
+
+
+def test_legacy_changekind_value_still_parses():
+    """A report/policy written before the evidence→buildsource rename used
+    'evidence_coverage_asymmetric'; it must still deserialize."""
+    assert ChangeKind("evidence_coverage_asymmetric") is ChangeKind.EVIDENCE_COVERAGE_ASYMMETRIC
+    assert ChangeKind("layer_coverage_asymmetric") is ChangeKind.EVIDENCE_COVERAGE_ASYMMETRIC
+
+
+def test_legacy_manifest_version_key_still_loads():
+    m = BuildSourceManifest.from_dict({"evidence_pack_version": 1, "coverage": []})
+    assert m.build_source_pack_version == 1
 
 
 # ── compile_commands.json adapter (ADR-029 D3) ───────────────────────────────
@@ -389,7 +535,7 @@ def test_redaction_rewrites_embedded_home_paths_in_argv():
 
 def test_compile_db_redacts_embedded_home_paths_in_argv(tmp_path):
     """End-to-end: embedded home paths never reach CompileUnit.argv."""
-    from abicheck.evidence.adapters import CompileDbAdapter
+    from abicheck.buildsource.adapters import CompileDbAdapter
 
     cdb = tmp_path / "compile_commands.json"
     cdb.write_text(json.dumps([{
@@ -412,7 +558,7 @@ def test_redaction_define_value_redacts_secret_macro():
 
 
 def test_compile_db_redacts_secret_define(tmp_path):
-    from abicheck.evidence.adapters import CompileDbAdapter
+    from abicheck.buildsource.adapters import CompileDbAdapter
 
     cdb = tmp_path / "compile_commands.json"
     cdb.write_text(json.dumps([{
@@ -459,7 +605,7 @@ def test_redaction_argv_redacts_split_secret_option():
 
 def test_compile_db_split_define_secret_not_leaked_in_argv(tmp_path):
     """End-to-end: split-form secret never reaches CompileUnit.argv."""
-    from abicheck.evidence.adapters import CompileDbAdapter
+    from abicheck.buildsource.adapters import CompileDbAdapter
 
     cdb = tmp_path / "compile_commands.json"
     cdb.write_text(json.dumps([{
@@ -529,7 +675,7 @@ def test_build_evidence_merge_dedups_by_id():
 
 
 def test_coverage_status_default_round_trip():
-    cov = EvidencePack.empty("/tmp/x").manifest.coverage_for(EvidenceLayer.L3_BUILD)
+    cov = BuildSourcePack.empty("/tmp/x").manifest.coverage_for(DataLayer.L3_BUILD)
     assert cov is None  # empty pack has no coverage rows until populated
 
 

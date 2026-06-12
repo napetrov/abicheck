@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""`collect-evidence` command (ADR-028 D6, ADR-029).
+"""`collect` command (ADR-028 D6, ADR-029).
 
-Collects an optional EvidencePack from an existing build tree *without
+Collects an optional BuildSourcePack from an existing build tree *without
 rebuilding*. The pack augments an ABI snapshot with L3 build-context evidence (compile DB /
 CMake File API / Ninja / Bazel / Make dry-run / compiler-recorded metadata).
 Per ADR-028 D6 this command never runs
@@ -25,37 +25,38 @@ explicit opt-in not implemented here.
 from __future__ import annotations
 
 import datetime as _dt
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
 
 from . import __version__ as _abicheck_version
-from .cli import main
-from .evidence.build_evidence import BuildEvidence
-from .evidence.model import (
+from .buildsource.build_evidence import BuildEvidence
+from .buildsource.model import (
     CoverageStatus,
-    EvidenceConfidence,
-    EvidenceLayer,
+    DataLayer,
     ExtractorRecord,
+    LayerConfidence,
     LayerCoverage,
 )
-from .evidence.pack import EvidencePack
-from .evidence.redaction import DEFAULT_REDACTION
-from .evidence.source_replay import REPLAY_SCOPES
+from .buildsource.pack import BuildSourcePack
+from .buildsource.redaction import DEFAULT_REDACTION
+from .buildsource.source_replay import REPLAY_SCOPES
+from .cli import main
 
 if TYPE_CHECKING:
-    from .checker_types import Change
-    from .evidence.source_abi import SourceAbiSurface
-    from .evidence.source_extractors import (
+    from .buildsource.source_abi import SourceAbiSurface
+    from .buildsource.source_extractors import (
         CastxmlSourceExtractor,
         ClangSourceExtractor,
     )
-    from .evidence.source_graph import SourceGraphSummary
+    from .buildsource.source_graph import SourceGraphSummary
+    from .checker_types import Change
     from .model import AbiSnapshot
 
 
-@main.command("collect-evidence")
+@main.command("collect")
 @click.option("--binary", "binary", type=click.Path(path_type=Path), default=None,
               help="Built shared library this evidence describes (recorded as provenance).")
 @click.option("-H", "--headers", "headers", multiple=True, type=click.Path(path_type=Path),
@@ -142,9 +143,9 @@ if TYPE_CHECKING:
                    "failed/invalid extractor exits non-zero), audit (preserve raw "
                    "artifacts + full diagnostics).")
 @click.option("-o", "--output", "output", type=click.Path(path_type=Path), required=True,
-              help="Output evidence-pack directory.")
+              help="Output build-source pack directory.")
 @click.option("-v", "--verbose", is_flag=True, default=False)
-def collect_evidence_cmd(
+def collect_cmd(
     binary: Path | None,
     headers: tuple[Path, ...],
     build_dir: Path | None,
@@ -178,15 +179,15 @@ def collect_evidence_cmd(
     output: Path,
     verbose: bool,
 ) -> None:
-    """Collect an optional source/build EvidencePack from an existing build tree.
+    """Collect an optional source/build BuildSourcePack from an existing build tree.
 
     \b
     Examples:
-      abicheck collect-evidence --compile-db build/compile_commands.json -o libfoo.evidence/
-      abicheck collect-evidence -p build/ --headers include/ -o libfoo.evidence/
-      abicheck collect-evidence --build-dir build --cmake --ninja -o libfoo.evidence/
+      abicheck collect --compile-db build/compile_commands.json -o libfoo.evidence/
+      abicheck collect -p build/ --headers include/ -o libfoo.evidence/
+      abicheck collect --build-dir build --cmake --ninja -o libfoo.evidence/
 
-    The resulting directory attaches to a snapshot with `abicheck dump --evidence`.
+    The resulting directory attaches to a snapshot with `abicheck dump --build-info`/`--sources`.
     """
     effective_compile_db = compile_db or compile_db_p
     extractors: list[ExtractorRecord] = []
@@ -253,7 +254,7 @@ def collect_evidence_cmd(
         clang_bin=clang_bin,
     )
 
-    pack = EvidencePack.empty(
+    pack = BuildSourcePack.empty(
         output,
         abicheck_version=_abicheck_version,
         created_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
@@ -317,7 +318,7 @@ def _collect_source_graph(
     if source_graph != "summary":
         return None, ""
 
-    from .evidence.source_graph import build_source_graph
+    from .buildsource.source_graph import build_source_graph
     # Fold the L4 surface in too when it was collected (--source-abi), so the
     # graph carries the public-reachability + source↔binary slices.
     graph = build_source_graph(merged, source_abi=surface)
@@ -371,7 +372,7 @@ def _enforce_strict_mode(
 
 
 def _echo_collection_summary(
-    pack: EvidencePack,
+    pack: BuildSourcePack,
     merged: BuildEvidence,
     output: Path,
     *,
@@ -417,8 +418,8 @@ def _run_adapters(
     verbose: bool,
 ) -> None:
     """Run the requested build-evidence adapters and fold them into *merged*."""
-    # Import adapters lazily so `collect-evidence --help` stays cheap.
-    from .evidence.adapters import (
+    # Import adapters lazily so `collect --help` stays cheap.
+    from .buildsource.adapters import (
         BazelAdapter,
         CMakeFileApiAdapter,
         CompileDbAdapter,
@@ -493,7 +494,7 @@ def _run_adapters(
     if read_compiler_record:
         if binary is None:
             raise click.UsageError("--read-compiler-record requires --binary.")
-        from .evidence.compiler_record import extract_compiler_record
+        from .buildsource.compiler_record import extract_compiler_record
         ev = extract_compiler_record(binary)
         merged.merge(ev)
         extractors.append(ExtractorRecord(
@@ -528,13 +529,13 @@ def _run_external_extractors(
     Normalized ``build_evidence`` outputs are folded into *merged*; failures are
     captured as extractor rows so the collection-mode policy (D9) can act on them.
     """
-    from .evidence.build_evidence import BuildEvidence as _BuildEvidence
-    from .evidence.extractor import (
+    from .buildsource.build_evidence import BuildEvidence as _BuildEvidence
+    from .buildsource.extractor import (
         CollectionAction,
         CollectionContext,
         CollectionMode,
     )
-    from .evidence.extractor_manifest import (
+    from .buildsource.extractor_manifest import (
         ManifestError,
         load_extractor_manifest,
         run_external_extractor,
@@ -579,7 +580,7 @@ def _run_external_extractors(
             _purge_external_outputs(pack_root, manifest)
             continue
 
-        # Reject output kinds collect-evidence cannot fold yet — only
+        # Reject output kinds collect cannot fold yet — only
         # build_evidence is wired into the pack here. A manifest that advertises
         # a source_abi / source_graph_summary output would otherwise be recorded
         # ok while its evidence is silently dropped (and pack.write() removes the
@@ -594,7 +595,7 @@ def _run_external_extractors(
             record.artifacts = []
             merged.diagnostics.append(
                 f"{manifest.name}: output kind(s) {', '.join(unsupported)} are not yet "
-                "supported by collect-evidence (only build_evidence is folded into the pack)"
+                "supported by collect (only build_evidence is folded into the pack)"
             )
             _purge_external_outputs(pack_root, manifest)
             continue
@@ -643,7 +644,7 @@ def _purge_external_outputs(pack_root: Path, manifest: object) -> None:
 
     A failed/skipped extractor must be isolated from the collected pack: its
     normalized output files (and its ``normalized/<name>/`` subtree) would
-    otherwise be hashed into ``EvidencePack`` ``manifest.artifacts`` and the
+    otherwise be hashed into ``BuildSourcePack`` ``manifest.artifacts`` and the
     content hash, so an invalid output would change pack identity and publish a
     digest for evidence that was never folded (Codex P2). Raw artifacts under
     ``raw/`` are *not* removed — they are provenance-only, never hashed, and are
@@ -676,7 +677,10 @@ def _collect_call_graph(
     edges — it never aborts collection. Re-finalizes the graph so the content
     hash and coverage counts reflect the added edges.
     """
-    from .evidence.call_graph import ClangCallGraphExtractor, augment_graph_with_calls
+    from .buildsource.call_graph import (
+        ClangCallGraphExtractor,
+        augment_graph_with_calls,
+    )
 
     # clang_bin defaults to "clang" (the L4 extractor's tool); the call
     # extractor needs a C++ driver, so prefer clang++ unless the user pointed
@@ -710,7 +714,7 @@ def _include_map_for_replay(
     is unavailable or yields nothing, so :func:`run_source_replay` falls back to
     the target-ownership heuristics — collection never blocks on it.
     """
-    from .evidence.include_graph import ClangIncludeExtractor
+    from .buildsource.include_graph import ClangIncludeExtractor
 
     extractor = ClangIncludeExtractor(
         clang_bin=clang_bin if clang_bin != "clang" else "clang++"
@@ -735,7 +739,7 @@ def _collect_include_graph(
     Best-effort like the call extractor: a missing clang records a failed row
     and leaves the graph without include edges, never aborting collection.
     """
-    from .evidence.include_graph import (
+    from .buildsource.include_graph import (
         ClangIncludeExtractor,
         augment_graph_with_includes,
     )
@@ -773,7 +777,7 @@ def _ingest_graph_backends(
     """
     import json as _json
 
-    from .evidence.graph_backends import (
+    from .buildsource.graph_backends import (
         ingest_codeql_call_results,
         ingest_kythe_entries,
     )
@@ -822,16 +826,16 @@ def _build_coverage(
     if has_build:
         systems = sorted({g.kind for g in merged.generators}) or ["generic"]
         l3 = LayerCoverage(
-            layer=EvidenceLayer.L3_BUILD.value,
+            layer=DataLayer.L3_BUILD.value,
             status=CoverageStatus.PRESENT,
-            confidence=EvidenceConfidence.HIGH if merged.targets else EvidenceConfidence.REDUCED,
+            confidence=LayerConfidence.HIGH if merged.targets else LayerConfidence.REDUCED,
             detail=(
                 f"{'+'.join(systems)}, {len(merged.compile_units)} compile units, "
                 f"{len(merged.targets)} targets"
             ),
         )
     else:
-        l3 = LayerCoverage(layer=EvidenceLayer.L3_BUILD.value, status=CoverageStatus.NOT_COLLECTED)
+        l3 = LayerCoverage(layer=DataLayer.L3_BUILD.value, status=CoverageStatus.NOT_COLLECTED)
     # L4 is PRESENT when at least one TU parsed into the surface, PARTIAL when
     # replay ran but every TU failed/was empty (e.g. clang missing), else
     # NOT_COLLECTED. The surface keeps decls/types only when extraction worked.
@@ -847,32 +851,32 @@ def _build_coverage(
         )
         if any_entities:
             l4 = LayerCoverage(
-                layer=EvidenceLayer.L4_SOURCE_ABI.value, status=CoverageStatus.PRESENT,
-                confidence=EvidenceConfidence.HIGH, detail=source_detail,
+                layer=DataLayer.L4_SOURCE_ABI.value, status=CoverageStatus.PRESENT,
+                confidence=LayerConfidence.HIGH, detail=source_detail,
             )
         else:
             l4 = LayerCoverage(
-                layer=EvidenceLayer.L4_SOURCE_ABI.value, status=CoverageStatus.PARTIAL,
-                confidence=EvidenceConfidence.REDUCED, detail=source_detail,
+                layer=DataLayer.L4_SOURCE_ABI.value, status=CoverageStatus.PARTIAL,
+                confidence=LayerConfidence.REDUCED, detail=source_detail,
             )
     else:
-        l4 = LayerCoverage(layer=EvidenceLayer.L4_SOURCE_ABI.value, status=CoverageStatus.NOT_COLLECTED)
+        l4 = LayerCoverage(layer=DataLayer.L4_SOURCE_ABI.value, status=CoverageStatus.NOT_COLLECTED)
     # L5 is PRESENT when the graph carries edges; PARTIAL when a graph was built
     # but had no build evidence to fold (so it is empty), else NOT_COLLECTED.
     if graph is not None:
         if graph.edges:
             l5 = LayerCoverage(
-                layer=EvidenceLayer.L5_SOURCE_GRAPH.value, status=CoverageStatus.PRESENT,
-                confidence=EvidenceConfidence.REDUCED, detail=graph_detail,
+                layer=DataLayer.L5_SOURCE_GRAPH.value, status=CoverageStatus.PRESENT,
+                confidence=LayerConfidence.REDUCED, detail=graph_detail,
             )
         else:
             l5 = LayerCoverage(
-                layer=EvidenceLayer.L5_SOURCE_GRAPH.value, status=CoverageStatus.PARTIAL,
-                confidence=EvidenceConfidence.UNKNOWN,
+                layer=DataLayer.L5_SOURCE_GRAPH.value, status=CoverageStatus.PARTIAL,
+                confidence=LayerConfidence.UNKNOWN,
                 detail=graph_detail or "no build evidence to fold into a graph",
             )
     else:
-        l5 = LayerCoverage(layer=EvidenceLayer.L5_SOURCE_GRAPH.value, status=CoverageStatus.NOT_COLLECTED)
+        l5 = LayerCoverage(layer=DataLayer.L5_SOURCE_GRAPH.value, status=CoverageStatus.NOT_COLLECTED)
     return [l3, l4, l5]
 
 
@@ -920,8 +924,8 @@ def _collect_source_abi(
     Never raises on a missing tool: a clang-less environment yields a partial
     surface and a clear note, keeping artifact tiers authoritative (ADR-028 D3).
     """
-    from .evidence.source_abi import SourceAbiSurface
-    from .evidence.source_replay import (
+    from .buildsource.source_abi import SourceAbiSurface
+    from .buildsource.source_replay import (
         SourceAbiCache,
         public_header_roots_for,
         run_source_replay,
@@ -940,11 +944,11 @@ def _collect_source_abi(
 
     impl: ClangSourceExtractor | CastxmlSourceExtractor
     if extractor == "clang":
-        from .evidence.source_extractors import ClangSourceExtractor
+        from .buildsource.source_extractors import ClangSourceExtractor
         impl = ClangSourceExtractor(clang_bin=clang_bin)
         tool_name = clang_bin
     else:
-        from .evidence.source_extractors import CastxmlSourceExtractor
+        from .buildsource.source_extractors import CastxmlSourceExtractor
         impl = CastxmlSourceExtractor()
         tool_name = "castxml"
 
@@ -1013,12 +1017,12 @@ def _collect_source_abi_android(
     roots: list[str],
 ) -> tuple[SourceAbiSurface | None, str]:
     """Normalize a pre-captured Android header-abi dump into a linked surface (D9)."""
-    from .evidence.source_abi import SourceAbiSurface
-    from .evidence.source_extractors import (
+    from .buildsource.source_abi import SourceAbiSurface
+    from .buildsource.source_extractors import (
         AndroidHeaderAbiAdapter,
         SourceExtractionError,
     )
-    from .evidence.source_link import link_source_abi
+    from .buildsource.source_link import link_source_abi
 
     if android_dump is None:
         raise click.UsageError(
@@ -1050,30 +1054,296 @@ def _collect_source_abi_android(
 # ── Attach / compare integration (ADR-028 D6, D7; ADR-029 D9) ─────────────────
 
 
-def attach_evidence_pack(snap: AbiSnapshot, evidence_dir: Path) -> None:
-    """Attach an EvidencePack reference to *snap* (ADR-028 D8).
+def _layer_value(layer: object) -> str:
+    return layer.value if hasattr(layer, "value") else str(layer)
 
-    Loads the pack manifest, computes its content hash, and stores only the
-    lightweight reference on the snapshot. Raises a Click error if the directory
-    is not a valid pack.
+
+def _combine_packs(
+    bi_pack: BuildSourcePack | None,
+    src_pack: BuildSourcePack | None,
+    embedded: BuildSourcePack | None = None,
+) -> BuildSourcePack | None:
+    """Combine a build-info pack and a sources pack into one embeddable pack.
+
+    Facts are taken from the pack that supplies each layer — ``build_evidence``
+    from ``--build-info``, ``source_abi``/``source_graph`` from ``--sources`` —
+    with *embedded* backfilling any gap. The coverage manifest is rebuilt by
+    pulling each layer's row from the *same* pack that supplied its facts (not
+    just the base pack), then dropping rows for layers we do not actually carry.
+    This keeps a later compare's coverage/capability report honest when the two
+    flags point at different packs (Codex review). Returns ``None`` when no pack
+    contributes any facts.
     """
-    snap.evidence_pack = _load_pack_or_raise(evidence_dir).to_ref(path_hint=str(evidence_dir))
+    def _first(attr: str, *packs: BuildSourcePack | None) -> object | None:
+        for cand in packs:
+            if cand is not None and getattr(cand, attr) is not None:
+                return getattr(cand, attr)
+        return None
+
+    build_evidence = _first("build_evidence", bi_pack, src_pack, embedded)
+    source_abi = _first("source_abi", src_pack, bi_pack, embedded)
+    source_graph = _first("source_graph", src_pack, bi_pack, embedded)
+
+    base = bi_pack or src_pack or embedded
+    if base is None:
+        return None
+
+    # supplier order per managed layer, and whether we actually carry it
+    supplier: dict[str, tuple[BuildSourcePack | None, ...]] = {
+        DataLayer.L3_BUILD.value: (bi_pack, src_pack, embedded),
+        DataLayer.L4_SOURCE_ABI.value: (src_pack, bi_pack, embedded),
+        DataLayer.L5_SOURCE_GRAPH.value: (src_pack, bi_pack, embedded),
+    }
+    present = {
+        DataLayer.L3_BUILD.value: build_evidence is not None,
+        DataLayer.L4_SOURCE_ABI.value: source_abi is not None,
+        DataLayer.L5_SOURCE_GRAPH.value: source_graph is not None,
+    }
+    managed = set(supplier)
+
+    coverage: list[LayerCoverage] = []
+    # Non-managed rows (L0/L1/L2/…) come from the base manifest.
+    for c in base.manifest.coverage:
+        if _layer_value(c.layer) not in managed:
+            coverage.append(c)
+    # Always emit one row per managed layer (ADR-028 D7 shows every layer). When
+    # we carry the facts, reuse the supplying pack's row; otherwise mark the
+    # layer not_collected so the report never advertises a check with no facts
+    # behind it (Codex review) — and never drops the row entirely either.
+    for layer, packs in supplier.items():
+        row: LayerCoverage | None = None
+        if present[layer]:
+            for cand in packs:
+                if cand is None:
+                    continue
+                row = next(
+                    (c for c in cand.manifest.coverage if _layer_value(c.layer) == layer),
+                    None,
+                )
+                if row is not None:
+                    break
+            if row is None:
+                row = LayerCoverage(layer=layer, status=CoverageStatus.PRESENT)
+        else:
+            row = LayerCoverage(layer=layer, status=CoverageStatus.NOT_COLLECTED)
+        coverage.append(row)
+
+    # Provenance: the combined manifest's artifacts/extractors must reflect every
+    # pack that supplied an embedded fact, not just the base pack — otherwise
+    # to_ref()/content_hash() would omit the source pack's artifacts for a
+    # cross-pack self-contained snapshot (Codex review). A pack "contributed"
+    # when one of its facts is the object we actually embedded.
+    chosen_ids = {id(x) for x in (build_evidence, source_abi, source_graph) if x is not None}
+    artifacts: list[str] = []
+    extractors: list[ExtractorRecord] = []
+    seen_extractors: set[tuple[str, str]] = set()
+    for p in (bi_pack, src_pack, embedded):
+        if p is None or not (
+            chosen_ids & {id(p.build_evidence), id(p.source_abi), id(p.source_graph)}
+        ):
+            continue
+        for a in p.manifest.artifacts:
+            if a not in artifacts:
+                artifacts.append(a)
+        for e in p.manifest.extractors:
+            key = (e.name, e.version)
+            if key not in seen_extractors:
+                seen_extractors.add(key)
+                extractors.append(e)
+
+    return BuildSourcePack(
+        root=Path(""),
+        manifest=replace(
+            base.manifest, coverage=coverage, artifacts=artifacts, extractors=extractors
+        ),
+        build_evidence=build_evidence,  # type: ignore[arg-type]
+        source_abi=source_abi,  # type: ignore[arg-type]
+        source_graph=source_graph,  # type: ignore[arg-type]
+    )
 
 
-def collect_compare_evidence(
-    old_evidence: Path | None,
-    new_evidence: Path | None,
-    evidence_mode: str,
+def embed_build_source(
+    snap: AbiSnapshot,
+    build_info: Path | None,
+    sources: Path | None,
+    *,
+    build_config: Path | None = None,
+    allow_build_query: bool = False,
+    clang_bin: str = "clang",
+    scope: str = "target",
+) -> None:
+    """Embed build-info / source facts inline in *snap* (single-artifact UX).
+
+    Source-tree-centric inputs (ADR-028..033 amendment): ``sources`` is a source
+    checkout — L4 source ABI replay and the L5 graph are run *inline* and
+    embedded; ``build_info`` is an optional build dir / ``compile_commands.json``
+    / pre-captured pack supplying L3. A ``compile_commands.json`` inside the
+    source tree is auto-discovered when ``build_info`` is omitted.
+
+    For back-compatibility a path that is itself a pack directory produced by
+    ``abicheck collect`` (it has a ``manifest.json``) is loaded as that pack
+    instead of being collected inline.
+
+    The combined facts ride inside the ``.abi.json`` so a later
+    ``compare old.json new.json`` works with no out-of-band directories. Also
+    records the matching content-addressed ``build_source_pack`` reference.
+    """
+    from .buildsource.inline import (
+        collect_inline_pack,
+        discover_build_config,
+        is_pack_dir,
+        load_build_config,
+    )
+
+    bi_is_pack = is_pack_dir(build_info)
+    src_is_pack = is_pack_dir(sources)
+    bi_pack = _load_pack_or_raise(build_info) if (bi_is_pack and build_info is not None) else None
+    src_pack = _load_pack_or_raise(sources) if (src_is_pack and sources is not None) else None
+
+    raw_build_info = None if (build_info is None or bi_is_pack) else build_info
+    raw_sources = None if (sources is None or src_is_pack) else sources
+
+    inline_pack: BuildSourcePack | None = None
+    if raw_build_info is not None or raw_sources is not None:
+        cfg_path = build_config or discover_build_config(raw_sources)
+        try:
+            cfg = load_build_config(cfg_path) if cfg_path is not None else None
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        inline_pack = collect_inline_pack(
+            sources=raw_sources,
+            build_info=raw_build_info,
+            build_config=cfg,
+            allow_build_query=allow_build_query,
+            base_build=bi_pack.build_evidence if bi_pack else None,
+            clang_bin=clang_bin,
+            scope=scope,
+        )
+
+    # --build-info (pack) wins L3, --sources (pack) wins L4/L5, the inline pack
+    # backfills both; coverage is rebuilt per layer from the supplying pack.
+    merged = _combine_packs(bi_pack, src_pack, inline_pack)
+    if merged is None:
+        return
+    snap.build_source = merged
+    # Provenance hint: prefer the source input, else build-info.
+    hint = str(sources) if sources is not None else str(build_info)
+    snap.build_source_pack = merged.to_ref(path_hint=hint)
+
+
+@main.command("merge")
+@click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("-o", "--output", "output", type=click.Path(path_type=Path), required=True,
+              help="Output combined baseline snapshot (.abi.json).")
+@click.option("-v", "--verbose", is_flag=True, default=False)
+def merge_cmd(inputs: tuple[Path, ...], output: Path, verbose: bool) -> None:
+    """Combine independently-produced dumps into one self-contained baseline.
+
+    \b
+    Each INPUT is a `.abi.json` produced by `abicheck dump`. The realistic flow
+    is one artifact-side dump plus one source-side dump prepared in parallel:
+
+    \b
+      abicheck dump libfoo.so -H include/   -o libfoo.bin.json   # L0/L1/L2
+      abicheck dump --sources ./libfoo-src/ -o libfoo.src.json   # L3/L4/L5
+      abicheck merge libfoo.bin.json libfoo.src.json -o libfoo.baseline.json
+
+    The binary-bearing snapshot becomes the base (its ABI surface is kept); every
+    input's embedded `build_source` facts are folded together per layer (each
+    layer should come from exactly one input) and embedded in the output, so
+    `compare old new` carries L3/L4/L5 with no out-of-band directories.
+    """
+    from .serialization import load_snapshot, snapshot_to_json
+
+    if len(inputs) < 2:
+        raise click.UsageError("merge needs at least two input snapshots.")
+
+    snaps = [(path, load_snapshot(path)) for path in inputs]
+
+    # Base = the input that carries binary metadata (L0); else the first input.
+    base_path, base = next(
+        (
+            (p, s) for p, s in snaps
+            if s.elf is not None or s.pe is not None or s.macho is not None
+        ),
+        snaps[0],
+    )
+
+    # Fold every input's embedded pack together, left to right.
+    combined: BuildSourcePack | None = None
+    contributors = 0
+    for _p, s in snaps:
+        if s.build_source is None:
+            continue
+        contributors += 1
+        combined = _combine_packs(combined, s.build_source)
+
+    if combined is None:
+        click.echo(
+            "Note: no input carried embedded build_source facts; the merged "
+            "baseline is the base snapshot's ABI surface only.",
+            err=True,
+        )
+    else:
+        base.build_source = combined
+        base.build_source_pack = combined.to_ref(path_hint=str(output))
+
+    output.write_text(snapshot_to_json(base), encoding="utf-8")
+    click.echo(f"Merged baseline written to {output}", err=True)
+    click.echo(f"  base ABI surface: {base_path.name}", err=True)
+    click.echo(f"  build_source contributors: {contributors}/{len(snaps)}", err=True)
+    if combined is not None:
+        for cov in combined.manifest.coverage:
+            if _layer_value(cov.layer) in {
+                DataLayer.L3_BUILD.value,
+                DataLayer.L4_SOURCE_ABI.value,
+                DataLayer.L5_SOURCE_GRAPH.value,
+            }:
+                click.echo(f"  {cov.layer}: {cov.status.value}", err=True)
+
+
+def _resolve_side_pack(
+    build_info: Path | None,
+    sources: Path | None,
+    snap: AbiSnapshot | None,
+) -> BuildSourcePack | None:
+    """Resolve one compare side's pack from flags first, then embedded facts.
+
+    Explicit ``--*-build-info`` / ``--*-sources`` pack directories override the
+    snapshot's embedded payload per layer; when neither flag is given the
+    embedded ``snap.build_source`` is used as-is (single-artifact UX).
+    """
+    bi_pack = _load_pack_or_raise(build_info) if build_info is not None else None
+    src_pack = _load_pack_or_raise(sources) if sources is not None else None
+    embedded = snap.build_source if snap is not None else None
+    if bi_pack is None and src_pack is None:
+        return embedded
+
+    # Each flag's pack exposes *every* layer it carries (a pack collected by
+    # `abicheck collect` may hold build + source + graph). --build-info wins for
+    # L3, --sources wins for L4/L5, the embedded payload backfills, and the
+    # coverage manifest is rebuilt per-layer from the supplying pack.
+    return _combine_packs(bi_pack, src_pack, embedded)
+
+
+def diff_embedded_build_source(
+    old_build_info: Path | None,
+    new_build_info: Path | None,
+    old_sources: Path | None,
+    new_sources: Path | None,
+    collect_mode: str,
     new_snapshot: AbiSnapshot,
     old_snapshot: AbiSnapshot | None = None,
 ) -> tuple[list[Change], list[dict[str, object]]]:
-    """Load packs, diff their build evidence, echo coverage, return findings.
+    """Diff each side's build-info + source facts, echo coverage, return findings.
 
-    Per ADR-028 D3 the build-context findings are folded into the ordinary
-    verdict pipeline as ``extra_changes`` and never override artifact-backed
-    verdicts. The D7 coverage table is printed to stderr here (covers every
-    output format) and also returned as serialized rows so the JSON report can
-    carry a structured ``evidence_coverage`` block. Returns
+    Each side's facts come from the snapshot's *embedded* ``build_source``
+    payload (single-artifact UX) unless an out-of-band ``--*-build-info`` /
+    ``--*-sources`` pack directory overrides it. Per ADR-028 D3 the findings are
+    folded into the ordinary verdict pipeline as ``extra_changes`` and never
+    override artifact-backed verdicts. The D7 coverage table is printed to
+    stderr (covers every output format) and also returned as serialized rows so
+    the JSON report can carry a structured ``layer_coverage`` block. Returns
     ``(changes, coverage_rows)``.
 
     When ``old_snapshot`` is supplied, the base and target coverage are compared
@@ -1082,20 +1352,21 @@ def collect_compare_evidence(
     ``EVIDENCE_COVERAGE_ASYMMETRIC`` finding spells out exactly which pieces the
     target is missing so the degraded comparison is never silent.
     """
-    from .evidence.build_diff import check_header_parse_drift, diff_build_evidence
+    from .buildsource.build_diff import check_header_parse_drift, diff_build_evidence
 
-    if old_evidence is None and new_evidence is None:
-        if evidence_mode != "off":
+    old_pack = _resolve_side_pack(old_build_info, old_sources, old_snapshot)
+    new_pack = _resolve_side_pack(new_build_info, new_sources, new_snapshot)
+
+    if old_pack is None and new_pack is None:
+        if collect_mode != "off":
             click.echo(
-                f"Note: --evidence-mode {evidence_mode} requested but no evidence "
-                "packs were provided; inline collection for this mode is not yet "
-                "available. Use `abicheck collect-evidence` + --old/--new-evidence.",
+                f"Note: --collect-mode {collect_mode} requested but no build-info/"
+                "source facts were embedded or supplied; inline collection for "
+                "this mode is not yet available. Use `abicheck collect` then embed "
+                "with `dump --build-info/--sources` (or pass --old/new pack dirs).",
                 err=True,
             )
         return [], []
-
-    old_pack = _load_pack_or_raise(old_evidence) if old_evidence else None
-    new_pack = _load_pack_or_raise(new_evidence) if new_evidence else None
 
     changes: list[Change] = []
     old_build = old_pack.build_evidence if old_pack else None
@@ -1125,7 +1396,7 @@ def collect_compare_evidence(
     old_surface = old_pack.source_abi if old_pack else None
     new_surface = new_pack.source_abi if new_pack else None
     if old_surface is not None and new_surface is not None:
-        from .evidence.source_diff import diff_source_abi
+        from .buildsource.source_diff import diff_source_abi
         changes.extend(diff_source_abi(old_surface, new_surface))
 
     # L5 source graph diff (ADR-031 D6): both packs must carry a graph summary.
@@ -1134,15 +1405,21 @@ def collect_compare_evidence(
     old_graph = old_pack.source_graph if old_pack else None
     new_graph = new_pack.source_graph if new_pack else None
     if old_graph is not None and new_graph is not None:
-        from .evidence.source_graph import diff_source_graph_findings
+        from .buildsource.source_graph import diff_source_graph_findings
         changes.extend(diff_source_graph_findings(old_graph, new_graph))
 
-    src_pack = new_pack or old_pack
-    coverage = list(src_pack.manifest.coverage) if src_pack else []
-    if not coverage:
+    # Coverage/capability reflect the *target* (new) side only: the L3/L4/L5
+    # diffs run only when both sides supply a layer, so reporting the old pack's
+    # coverage when the new side has none would over-claim that source/build
+    # checks ran for this scan (Codex review). new_pack's manifest already
+    # carries one honest row per managed layer (_combine_packs); when the new
+    # side has no pack at all, every managed layer is not_collected.
+    if new_pack is not None:
+        coverage = list(new_pack.manifest.coverage)
+    else:
         coverage = [
             LayerCoverage(layer=layer.value, status=CoverageStatus.NOT_COLLECTED)
-            for layer in (EvidenceLayer.L3_BUILD, EvidenceLayer.L4_SOURCE_ABI, EvidenceLayer.L5_SOURCE_GRAPH)
+            for layer in (DataLayer.L3_BUILD, DataLayer.L4_SOURCE_ABI, DataLayer.L5_SOURCE_GRAPH)
         ]
     intrinsic = _intrinsic_coverage(new_snapshot)
     _echo_coverage(intrinsic, coverage)
@@ -1151,9 +1428,9 @@ def collect_compare_evidence(
     return changes, coverage_rows
 
 
-def _load_pack_or_raise(evidence_dir: Path) -> EvidencePack:
+def _load_pack_or_raise(evidence_dir: Path) -> BuildSourcePack:
     try:
-        return EvidencePack.load(evidence_dir)
+        return BuildSourcePack.load(evidence_dir)
     except (FileNotFoundError, ValueError) as exc:
         raise click.ClickException(f"Invalid evidence pack at {evidence_dir}: {exc}") from exc
 
@@ -1164,7 +1441,7 @@ def _intrinsic_coverage(snap: AbiSnapshot) -> list[LayerCoverage]:
         return LayerCoverage(
             layer=layer,
             status=CoverageStatus.PRESENT if present else CoverageStatus.NOT_COLLECTED,
-            confidence=EvidenceConfidence.HIGH if present else EvidenceConfidence.UNKNOWN,
+            confidence=LayerConfidence.HIGH if present else LayerConfidence.UNKNOWN,
             detail=detail,
         )
 
@@ -1198,7 +1475,7 @@ def _echo_coverage(intrinsic: list[LayerCoverage], optional: list[LayerCoverage]
         click.echo(f"  {_LAYER_NAMES.get(cov.layer, cov.layer):<26} {cov.status.value}{extra}", err=True)
 
 
-def _layer_presence(snap: AbiSnapshot, pack: EvidencePack | None) -> dict[str, bool]:
+def _layer_presence(snap: AbiSnapshot, pack: BuildSourcePack | None) -> dict[str, bool]:
     """Map every evidence layer id → present? for one side of the compare.
 
     L0/L1/L2 are intrinsic to the snapshot; L3/L4/L5 come from the pack manifest
@@ -1210,18 +1487,18 @@ def _layer_presence(snap: AbiSnapshot, pack: EvidencePack | None) -> dict[str, b
         for row in _intrinsic_coverage(snap)
     }
     by_layer = {c.layer: c.present for c in (pack.manifest.coverage if pack else [])}
-    for layer in (EvidenceLayer.L3_BUILD, EvidenceLayer.L4_SOURCE_ABI, EvidenceLayer.L5_SOURCE_GRAPH):
+    for layer in (DataLayer.L3_BUILD, DataLayer.L4_SOURCE_ABI, DataLayer.L5_SOURCE_GRAPH):
         present[layer.value] = by_layer.get(layer.value, False)
     if pack is not None and pack.build_evidence is not None:
-        present[EvidenceLayer.L3_BUILD.value] = True
+        present[DataLayer.L3_BUILD.value] = True
     return present
 
 
 def _detect_coverage_asymmetry(
     old_snap: AbiSnapshot,
-    old_pack: EvidencePack | None,
+    old_pack: BuildSourcePack | None,
     new_snap: AbiSnapshot,
-    new_pack: EvidencePack | None,
+    new_pack: BuildSourcePack | None,
 ) -> list[Change]:
     """Flag layers the base was analyzed with but the target lacks (ADR-028 D7).
 
@@ -1260,7 +1537,7 @@ def _detect_coverage_asymmetry(
                 "changes only those missing layers could prove are NOT reported "
                 "and this verdict must not be read as a full-coverage result. "
                 "Re-scan the target with the same inputs (e.g. -g for debug "
-                "info, collect-evidence for build/source context) to restore "
+                "info, collect for build/source context) to restore "
                 "full coverage."
             ),
             old_value=human,
@@ -1333,14 +1610,14 @@ def _load_source_graph(path: Path) -> SourceGraphSummary:
     """
     import json as _json
 
-    from .evidence.source_graph import SourceGraphSummary
+    from .buildsource.source_graph import SourceGraphSummary
 
     if path.is_dir():
         pack = _load_pack_or_raise(path)
         if pack.source_graph is None:
             raise click.ClickException(
                 f"Evidence pack at {path} has no L5 source graph "
-                "(collect it with `collect-evidence --source-graph summary`)."
+                "(collect it with `collect --source-graph summary`)."
             )
         return pack.source_graph
     if not path.is_file():
@@ -1374,7 +1651,7 @@ def compare_graph_cmd(old: Path, new: Path, fmt: str) -> None:
 
     \b
     OLD and NEW may each be a `graph/source_graph_summary.json` file or an
-    evidence-pack directory produced by `collect-evidence --source-graph summary`.
+    evidence-pack directory produced by `collect --source-graph summary`.
 
     The diff is structural — which nodes/edges entered or left the graph. Per
     ADR-028 D3 / ADR-031 D6 it *explains and prioritizes* impact; it never, on
@@ -1382,7 +1659,7 @@ def compare_graph_cmd(old: Path, new: Path, fmt: str) -> None:
     """
     import json as _json
 
-    from .evidence.source_graph import diff_source_graph, diff_source_graph_findings
+    from .buildsource.source_graph import diff_source_graph, diff_source_graph_findings
 
     old_graph = _load_source_graph(old)
     new_graph = _load_source_graph(new)
@@ -1432,8 +1709,8 @@ def compare_graph_cmd(old: Path, new: Path, fmt: str) -> None:
 
 
 @main.command("explain-finding")
-@click.option("--evidence", "evidence", type=click.Path(path_type=Path), required=True,
-              help="Evidence-pack directory (or a source_graph_summary.json) to explain through.")
+@click.option("--sources", "sources", type=click.Path(path_type=Path), required=True,
+              help="Source/graph pack directory (or a source_graph_summary.json) to explain through.")
 @click.option("--symbol", "symbol", default="", help="Exported (mangled) binary symbol to localize.")
 @click.option("--report", "report", type=click.Path(path_type=Path), default=None,
               help="A `compare --format json` report; with --finding-id, resolves the symbol from it.")
@@ -1442,7 +1719,7 @@ def compare_graph_cmd(old: Path, new: Path, fmt: str) -> None:
 @click.option("--format", "fmt", default="text", show_default=True,
               type=click.Choice(["text", "json"], case_sensitive=False))
 def explain_finding_cmd(
-    evidence: Path, symbol: str, report: Path | None, finding_id: str, fmt: str,
+    sources: Path, symbol: str, report: Path | None, finding_id: str, fmt: str,
 ) -> None:
     """Localize a finding through L5 source-graph evidence (ADR-031 D8).
 
@@ -1454,9 +1731,9 @@ def explain_finding_cmd(
     """
     import json as _json
 
-    from .evidence.source_graph import localize_symbol
+    from .buildsource.source_graph import localize_symbol
 
-    graph = _load_source_graph(evidence)
+    graph = _load_source_graph(sources)
     if not symbol and report is not None:
         symbol = _resolve_symbol_from_report(report, finding_id)
     if not symbol:

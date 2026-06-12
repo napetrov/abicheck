@@ -179,7 +179,7 @@ class ChangeKind(str, Enum):
 
     # DWARF layout (Sprint 3)
     DWARF_INFO_MISSING = "dwarf_info_missing"  # new binary stripped of -g
-    EVIDENCE_COVERAGE_ASYMMETRIC = "evidence_coverage_asymmetric"  # base scanned with evidence the target lacks
+    EVIDENCE_COVERAGE_ASYMMETRIC = "layer_coverage_asymmetric"  # base scanned with evidence the target lacks
     STRUCT_SIZE_CHANGED = "struct_size_changed"  # sizeof(T) changed
     STRUCT_FIELD_OFFSET_CHANGED = "struct_field_offset_changed"  # field moved
     STRUCT_FIELD_REMOVED = "struct_field_removed"  # field deleted
@@ -511,7 +511,7 @@ class ChangeKind(str, Enum):
     UNDOCUMENTED_EXPORT_RATIO_INCREASED = "undocumented_export_ratio_increased"
 
     # ── Build-context evidence (ADR-028 L3 / ADR-029 D9) ────────────────────
-    # Emitted only by the build-evidence diff over two EvidencePacks. These are
+    # Emitted only by the build-evidence diff over two BuildSourcePacks. These are
     # source/build-context findings, not artifact-backed ABI breaks: per
     # ADR-028 D3 they default to COMPATIBLE (quality) or RISK and never to
     # BREAKING. When a build-context change actually breaks the ABI, the
@@ -586,6 +586,16 @@ class ChangeKind(str, Enum):
     # change is observable even when the library ships fully stripped of DWARF.
     VTABLE_SLOT_COUNT_CHANGED = "vtable_slot_count_changed"  # _ZTV size delta → virtual method add/remove/reorder → BREAKING
     RTTI_INHERITANCE_CHANGED = "rtti_inheritance_changed"  # _ZTI size delta → base-class set/shape changed → BREAKING
+
+    @classmethod
+    def _missing_(cls, value: object) -> ChangeKind | None:
+        # Back-compat: accept the pre-rename serialized value so reports and
+        # policy files written before the evidence→buildsource rename still
+        # deserialize. ``evidence_coverage_asymmetric`` was renamed to
+        # ``layer_coverage_asymmetric``; the meaning is unchanged.
+        if value == "evidence_coverage_asymmetric":
+            return cls.EVIDENCE_COVERAGE_ASYMMETRIC
+        return None
 
 
 class HasKind(Protocol):

@@ -59,7 +59,7 @@ from .model import AbiSnapshot
 from .serialization import snapshot_to_json
 
 if TYPE_CHECKING:
-    from .evidence.pack import EvidencePack
+    from .buildsource.pack import BuildSourcePack
 
 _logger = logging.getLogger(__name__)
 
@@ -185,7 +185,7 @@ class BaselineMetadata:
     checksum: str | None = None
     signature: str | None = None
     #: ``sha256:<hex>`` content hash of the optional evidence pack stored with
-    #: this baseline (``EvidencePack.content_hash()``), or ``None`` when no pack
+    #: this baseline (``BuildSourcePack.content_hash()``), or ``None`` when no pack
     #: was pushed. Lets ``pull_evidence`` verify the stored pack has not drifted
     #: from what was recorded, the same integrity discipline ``checksum`` gives
     #: the snapshot (ADR-028 Phase 5).
@@ -260,7 +260,7 @@ class BaselineRegistry(Protocol):
         key: BaselineKey,
         snapshot: AbiSnapshot,
         metadata: BaselineMetadata | None = None,
-        evidence: EvidencePack | None = None,
+        evidence: BuildSourcePack | None = None,
     ) -> str:
         """Store a baseline snapshot (and an optional evidence pack). Returns a reference ID."""
         ...
@@ -269,7 +269,7 @@ class BaselineRegistry(Protocol):
         """Retrieve a baseline by key. Returns None if not found."""
         ...
 
-    def pull_evidence(self, key: BaselineKey) -> EvidencePack | None:
+    def pull_evidence(self, key: BaselineKey) -> BuildSourcePack | None:
         """Retrieve the evidence pack stored with a baseline, or None if absent."""
         ...
 
@@ -328,7 +328,7 @@ class FilesystemRegistry:
         key: BaselineKey,
         snapshot: AbiSnapshot,
         metadata: BaselineMetadata | None = None,
-        evidence: EvidencePack | None = None,
+        evidence: BuildSourcePack | None = None,
     ) -> str:
         """Store a baseline snapshot to the filesystem (atomic writes).
 
@@ -396,11 +396,11 @@ class FilesystemRegistry:
         return ref
 
     @staticmethod
-    def _store_evidence(evidence: EvidencePack, dest: Path) -> tuple[str, Path | None]:
+    def _store_evidence(evidence: BuildSourcePack, dest: Path) -> tuple[str, Path | None]:
         """Swap an evidence pack into ``dest``; return ``(content_hash, staging)``.
 
         The pack must already be materialized on disk (a ``manifest.json`` under
-        ``evidence.root``); ``collect-evidence`` and ``EvidencePack.write()``
+        ``evidence.root``); ``collect`` and ``BuildSourcePack.write()``
         guarantee that. Copying the whole tree preserves both ``normalized/``
         facts and ``raw/`` provenance (ADR-028 D4).
 
@@ -414,7 +414,7 @@ class FilesystemRegistry:
         if not manifest.is_file():
             raise ValidationError(
                 f"Evidence pack at {evidence.root} has no manifest.json; "
-                "run `abicheck collect-evidence` (or EvidencePack.write()) first."
+                "run `abicheck collect` (or BuildSourcePack.write()) first."
             )
         # Reject a source pack that already fails its own integrity check (a
         # normalized payload edited/partially written after write()). Storing it
@@ -492,7 +492,7 @@ class FilesystemRegistry:
         _logger.info("Baseline pulled: %s", key.path)
         return snapshot, meta
 
-    def pull_evidence(self, key: BaselineKey) -> EvidencePack | None:
+    def pull_evidence(self, key: BaselineKey) -> BuildSourcePack | None:
         """Load the evidence pack stored with a baseline (ADR-028 Phase 5).
 
         Returns ``None`` when the baseline has no pack. Raises
@@ -500,7 +500,7 @@ class FilesystemRegistry:
         match the hash recorded at push time — mirroring the snapshot checksum
         guard so a tampered/partial pack is not silently trusted.
         """
-        from .evidence.pack import EvidencePack
+        from .buildsource.pack import BuildSourcePack
 
         key_dir = self._key_dir(key)
         evidence_dir = key_dir / _EVIDENCE_SUBDIR
@@ -527,7 +527,7 @@ class FilesystemRegistry:
         # which only wraps AbicheckError) — a tampered stored pack must surface as
         # a BaselineIntegrityError, not a stack trace (Codex review).
         try:
-            pack = EvidencePack.load(evidence_dir)
+            pack = BuildSourcePack.load(evidence_dir)
         except (ValueError, OSError) as exc:
             raise BaselineIntegrityError(
                 f"Evidence pack for baseline {key.path} could not be loaded "

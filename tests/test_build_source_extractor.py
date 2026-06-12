@@ -32,7 +32,7 @@ import sys
 import pytest
 import yaml
 
-from abicheck.evidence.extractor import (
+from abicheck.buildsource.extractor import (
     DEFAULT_ALLOWED_ACTIONS,
     ActionNotPermittedError,
     CollectionAction,
@@ -47,14 +47,14 @@ from abicheck.evidence.extractor import (
     require_action,
     resolve_allowed_actions,
 )
-from abicheck.evidence.extractor_manifest import (
+from abicheck.buildsource.extractor_manifest import (
     ExternalCliExtractor,
     ManifestError,
     load_extractor_manifest,
     render_command,
     run_external_extractor,
 )
-from abicheck.evidence.model import ExtractorRecord
+from abicheck.buildsource.model import ExtractorRecord
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -445,7 +445,7 @@ def test_audit_mode_keeps_full_stderr(tmp_path):
         "outputs": [{"kind": "build_evidence", "path": "build/be.json"}],
     }
     manifest = load_extractor_manifest(_dump(tmp_path, data))
-    from abicheck.evidence.extractor import CollectionMode
+    from abicheck.buildsource.extractor import CollectionMode
 
     pack_root = tmp_path / "pack"
     pack_root.mkdir()
@@ -815,7 +815,7 @@ def test_external_extractor_missing_input_is_failed_not_crash(tmp_path):
     assert any("build_dir" in d for d in record.diagnostics)
 
 
-# ── CLI integration: `collect-evidence --extractor-manifest` ──────────────────
+# ── CLI integration: `collect --extractor-manifest` ──────────────────
 
 
 def _cli(args):
@@ -829,7 +829,7 @@ def _cli(args):
 def test_cli_registers_external_extractor_and_folds_build_evidence(tmp_path):
     manifest = _dump(tmp_path, _tool_manifest_dict(name="cli-fake"), name="cli.yaml")
     out = tmp_path / "pack"
-    result = _cli(["collect-evidence", "--extractor-manifest", str(manifest), "-o", str(out)])
+    result = _cli(["collect", "--extractor-manifest", str(manifest), "-o", str(out)])
     assert result.exit_code == 0, result.output
     data = json.loads((out / "manifest.json").read_text())
     rec = next(e for e in data["extractors"] if e["name"] == "cli-fake")
@@ -842,7 +842,7 @@ def test_cli_registers_external_extractor_and_folds_build_evidence(tmp_path):
 def test_cli_action_ceiling_skips_in_permissive_mode(tmp_path):
     manifest = _dump(tmp_path, _tool_manifest_dict(name="cli-fake", action="query_build_system"), name="q.yaml")
     out = tmp_path / "pack"
-    result = _cli(["collect-evidence", "--extractor-manifest", str(manifest), "-o", str(out)])
+    result = _cli(["collect", "--extractor-manifest", str(manifest), "-o", str(out)])
     assert result.exit_code == 0, result.output  # permissive: skipped, not fatal
     data = json.loads((out / "manifest.json").read_text())
     rec = next(e for e in data["extractors"] if e["name"] == "cli-fake")
@@ -853,7 +853,7 @@ def test_cli_action_ceiling_allowed_with_flag(tmp_path):
     manifest = _dump(tmp_path, _tool_manifest_dict(name="cli-fake", action="query_build_system"), name="q2.yaml")
     out = tmp_path / "pack"
     result = _cli(
-        ["collect-evidence", "--extractor-manifest", str(manifest), "--allow-build-query", "-o", str(out)]
+        ["collect", "--extractor-manifest", str(manifest), "--allow-build-query", "-o", str(out)]
     )
     assert result.exit_code == 0, result.output
     data = json.loads((out / "manifest.json").read_text())
@@ -865,7 +865,7 @@ def test_cli_bad_manifest_recorded_and_permissive_continues(tmp_path):
     bad = tmp_path / "bad.yaml"
     bad.write_text("- not a mapping\n")
     out = tmp_path / "pack"
-    result = _cli(["collect-evidence", "--extractor-manifest", str(bad), "-o", str(out)])
+    result = _cli(["collect", "--extractor-manifest", str(bad), "-o", str(out)])
     assert result.exit_code == 0, result.output
     data = json.loads((out / "manifest.json").read_text())
     rec = next(e for e in data["extractors"] if e["name"].startswith("external:"))
@@ -880,7 +880,7 @@ def test_cli_permissive_continues_on_failed_extractor(tmp_path):
     }
     manifest = _dump(tmp_path, data, name="fail.yaml")
     out = tmp_path / "pack"
-    result = _cli(["collect-evidence", "--extractor-manifest", str(manifest), "-o", str(out)])
+    result = _cli(["collect", "--extractor-manifest", str(manifest), "-o", str(out)])
     assert result.exit_code == 0, result.output  # permissive: failure is non-fatal
     rec = next(
         e for e in json.loads((out / "manifest.json").read_text())["extractors"]
@@ -904,7 +904,7 @@ def test_cli_malformed_build_evidence_is_failed_not_crash(tmp_path):
     }
     manifest = _dump(tmp_path, data, name="malformed.yaml")
     out = tmp_path / "pack"
-    result = _cli(["collect-evidence", "--extractor-manifest", str(manifest), "-o", str(out)])
+    result = _cli(["collect", "--extractor-manifest", str(manifest), "-o", str(out)])
     assert result.exit_code == 0, result.output
     rec = next(
         e for e in json.loads((out / "manifest.json").read_text())["extractors"]
@@ -942,7 +942,7 @@ def test_cli_malformed_later_output_merges_nothing(tmp_path):
     }
     manifest = _dump(tmp_path, data, name="multi.yaml")
     out = tmp_path / "pack"
-    result = _cli(["collect-evidence", "--extractor-manifest", str(manifest), "-o", str(out)])
+    result = _cli(["collect", "--extractor-manifest", str(manifest), "-o", str(out)])
     assert result.exit_code == 0, result.output
     rec = next(
         e for e in json.loads((out / "manifest.json").read_text())["extractors"]
@@ -968,7 +968,7 @@ def test_cli_non_object_build_evidence_is_failed_not_crash(tmp_path):
     }
     manifest = _dump(tmp_path, data, name="nonobj.yaml")
     out = tmp_path / "pack"
-    result = _cli(["collect-evidence", "--extractor-manifest", str(manifest), "-o", str(out)])
+    result = _cli(["collect", "--extractor-manifest", str(manifest), "-o", str(out)])
     assert result.exit_code == 0, result.output
     rec = next(
         e for e in json.loads((out / "manifest.json").read_text())["extractors"]
@@ -1000,7 +1000,7 @@ def test_cli_source_root_placeholder_supplied(tmp_path):
     src.mkdir()
     out = tmp_path / "pack"
     result = _cli(
-        ["collect-evidence", "--extractor-manifest", str(manifest), "--source-root", str(src), "-o", str(out)]
+        ["collect", "--extractor-manifest", str(manifest), "--source-root", str(src), "-o", str(out)]
     )
     assert result.exit_code == 0, result.output
     rec = next(
@@ -1014,7 +1014,7 @@ def test_cli_failed_extractor_does_not_pollute_pack_artifacts(tmp_path):
     # A failed external extractor's invalid normalized output must not be hashed
     # into the pack's artifact digests (the ledger row legitimately still records
     # the failed run, but its invalid evidence must be isolated) (Codex P2).
-    from abicheck.evidence.pack import EvidencePack
+    from abicheck.buildsource.pack import BuildSourcePack
 
     # An extractor whose normalized output is valid JSON but invalid BuildEvidence.
     bad = (
@@ -1028,9 +1028,9 @@ def test_cli_failed_extractor_does_not_pollute_pack_artifacts(tmp_path):
     }
     manifest = _dump(tmp_path, data, name="poll.yaml")
     out = tmp_path / "pack"
-    r1 = _cli(["collect-evidence", "--extractor-manifest", str(manifest), "-o", str(out)])
+    r1 = _cli(["collect", "--extractor-manifest", str(manifest), "-o", str(out)])
     assert r1.exit_code == 0, r1.output
-    pack = EvidencePack.load(out)
+    pack = BuildSourcePack.load(out)
     rec = next(e for e in pack.manifest.extractors if e.name == "polluter")
     assert rec.status == "failed"
     # The invalid normalized output is purged and contributes no artifact digest.
@@ -1055,7 +1055,7 @@ def test_cli_unsupported_output_kind_is_failed(tmp_path):
     }
     manifest = _dump(tmp_path, data, name="l4.yaml")
     out = tmp_path / "pack"
-    result = _cli(["collect-evidence", "--extractor-manifest", str(manifest), "-o", str(out)])
+    result = _cli(["collect", "--extractor-manifest", str(manifest), "-o", str(out)])
     assert result.exit_code == 0, result.output  # permissive: recorded, not fatal
     rec = next(
         e for e in json.loads((out / "manifest.json").read_text())["extractors"]
@@ -1095,7 +1095,7 @@ def test_cli_strict_mode_fails_on_skipped_extractor(tmp_path):
     manifest = _dump(tmp_path, _tool_manifest_dict(name="cli-gated", action="query_build_system"), name="gated.yaml")
     out = tmp_path / "pack"
     result = _cli(
-        ["collect-evidence", "--extractor-manifest", str(manifest), "--collection-mode", "strict", "-o", str(out)]
+        ["collect", "--extractor-manifest", str(manifest), "--collection-mode", "strict", "-o", str(out)]
     )
     assert result.exit_code != 0
     assert "strict collection mode" in result.output
@@ -1112,7 +1112,7 @@ def test_cli_strict_mode_fails_on_broken_extractor(tmp_path):
     manifest = _dump(tmp_path, data, name="broken-cli.yaml")
     out = tmp_path / "pack"
     result = _cli(
-        ["collect-evidence", "--extractor-manifest", str(manifest), "--collection-mode", "strict", "-o", str(out)]
+        ["collect", "--extractor-manifest", str(manifest), "--collection-mode", "strict", "-o", str(out)]
     )
     assert result.exit_code != 0
     assert "strict collection mode" in result.output
