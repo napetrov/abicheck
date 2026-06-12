@@ -1,8 +1,20 @@
 # Change Kind Reference
 
-This page lists all `ChangeKind` values detected by abicheck, their default verdict,
-and what they mean. Use this reference to understand what each detected change implies
-for binary ABI compatibility, source API compatibility, or neither.
+This page documents the most commonly encountered `ChangeKind` values, their
+default verdict, and what they mean. Use this reference to understand what each
+detected change implies for binary ABI compatibility, source API compatibility,
+or neither.
+
+> **Scope:** this is a curated reference, not the exhaustive list — specialised
+> kinds (multi-library bundle skew, SYCL plugin-interface, build-context and
+> source-evidence findings) are documented on their feature pages
+> ([Multi-Binary Releases](../user-guide/multi-binary.md),
+> [Plugin Systems](../user-guide/plugin-systems.md),
+> [Build & Source Packs](../concepts/build-source-data.md)). The authoritative,
+> always-complete list is the `ChangeKind` enum in
+> [`abicheck/checker_policy.py`](https://github.com/napetrov/abicheck/blob/main/abicheck/checker_policy.py),
+> and CI enforces that every kind is classified, produced by a detector, and
+> mentioned in the docs.
 
 **Verdict overview:**
 

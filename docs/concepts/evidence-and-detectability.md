@@ -10,7 +10,10 @@
 
 This page is the conceptual companion to the practical
 [Limitations](limitations.md) and [Tool Comparison](../reference/tool-comparison.md)
-pages. It answers the question users ask most often:
+pages; for the teaching-track version — which break families need which evidence,
+with worked example cases — see
+[Part 8 of the learning series](abi-series/08-detection.md). It answers the
+question users ask most often:
 
 > "Why did tool A catch this and tool B didn't?"
 
@@ -44,6 +47,10 @@ raise.** A struct-field insertion is invisible at L0 but obvious at L1
 ([case07](../examples/case07_struct_layout.md)); an internal-struct change that
 *looks* like a break at L1 is correctly dismissed once L2 headers reveal the
 struct is non-public ([case118](../examples/case118_internal_struct_field_added_scoped.md)).
+
+> An optional sixth source — the **L5 source/build graph** (include/type/call
+> reachability, ADR-031) — extends L4 to *localize and explain* findings; it is
+> covered with the other pack layers in [Build & Source Packs](build-source-data.md).
 
 ### How they combine
 

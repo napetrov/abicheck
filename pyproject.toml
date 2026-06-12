@@ -158,6 +158,7 @@ markers = [
     "integration: requires castxml, gcc/g++ installed",
     "libabigail: requires abidiff + gcc/g++ — libabigail parity tests",
     "abicc: requires abi-compliance-checker + gcc/g++ — ABICC parity tests",
+    "msvc: requires MSVC cl.exe (Windows) — MSVC+PDB end-to-end lane",
     "slow: marks tests as slow (hypothesis / performance benchmarks)",
     "golden: golden-output snapshot tests",
 ]

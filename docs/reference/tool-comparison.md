@@ -3,12 +3,11 @@
 This document explains how each ABI checking tool works, what analysis method it uses,
 benchmark results across real-world test cases, and why the numbers come out the way they do.
 
-> **Note:** abicheck detects 100+ change types (see [Change Kind Reference](change-kinds.md)).
+> **Note:** abicheck detects 238 change kinds (see [Change Kind Reference](change-kinds.md)).
 > The current cross-tool benchmark covers a pinned 74-case subset of the
 > `examples/` catalog (`case01`-`case73` + `case26b`); the full catalog now has
-> 121 cases. The subset is pinned so accuracy numbers stay reproducible across
-> releases. A historical 42-case snapshot is kept below only for comparison with
-> older reports.
+> 129 cases. The subset is pinned so accuracy numbers stay reproducible across
+> releases.
 
 > **Why the tools disagree.** The accuracy gaps below are mostly an *evidence*
 > story: each tool sees a different subset of the binary/debug/header inputs. For
@@ -275,17 +274,17 @@ Each case in [`examples/ground_truth.json`](https://github.com/napetrov/abicheck
 carries a `min_evidence` field — the weakest source at which abicheck reaches the
 correct verdict — derived by
 [`scripts/evidence_tiers.py`](https://github.com/napetrov/abicheck/blob/main/scripts/evidence_tiers.py)
-and validated by `tests/test_evidence_tiers.py`. Aggregated over the 126-case
+and validated by `tests/test_evidence_tiers.py`. Aggregated over the 129-case
 catalog, that yields the cumulative coverage the `--evidence-tiers` summary
 prints:
 
 | Source provided | Layer | Cases first detectable here | Cumulative | Representative cases |
 |-----------------|:-----:|:---------------------------:|:----------:|----------------------|
-| Just the binary | L0 | 40 | **40 / 126 (32%)** | symbol removal ([01](../examples/case01_symbol_removal.md)), SONAME ([05](../examples/case05_soname.md)), visibility ([06](../examples/case06_visibility.md)), symbol-version removed ([65](../examples/case65_symbol_version_removed.md)), all 5 bundle cases |
-| + Debug symbols | L1 | 62 | **102 / 126 (81%)** | struct layout ([07](../examples/case07_struct_layout.md)), enum value ([08](../examples/case08_enum_value_change.md)), vtable ([09](../examples/case09_cpp_vtable.md)), calling convention ([64](../examples/case64_calling_convention_changed.md)), bitfield ([63](../examples/case63_bitfield_changed.md)), toolchain flag drift ([103](../examples/case103_toolchain_flag_drift.md)) |
-| + Public headers | L2 | 23 | **125 / 126 (99%)** | access level ([34](../examples/case34_access_level.md)), default arg removed ([123](../examples/case123_default_argument_removed.md)), class `final` ([125](../examples/case125_class_became_final.md)), `detail::` leaks ([74](../examples/case74_detail_base_class_changed.md)–[77](../examples/case77_detail_templated_base_changed.md)), scoped-internal *no-change* ([118](../examples/case118_internal_struct_field_added_scoped.md)–[120](../examples/case120_internal_struct_reordered_scoped.md)) |
-| + Build data | L3 | 0 | **125 / 126 (99%)** | *(no catalog case requires L3 alone yet — see note)* |
-| + Sources | L4 | 1 | **126 / 126 (100%)** | uninstantiated template ([122](../examples/case122_template_signature_uninstantiated.md), documented gap) |
+| Just the binary | L0 | 42 | **42 / 129 (33%)** | symbol removal ([01](../examples/case01_symbol_removal.md)), SONAME ([05](../examples/case05_soname.md)), visibility ([06](../examples/case06_visibility.md)), symbol-version removed ([65](../examples/case65_symbol_version_removed.md)), all 5 bundle cases |
+| + Debug symbols | L1 | 63 | **105 / 129 (81%)** | struct layout ([07](../examples/case07_struct_layout.md)), enum value ([08](../examples/case08_enum_value_change.md)), vtable ([09](../examples/case09_cpp_vtable.md)), calling convention ([64](../examples/case64_calling_convention_changed.md)), bitfield ([63](../examples/case63_bitfield_changed.md)), toolchain flag drift ([103](../examples/case103_toolchain_flag_drift.md)) |
+| + Public headers | L2 | 23 | **128 / 129 (99%)** | access level ([34](../examples/case34_access_level.md)), default arg removed ([123](../examples/case123_default_argument_removed.md)), class `final` ([125](../examples/case125_class_became_final.md)), `detail::` leaks ([74](../examples/case74_detail_base_class_changed.md)–[77](../examples/case77_detail_templated_base_changed.md)), scoped-internal *no-change* ([118](../examples/case118_internal_struct_field_added_scoped.md)–[120](../examples/case120_internal_struct_reordered_scoped.md)) |
+| + Build data | L3 | 0 | **128 / 129 (99%)** | *(no catalog case requires L3 alone yet — see note)* |
+| + Sources | L4 | 1 | **129 / 129 (100%)** | uninstantiated template ([122](../examples/case122_template_signature_uninstantiated.md), documented gap) |
 
 > **Why L3 adds 0 here.** Build-flag drift *is* an L3 concern, but compilers
 > record their flags redundantly in debug info (`DW_AT_producer` /
@@ -381,84 +380,6 @@ timeout 600 python3 scripts/benchmark_comparison.py \
 ```
 
 ---
-
-## Legacy benchmark summary (2026-03-11, 42 cases)
-
-| Tool | Scored | Correct | Accuracy | Not scored | Time |
-|------|:------:|:-------:|:--------:|:----------:|------|
-| abicheck (compare) | 42 | 42 | **100%** | 0 | 212s |
-| abicheck (compat)  | 42 | 40 | 95% | 0 — 2 API_BREAK n/a | 79s |
-| abicheck (strict)  | 42 | 31 | 73% | 0 — 9 intentional FP | 78s |
-| abidiff            | 42 | 11 | 26% | 0 | 2.5s |
-| abidiff+headers    | 42 | 11 | 26% | 0 | 3.9s |
-| ABICC(dump)        | 30 | 20 | 66% (48% of 42) | 12 ERROR/TIMEOUT | 294s |
-| ABICC(xml)         | 41 | 25 | 61% (60% of 42 effective) | 1 TIMEOUT | 445s |
-
----
-
-## Legacy full results (42 cases)
-
-| Case | Expected | abicheck | compat | strict | abidiff | abidiff+hdr | ABICC(dump) | ABICC(xml) |
-|------|----------|----------|--------|--------|---------|-------------|-------------|------------|
-| case01_symbol_removal | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| case02_param_type_change | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ✅ |
-| case03_compat_addition | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ | ✅ | ✅ | ✅ |
-| case04_no_change | NO_CHANGE | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT |
-| case05_soname | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ⚠️ BREAKING | ⚠️ BREAKING | ✅ | ✅ |
-| case06_visibility | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ⚠️ BREAKING | ⚠️ BREAKING | ❌ BREAKING | ❌ BREAKING |
-| case07_struct_layout | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
-| case08_enum_value_change | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ NO_CHANGE | ✅ | ✅ |
-| case09_cpp_vtable | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ NO_CHANGE | ⏱️ TIMEOUT | ✅ |
-| case10_return_type | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ⚠️ COMPAT |
-| case11_global_var_type | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ✅ |
-| case12_function_removed | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| case13_symbol_versioning | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
-| case14_cpp_class_size | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ⚠️ COMPAT |
-| case15_noexcept_change | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
-| case16_inline_to_non_inline | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ | ✅ | ❌ ERROR | ⏱️ TIMEOUT |
-| case17_template_abi | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT |
-| case18_dependency_leak | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT |
-| case19_enum_member_removed | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT |
-| case20_enum_member_value_changed | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
-| case21_method_became_static | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ✅ |
-| case22_method_const_changed | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ COMPAT |
-| case23_pure_virtual_added | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ COMPAT |
-| case24_union_field_removed | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
-| case25_enum_member_added | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
-| case26_union_field_added | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ✅ |
-| case26b_union_field_added_compatible | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
-| case27_symbol_binding_weakened | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
-| case28_typedef_opaque | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
-| case29_ifunc_transition | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
-| case30_field_qualifiers | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
-| case31_enum_rename | API_BREAK | ✅ | ⚠️ API_BREAK² | ✅ BREAKING | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
-| case32_param_defaults | NO_CHANGE | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ ERROR | ⚠️ COMPAT |
-| case33_pointer_level | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
-| case34_access_level | API_BREAK | ✅ | ⚠️ API_BREAK² | ✅ BREAKING | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
-| case35_field_rename | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
-| case36_anon_struct | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
-| case37_base_class | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
-| case38_virtual_methods | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| case39_var_const | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ ERROR | ✅ |
-| case40_field_layout | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
-| case41_type_changes | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-
-Legend: ✅ correct · ⚠️ wrong/undercounted · ❌ wrong in opposite direction · ⏱️ timed out (120s cutoff)
-
-¹ `strict` false positive: COMPATIBLE → BREAKING is expected with `--strict-mode full`; use `--strict-mode api` to avoid.
-² `compat` known limitation: API_BREAK verdict not supported; maps to COMPATIBLE (scored as miss).
-
-## Legacy timing
-
-| Tool | Total (42 cases) | Notes |
-|------|-----------------|-------|
-| abicheck | ~212s | castxml per case; sequential, parallelisable |
-| abicheck compat | ~79s | XML descriptor mode |
-| abidiff | ~2.5s | ELF+DWARF, very fast |
-| ABICC (dumper) | ~294s | abi-dumper + abi-compliance-checker per case |
-| ABICC (xml) | ~445s | GCC compilation per case; case09+case16 TIMEOUT |
-
-> Measured on: Ubuntu 22.04, 8 vCPU, 32GB RAM. All runs sequential.
 
 ## Run the benchmark yourself
 
