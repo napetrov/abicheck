@@ -374,6 +374,15 @@ class PolicyFile:
         ]
         for change in changes:
             kind = change.kind
+            # A per-finding ``effective_verdict`` (ADR-025 pattern modulation /
+            # ADR-033 D7 evidence policy) is the highest-precedence category and
+            # wins over a per-kind override here too — matching effective_category,
+            # which every other classification site routes through, so the verdict
+            # and the per-finding JSON severity stay consistent (Codex review).
+            eff = getattr(change, "effective_verdict", None)
+            if isinstance(eff, Verdict):
+                verdicts.append(eff)
+                continue
             base_v = compute_verdict([change], policy=self.base_policy)
             if kind in self.overrides:
                 override_v = self.overrides[kind]

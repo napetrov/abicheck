@@ -354,3 +354,20 @@ def test_evidence_policy_invalid_values_raise(tmp_path: Path, block: str) -> Non
     p.write_text(block, encoding="utf-8")
     with pytest.raises(PolicyError):
         PolicyFile.load(p)
+
+
+def test_effective_verdict_wins_over_per_kind_override(tmp_path: Path) -> None:
+    """Codex: a per-finding effective_verdict (evidence/pattern modulation) must
+    win over a per-kind override, matching effective_category, so the verdict and
+    the JSON per-finding severity stay consistent."""
+    p = tmp_path / "policy.yaml"
+    p.write_text(
+        "overrides:\n  abi_relevant_build_flag_changed: warn\n",  # would be API_BREAK
+        encoding="utf-8",
+    )
+    pf = PolicyFile.load(p)
+    c = _change(ChangeKind.ABI_RELEVANT_BUILD_FLAG_CHANGED)
+    # evidence_policy demoted it to COMPATIBLE via effective_verdict.
+    c.effective_verdict = Verdict.COMPATIBLE
+    c.frozen_namespace_violation = None
+    assert pf.compute_verdict([c]) == Verdict.COMPATIBLE
