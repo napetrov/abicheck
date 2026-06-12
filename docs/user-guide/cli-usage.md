@@ -185,7 +185,7 @@ abicheck compare old.abi.json new.abi.json
 | `--sources <dir>` | `dump` | Embed a pack's L4/L5 source facts (source ABI replay + graph) inline in the snapshot |
 | `--old-build-info <dir>` / `--new-build-info <dir>` | `compare` | Out-of-band L3 build-info pack per side (overrides embedded) |
 | `--old-sources <dir>` / `--new-sources <dir>` | `compare` | Out-of-band L4/L5 source pack per side (overrides embedded) |
-| `--collect-mode <mode>` | `compare` | Inline collection mode. Defaults to `off`, which uses embedded facts and any explicitly-provided pack directories. **Other modes are recognized and reported in the coverage table but not yet collected inline** in this release. |
+| `--collect-mode <mode>` | `compare` | Inline collection mode. Only `off` (the default) is functional in this release: it uses embedded facts and any explicitly-provided pack directories. Other modes are accepted and reported in the coverage table, but inline collection for them is not implemented yet — run `abicheck collect` separately instead. |
 
 To additionally capture **L4 source ABI replay** (macro/`constexpr` values,
 default-argument values, uninstantiated templates), add `--source-abi` to

@@ -312,7 +312,7 @@ User: "I added a field to FooConfig — is this ABI safe?"
 Agent: "What kinds of ABI breaks can you detect?"
 
 1. abi_list_changes(impact="breaking")
-   → 50+ change kinds with descriptions
+   → the breaking subset of the change-kind registry, with descriptions
 
 2. Agent summarizes the categories for the user
 ```

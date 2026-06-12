@@ -247,9 +247,9 @@ Our HTML does have demangled-as-display + mangled-as-tooltip support
 | **Policy profile** (strict_abi/sdk_vendor/plugin_abi) | HIGH — no other tool has configurable severity policies |
 | **Suppression audit trail** (list of suppressed changes) | HIGH — ABICC has no suppression; abidiff supports suppression but doesn't list what was suppressed |
 | **SARIF output** for GitHub Code Scanning | HIGH — neither ABICC nor abidiff produce SARIF |
-| **4-level verdict** (NO_CHANGE/COMPATIBLE/API_BREAK/BREAKING) | MEDIUM — ABICC can't distinguish NO_CHANGE from COMPATIBLE; abidiff has no verdict |
+| **5-level verdict** (NO_CHANGE/COMPATIBLE/COMPATIBLE_WITH_RISK/API_BREAK/BREAKING) | MEDIUM — ABICC can't distinguish NO_CHANGE from COMPATIBLE; abidiff has no verdict |
 | **Binary compatibility %** in JSON | MEDIUM — ABICC has it in HTML only; abidiff doesn't have it |
-| **150+ change kind taxonomy** | MEDIUM — machine-parseable enum vs free-text descriptions |
+| **235-kind change taxonomy** | MEDIUM — machine-parseable enum vs free-text descriptions |
 
 ---
 
