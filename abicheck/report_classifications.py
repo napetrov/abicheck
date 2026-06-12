@@ -107,6 +107,7 @@ MEDIUM_SEVERITY_KINDS: frozenset[str] = frozenset({
     "struct_field_offset_changed", "struct_field_removed",
     "struct_field_type_changed", "struct_alignment_changed",
     "var_type_changed", "calling_convention_changed",
+    "struct_return_convention_changed",
     "soname_changed", "symbol_type_changed",
     "symbol_version_defined_removed",
     "return_pointer_level_changed", "param_pointer_level_changed",

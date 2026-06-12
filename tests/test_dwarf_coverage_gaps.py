@@ -670,6 +670,46 @@ class TestExtractCallingConvention:
         assert "returns_struct" in meta.value_abi_traits
         assert "ret:trivial" in meta.value_abi_traits["returns_struct"]
 
+    def test_return_value_size_recorded(self):
+        """The by-value aggregate return size is captured for the sret gate."""
+        from abicheck.dwarf_advanced import (
+            AdvancedDwarfMetadata,
+            _aggregate_byte_size_for_typed_die,
+            _extract_calling_convention,
+        )
+
+        struct_die = MockDIE(
+            tag="DW_TAG_structure_type",
+            attributes={
+                "DW_AT_name": MockAttr(b"Big"),
+                "DW_AT_byte_size": MockAttr(24),
+            },
+            offset=400,
+        )
+        cu = MockCU(cu_offset=0, die_map={400: struct_die})
+        die = MockDIE(
+            tag="DW_TAG_subprogram",
+            attributes={
+                "DW_AT_external": MockAttr(1),
+                "DW_AT_name": MockAttr(b"big_ret"),
+                "DW_AT_type": MockAttr(400, form="DW_FORM_ref4"),
+            },
+            children=[],
+        )
+        meta = AdvancedDwarfMetadata(has_dwarf=True)
+        _extract_calling_convention(die, meta, cu)
+        assert meta.return_value_sizes.get("big_ret") == 24
+
+        # The helper returns None for a pointer (not a by-value aggregate).
+        ptr_die = MockDIE(tag="DW_TAG_pointer_type", attributes={}, offset=401)
+        ptr_cu = MockCU(cu_offset=0, die_map={401: ptr_die})
+        ptr_fn = MockDIE(
+            tag="DW_TAG_subprogram",
+            attributes={"DW_AT_type": MockAttr(401, form="DW_FORM_ref4")},
+            children=[],
+        )
+        assert _aggregate_byte_size_for_typed_die(ptr_fn, ptr_cu) is None
+
     def test_param_value_abi_trait(self):
         """Lines 497-502: parameter value-ABI trait for aggregate param."""
         from abicheck.dwarf_advanced import (
