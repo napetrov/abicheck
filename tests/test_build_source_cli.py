@@ -1721,3 +1721,19 @@ def test_a3_failed_query_pack_survives_with_no_facts(tmp_path):
     assert l3 is not None and l3.status.value == "partial"
     assert [e for e in pack.manifest.extractors
             if e.name == "build_query" and e.status == "skipped"]
+
+
+def test_a3_query_ran_but_empty_is_reported(tmp_path):
+    """A3 (Codex): an allowed build query that runs but produces no compile DB
+    records `partial`; the pack must survive so that diagnostic + partial L3 row
+    reach compare (not just failed/skipped)."""
+    from abicheck.buildsource.build_evidence import BuildEvidence
+    from abicheck.buildsource.inline import build_inline_coverage
+    from abicheck.buildsource.model import ExtractorRecord
+
+    rec = ExtractorRecord(name="build_query", status="partial",
+                          detail="ran `q …` but no compile DB was produced")
+    rows = {r.layer: r for r in build_inline_coverage(
+        BuildEvidence(), has_build=False, surface=None, graph=None, extractors=[rec])}
+    assert rows["L3_build"].status.value == "partial"
+    assert "build query partial" in rows["L3_build"].detail

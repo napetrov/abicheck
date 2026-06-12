@@ -69,6 +69,10 @@ _COMPILE_DB_HINTS = ("", "build", "out", "_build", "cmake-build-debug")
 #: (cquery/aquery/ninja -t/make -n) should be fast; a runaway one is treated as
 #: a failed extractor rather than hanging the dump.
 _QUERY_TIMEOUT_S = 300
+# build_query extractor statuses worth surfacing as an A3 diagnostic (no facts):
+# skipped (not allowed), failed (errored/unparseable), partial (ran, no compile
+# DB produced). "ok" means a DB was produced, so it needs no special handling.
+_BUILD_QUERY_DIAG_STATUSES = ("failed", "skipped", "partial")
 
 
 @dataclass
@@ -219,7 +223,7 @@ def collect_inline_pack(
     # the build_query diagnostic reach `compare`, rather than dropping it as if
     # nothing was attempted (Codex).
     has_query_diag = any(
-        e.name == "build_query" and e.status in ("failed", "skipped")
+        e.name == "build_query" and e.status in _BUILD_QUERY_DIAG_STATUSES
         for e in extractors
     )
     if not (has_build or surface is not None or graph is not None or has_query_diag):
@@ -642,7 +646,7 @@ def build_inline_coverage(
         # the coverage/capability report tells the user exactly what to fix.
         bq = next(
             (e for e in extractors
-             if e.name == "build_query" and e.status in ("failed", "skipped")),
+             if e.name == "build_query" and e.status in _BUILD_QUERY_DIAG_STATUSES),
             None,
         )
         if bq is not None:
