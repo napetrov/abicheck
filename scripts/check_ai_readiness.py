@@ -440,6 +440,12 @@ def check_doc_count_sync(f: Findings) -> None:
             n_kinds,
             r"current ChangeKind total is \*\*(\d+)\*\*",
         ),
+        (
+            DOCS / "user-guide/mcp-integration.md",
+            "ChangeKind count (abi_list_changes JSON sample)",
+            n_kinds,
+            r"\"count\": (\d+)",
+        ),
     ]
 
     for path, label, expected, pattern in anchors:

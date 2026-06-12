@@ -235,7 +235,7 @@ documentation of each kind.
 
 ```json
 {
-  "count": 183,
+  "count": 235,
   "change_kinds": [
     {
       "kind": "func_removed",
