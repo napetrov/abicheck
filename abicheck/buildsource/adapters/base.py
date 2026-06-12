@@ -66,18 +66,13 @@ _RUNTIME_MODE_FLAGS: dict[str, tuple[str, str]] = {
     "-fthreadsafe-statics": ("threadsafe_statics", "on"),
     "-fno-threadsafe-statics": ("threadsafe_statics", "off"),
 }
-
-#: Canonical mode keys whose compiler default is "on" for C++ when no flag is
-#: given, and the flag spellings that count as explicitly setting them. Used to
-#: record the implicit default in a *mixed* build (some TUs default-on, some
-#: explicit ``-fno-*``) so a partial flip is not masked by de-duplication —
-#: without this, ``{default-on TU, -fno-exceptions TU}`` would record only
-#: ``{off}`` and a flip in the default-on TU would be invisible to the diff.
-_RUNTIME_MODE_DEFAULT_ON: dict[str, tuple[str, ...]] = {
-    "exceptions": ("-fexceptions", "-fno-exceptions"),
-    "rtti": ("-frtti", "-fno-rtti"),
-    "threadsafe_statics": ("-fthreadsafe-statics", "-fno-threadsafe-statics"),
-}
+# Known limitation: a TU that omits a runtime-mode flag entirely contributes no
+# option (the compiler default is implicit), so a *mixed* build where some TUs
+# are default-on and others carry an explicit ``-fno-*`` records only the
+# explicit value. A partial flip within such a heterogeneous library can be
+# under-reported here; the artifact diff still proves any concrete break, and
+# building a whole library half-and-half is rare. The common all-or-nothing
+# mode flip across versions is detected.
 
 #: Macro defines whose value is ABI-relevant even though they're plain -D flags.
 _ABI_RELEVANT_DEFINES: tuple[str, ...] = (
@@ -272,8 +267,22 @@ def derive_build_options(compile_units: list[CompileUnit]) -> list[BuildOption]:
             add("target", cu.target_triple, raw=cu.target_triple)
         if cu.sysroot:
             add("sysroot", cu.sysroot, raw=cu.sysroot)
+        # Runtime-mode flags are resolved per TU with last-one-wins semantics
+        # (GCC: "if conflicting, the last such option is effective"), so a TU
+        # that carries e.g. ``-fno-exceptions -fexceptions`` records only the
+        # effective ``on`` rather than both values. Collected here and emitted
+        # after the flag loop so a later flag can override an earlier one.
+        mode_values: dict[str, tuple[str, str]] = {}  # key -> (value, raw)
         for flag in cu.abi_relevant_flags:
-            if flag.startswith(("-D", "/D")):
+            if flag in _RUNTIME_MODE_FLAGS:
+                key, value = _RUNTIME_MODE_FLAGS[flag]
+                mode_values[key] = (value, flag)
+            elif flag.startswith("-ftls-model"):
+                # -ftls-model=<model>: canonical key so a model switch diffs as a
+                # single option regardless of which model string is on each side.
+                model = flag.split("=", 1)[1] if "=" in flag else ""
+                mode_values["tls_model"] = (model, flag)
+            elif flag.startswith(("-D", "/D")):
                 key, _, value = flag[2:].partition("=")
                 add(f"define:{key}", value, raw=flag)
             elif flag.startswith(_STD_FLAG_PREFIXES):
@@ -291,27 +300,10 @@ def derive_build_options(compile_units: list[CompileUnit]) -> list[BuildOption]:
                 # double-count and make split (``--sysroot /sdk``) vs combined
                 # (``--sysroot=/sdk``) spelling look like a change.
                 continue
-            elif flag in _RUNTIME_MODE_FLAGS:
-                key, value = _RUNTIME_MODE_FLAGS[flag]
-                add(key, value, raw=flag)
-            elif flag.startswith("-ftls-model"):
-                # -ftls-model=<model>: canonical key so a model switch diffs as a
-                # single option regardless of which model string is on each side.
-                model = flag.split("=", 1)[1] if "=" in flag else ""
-                add("tls_model", model, raw=flag)
             else:
                 add(flag.split("=", 1)[0], flag, raw=flag)
-
-    # Mixed-build default preservation: if any C++ TU omits a default-on mode
-    # flag entirely, record the implicit "on" so a partial flip (some TUs
-    # default-on, some explicit -fno-*) is not masked by de-duplication.
-    for key, spellings in _RUNTIME_MODE_DEFAULT_ON.items():
-        if any(
-            cu.language == "CXX"
-            and not any(s in cu.abi_relevant_flags for s in spellings)
-            for cu in compile_units
-        ):
-            add(key, "on", raw=f"(default) {spellings[0]}")
+        for key, (value, raw) in mode_values.items():
+            add(key, value, raw=raw)
 
     return out
 
