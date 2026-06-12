@@ -149,7 +149,7 @@ So whether a change is detectable depends on the tier you give abicheck:
 
 | Change | object/DWARF | header (castxml) | source-AST tool |
 |--------|:---:|:---:|:---:|
-| Class gains `final` ([`case121`](../examples/case125_class_became_final.md)) | ❌ invisible | ✅ `type_became_final` | ✅ |
+| Class gains `final` ([`case125`](../examples/case125_class_became_final.md)) | ❌ invisible | ✅ `type_became_final` | ✅ |
 | Method access narrowed ([`case34`](../examples/case34_access_level.md)) | ❌ invisible | ✅ `method_access_changed` | ✅ |
 | Ref-qualifier change (`& → &&`) | ❌ (DWARF has no ref-qual) | ✅ `func_ref_qual_changed` | ✅ |
 | Default argument removed/changed ([`case123`](../examples/case123_default_argument_removed.md), [`case32`](../examples/case32_param_defaults.md)) | ❌ invisible | ✅ `param_default_value_removed` / `_changed` | ✅ |

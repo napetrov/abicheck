@@ -185,7 +185,7 @@ abicheck compare old.abi.json new.abi.json
 | `--sources <dir>` | `dump` | Embed a pack's L4/L5 source facts (source ABI replay + graph) inline in the snapshot |
 | `--old-build-info <dir>` / `--new-build-info <dir>` | `compare` | Out-of-band L3 build-info pack per side (overrides embedded) |
 | `--old-sources <dir>` / `--new-sources <dir>` | `compare` | Out-of-band L4/L5 source pack per side (overrides embedded) |
-| `--collect-mode <mode>` | `compare` | Inline collection mode. Defaults to `off`, which uses embedded facts and any explicitly-provided pack directories. **Other modes are recognized and reported in the coverage table but not yet collected inline** in this release. |
+| `--collect-mode <mode>` | `compare` | Inline collection mode. Only `off` (the default) is functional in this release: it uses embedded facts and any explicitly-provided pack directories. Other modes are accepted and reported in the coverage table, but inline collection for them is not implemented yet — run `abicheck collect` separately instead. |
 
 To additionally capture **L4 source ABI replay** (macro/`constexpr` values,
 default-argument values, uninstantiated templates), add `--source-abi` to
@@ -247,6 +247,27 @@ Add `-v` / `--verbose` to any native command to enable debug logging:
 abicheck dump libfoo.so -H foo.h -v
 abicheck compare old.json new.json -v
 ```
+
+#### Surface and source-graph reports
+
+Three companion commands report on the public surface and the L5 source graph
+rather than producing a compare verdict:
+
+```bash
+# Structural metrics + idiom/anti-pattern report for one library's public surface
+abicheck surface-report libfoo.so -H include/ --idioms --anti-patterns
+
+# Diff two L5 source-graph summaries (from `collect --source-graph`)
+abicheck compare-graph old-pack/ new-pack/
+
+# Localize a compare finding through the L5 source graph (which TU/include chain)
+abicheck explain-finding --report report.json --finding-id <id> --sources new-pack/
+```
+
+See [API Surface Intelligence](../concepts/api-surface-intelligence.md) for what
+the surface metrics and idiom recognizers mean, and
+[Build & Source Packs](../concepts/build-source-data.md) for producing the packs
+that `compare-graph` / `explain-finding` consume.
 
 ### Report filtering and display options
 
