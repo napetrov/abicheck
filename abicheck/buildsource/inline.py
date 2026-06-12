@@ -214,7 +214,15 @@ def collect_inline_pack(
         merged.compile_units or merged.targets or merged.toolchains
         or merged.link_units or merged.build_options
     )
-    if not (has_build or surface is not None or graph is not None):
+    # A3: a failed/blocked build query produces no facts but is still worth
+    # surfacing — keep the (near-empty) pack so its `partial` L3 coverage row and
+    # the build_query diagnostic reach `compare`, rather than dropping it as if
+    # nothing was attempted (Codex).
+    has_query_diag = any(
+        e.name == "build_query" and e.status in ("failed", "skipped")
+        for e in extractors
+    )
+    if not (has_build or surface is not None or graph is not None or has_query_diag):
         return None
 
     pack = BuildSourcePack.empty(

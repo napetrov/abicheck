@@ -930,8 +930,12 @@ def test_build_query_skipped_without_allow_flag(tmp_path):
     pack = collect_inline_pack(
         sources=tree, build_info=None, build_config=cfg, allow_build_query=False,
     )
-    # Nothing ran, nothing discovered → no facts at all.
-    assert pack is None
+    # The query is not executed; no facts are collected. The pack survives only to
+    # carry the skipped-query diagnostic (A3), and the build_query tool never ran.
+    assert pack is not None
+    assert pack.build_evidence is None  # no L3 facts
+    assert [e for e in pack.manifest.extractors
+            if e.name == "build_query" and e.status == "skipped"]
 
 
 def test_merge_combines_binary_and_source_snapshots(tmp_path):
@@ -1058,8 +1062,12 @@ def test_build_query_failure_is_recorded(tmp_path, monkeypatch):
     pack = collect_inline_pack(
         sources=tree, build_info=None, build_config=cfg, allow_build_query=True,
     )
-    # Command never produced a DB and there is nothing else → no pack.
-    assert pack is None
+    # The command produced no DB; the pack survives only to carry the failed-query
+    # diagnostic (A3) so a later compare can surface it, never aborting.
+    assert pack is not None
+    assert pack.build_evidence is None
+    assert [e for e in pack.manifest.extractors
+            if e.name == "build_query" and e.status == "failed"]
 
 
 def test_merge_requires_two_inputs(tmp_path):
@@ -1687,3 +1695,24 @@ def test_a4_redacted_absolute_source_uses_basename(tmp_path):
     extractors = []
     _check_build_info_source_mismatch(merged, tree, extractors)
     assert not [e for e in extractors if e.name == "build_info_source_tree_mismatch"]
+
+
+def test_a3_failed_query_pack_survives_with_no_facts(tmp_path):
+    """A3 (Codex): when build.query is skipped/failed and no facts are collected,
+    collect_inline_pack still returns a pack carrying the partial L3 coverage row
+    + the build_query diagnostic (not None), so compare can surface it."""
+    from abicheck.buildsource.inline import BuildConfig, collect_inline_pack
+
+    tree = tmp_path / "src"
+    tree.mkdir()  # no compile DB inside → no L3 facts
+    cfg = BuildConfig(query="some-build-query --emit")
+    # allow_build_query=False → query skipped, nothing collected.
+    pack = collect_inline_pack(
+        sources=tree, build_info=None, build_config=cfg,
+        allow_build_query=False, layers=("L3",),
+    )
+    assert pack is not None, "pack must survive to carry the A3 diagnostic"
+    l3 = pack.manifest.coverage_for("L3_build")
+    assert l3 is not None and l3.status.value == "partial"
+    assert [e for e in pack.manifest.extractors
+            if e.name == "build_query" and e.status == "skipped"]
