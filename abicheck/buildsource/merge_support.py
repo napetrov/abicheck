@@ -172,7 +172,13 @@ _MERGE_LAYER_ATTRS: dict[str, str] = {
 # source_files / public_headers / dependencies / generated_files) is sorted so a
 # reorder is not a false conflict (Codex review).
 _ORDERED_LIST_KEYS = frozenset(
-    {"argv", "linker_argv", "command", "inputs", "defines", "undefines"}
+    {
+        "argv", "linker_argv", "command", "inputs", "defines", "undefines",
+        # -I / -isystem order is compiler-visible: swapping two include dirs can
+        # select different headers and change the source ABI, so these stay
+        # order-sensitive (Codex).
+        "include_paths", "system_include_paths",
+    }
 )
 
 

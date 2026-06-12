@@ -1478,6 +1478,11 @@ def test_canonical_layer_digest_sorts_nested_facts_keeps_scalar_order():
     p2 = {"targets": [{"source_files": ["b.cpp", "a.cpp"]}]}
     assert _canonical_layer_digest(p1) == _canonical_layer_digest(p2)
 
+    # Include-path order is compiler-visible → reordering must differ (Codex).
+    i1 = {"compile_units": [{"include_paths": ["/a", "/b"]}]}
+    i2 = {"compile_units": [{"include_paths": ["/b", "/a"]}]}
+    assert _canonical_layer_digest(i1) != _canonical_layer_digest(i2)
+
 
 def test_build_inline_coverage_surfaces_failed_build_query():
     """A3: a failed/blocked build query yields a `partial` L3 coverage row with
