@@ -347,16 +347,20 @@ class FilesystemRegistry:
         # Copy the evidence pack (if any) before writing metadata so the recorded
         # content hash reflects exactly what is stored on disk.
         evidence_dir = key_dir / _EVIDENCE_SUBDIR
+        stale_evidence_dir: Path | None = None
         if evidence is not None:
             metadata.evidence_content_hash = self._store_evidence(evidence, evidence_dir)
         else:
-            # No pack supplied: drop any stale stored pack and always clear the
-            # recorded hash, so the metadata never promises a pack that is not on
-            # disk (a caller-supplied metadata could carry a stale hash even when
-            # the evidence dir does not exist — Codex review).
-            if evidence_dir.exists():
-                shutil.rmtree(evidence_dir)
+            # No pack supplied: always clear the recorded hash so the metadata
+            # never promises a pack that is not on disk (a caller-supplied
+            # metadata could carry a stale hash even when the evidence dir does
+            # not exist — Codex review). Defer deleting any stale stored pack
+            # until *after* the metadata write below, so an interrupted write
+            # never leaves the old metadata (still recording a hash) on disk with
+            # the pack already removed (Codex review).
             metadata.evidence_content_hash = None
+            if evidence_dir.exists():
+                stale_evidence_dir = evidence_dir
 
         snap_path = key_dir / "snapshot.json"
         meta_path = key_dir / "metadata.json"
@@ -364,6 +368,10 @@ class FilesystemRegistry:
         # Atomic write: temp file then rename
         _atomic_write(snap_path, snap_json)
         _atomic_write(meta_path, json.dumps(metadata.to_dict(), indent=2))
+
+        # Metadata now records no evidence; safe to drop the stale pack.
+        if stale_evidence_dir is not None:
+            shutil.rmtree(stale_evidence_dir, ignore_errors=True)
 
         ref = f"fs://{key.path}"
         _logger.info("Baseline pushed: %s → %s", ref, key_dir)

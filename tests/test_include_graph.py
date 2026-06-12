@@ -58,6 +58,10 @@ def test_depfile_args_handles_glued_output_and_argv0_flag() -> None:
     # Glued -ofoo.o is dropped; an argv that already starts with a flag (no
     # leading compiler token) keeps every flag.
     assert depfile_args_from_argv(["cc", "-ofoo.o", "foo.c", "-I."]) == ["foo.c", "-I."]
+    # GCC long --output=foo.o glued spelling is dropped too (Codex review).
+    assert depfile_args_from_argv(
+        ["g++", "--output=foo.o", "foo.cpp", "-Iinc"]
+    ) == ["foo.cpp", "-Iinc"]
     assert depfile_args_from_argv(["-Iinc", "foo.c"]) == ["-Iinc", "foo.c"]
     assert depfile_args_from_argv([]) == []
 

@@ -84,7 +84,11 @@ def depfile_args_from_argv(argv: list[str]) -> list[str]:
         if tok in _DEPFILE_DROP_WITH_VALUE:
             skip_next = True
             continue
-        # `-oFOO` / `-MFfoo.d` glued forms, and the standalone drop flags.
+        # `-oFOO` / `-MFfoo.d` glued forms and the GCC long `--output=foo.o`
+        # spelling (clang -M with --output=… writes the depfile to that file and
+        # leaves stdout empty, losing the include entry — Codex review).
+        if tok.startswith("--output="):
+            continue
         if any(tok.startswith(f) and tok != f for f in ("-o", "-MF", "-MT", "-MQ")):
             continue
         if tok in _DEPFILE_DROP_FLAG:
