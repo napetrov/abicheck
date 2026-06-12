@@ -137,46 +137,55 @@ _PROVENANCE_MIN_DECLS = 5
 _PROVENANCE_MISS_THRESHOLD = 0.8
 
 
-def _diff_provenance(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change]:
-    """A1: aggregate source↔binary correspondence check.
+def _provenance_finding(side: str, surface: SourceAbiSurface) -> Change | None:
+    """One aggregate provenance finding for a single surface, or ``None``.
 
-    When the *new* source surface has L0 exports available but the large majority
-    of its public declarations fail to map to any exported symbol, the source
-    checkout very likely does not correspond to the shipped binary (wrong
-    tag/commit) — in which case every L4/L5 source finding for this pair is
-    untrustworthy. Emits a single aggregate RISK finding; the per-declaration
-    mismatches are already covered by :func:`_diff_mappings`.
-
-    Inert (returns nothing) when no exports are known — the inline/merge flow must
-    plumb the binary's L0 exports into the surface for this heuristic to have a
-    signal — or when the surface is too small to judge. Per ADR-028 D3 it is a
-    context risk, never a proven binary break.
+    Fires when the surface has L0 exports but the large majority of its public
+    declarations fail to map to any exported symbol — the checkout likely does
+    not correspond to the binary. Inert when no exports are plumbed in or the
+    surface is too small to judge.
     """
-    exports = set(new.roots.get("exported_symbols", []))
+    exports = set(surface.roots.get("exported_symbols", []))
     if not exports:
-        return []
-    mapping = new.mappings.get("source_decl_to_binary_symbol", {})
+        return None
+    mapping = surface.mappings.get("source_decl_to_binary_symbol", {})
     if len(mapping) < _PROVENANCE_MIN_DECLS:
-        return []
+        return None
     misses = sum(1 for sym in mapping.values() if not sym or sym not in exports)
     if misses / len(mapping) < _PROVENANCE_MISS_THRESHOLD:
-        return []
-    return [
-        Change(
-            kind=ChangeKind.SOURCE_BINARY_PROVENANCE_MISMATCH,
-            symbol="",
-            description=(
-                f"{misses}/{len(mapping)} public declarations in the source tree "
-                "do not map to any exported binary symbol — the source checkout "
-                "likely does not correspond to this binary (wrong tag/commit). "
-                "Treat the L4/L5 source findings for this pair as unreliable until "
-                "the sources are checked out at the binary's build tag."
-            ),
-            old_value="",
-            new_value=f"{misses}/{len(mapping)} unmapped",
-            source_location=f"[{EVIDENCE_TIER_L4}]",
-        )
+        return None
+    return Change(
+        kind=ChangeKind.SOURCE_BINARY_PROVENANCE_MISMATCH,
+        symbol="",
+        description=(
+            f"{misses}/{len(mapping)} public declarations on the {side} side do "
+            "not map to any exported binary symbol — that source checkout likely "
+            "does not correspond to its binary (wrong tag/commit). Treat the "
+            "L4/L5 source findings for this pair as unreliable until the sources "
+            "are checked out at the binary's build tag."
+        ),
+        old_value="",
+        new_value=f"{side}: {misses}/{len(mapping)} unmapped",
+        source_location=f"[{EVIDENCE_TIER_L4}]",
+    )
+
+
+def _diff_provenance(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change]:
+    """A1: aggregate source↔binary correspondence check on *both* surfaces.
+
+    A wrong checkout poisons the L4/L5 facts on whichever side it sits, and
+    ``diff_source_abi`` receives both embedded surfaces, so the mapping-miss
+    heuristic is run for the baseline *and* the current side (Codex review) — a
+    mismatched baseline is just as untrustworthy as a mismatched target. Emits at
+    most one aggregate RISK finding per side; the per-declaration mismatches are
+    already covered by :func:`_diff_mappings`. Per ADR-028 D3 it is a context
+    risk, never a proven binary break.
+    """
+    findings = [
+        _provenance_finding("baseline", old),
+        _provenance_finding("current", new),
     ]
+    return [c for c in findings if c is not None]
 
 
 # -- generated headers -------------------------------------------------------

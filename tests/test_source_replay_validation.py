@@ -291,3 +291,14 @@ def test_provenance_mismatch_inert_when_mostly_mapped() -> None:
     )
     kinds = [c.kind for c in diff_source_abi(_surface(), new)]
     assert ChangeKind.SOURCE_BINARY_PROVENANCE_MISMATCH not in kinds
+
+
+def test_provenance_mismatch_detected_on_baseline_side() -> None:
+    # A1 (Codex): a mismatched OLD/baseline checkout must also be flagged — its
+    # L4/L5 facts are as untrustworthy as a mismatched target's.
+    bad = _surface(
+        roots={"exported_symbols": ["_Z3barv"]},
+        mappings={"source_decl_to_binary_symbol": {f"d{i}": "" for i in range(10)}},
+    )
+    kinds = [c.kind for c in diff_source_abi(bad, _surface())]
+    assert ChangeKind.SOURCE_BINARY_PROVENANCE_MISMATCH in kinds
