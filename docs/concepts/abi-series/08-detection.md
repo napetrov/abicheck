@@ -37,7 +37,7 @@ previous ones cannot, and each has a blind spot that motivates the next.
 | 3 | **Symbol-table diffing** — `nm`/`readelf` diff, or any tool run on stripped binaries (**L0**) | Exported symbol names, versions, SONAME | Removed/renamed symbols, C++ mangled-signature changes, linker metadata drift | Everything that doesn't change a symbol name: struct layout, enum values, vtable order, C parameter types. |
 | 4 | **Debug-info diffing** — DWARF/PDB-based tools (**L1**) | Type layout as compiled: sizes, offsets, enum values, vtables | The whole layout family from [Part 3](03-type-layout.md) and most of [Part 4](04-cpp-abi.md) | Requires `-g` artifacts (release builds are usually stripped); largely blind to *source-level* API facts — access control, default arguments, `explicit`, hidden friends — which DWARF doesn't record or tools don't model. |
 | 5 | **Header/AST diffing** — compiling public headers and comparing the AST (**L2**) | The declared source contract | Source-only API breaks, plus *scoping*: knowing which types are actually public | Blind to binary truth: what was *actually* exported and with which SONAME/versions, and what flags the shipped binary was really built with. |
-| 6 | **Build- and source-aware overlay** (**L3/L4**) | Compile flags, macro/`constexpr` values, default-argument *values*, inline/template bodies | Facts that never reach any artifact — the [source-only tail](../limitations.md#source-only-changes-invisible-to-binaryobject-analysis) | Highest setup cost; meaningless without the artifact layers underneath it to anchor the shipped-ABI verdict. |
+| 6 | **Build- and source-aware overlay** (**L3/L4**) | Compile flags, default-argument *values*, inline/template bodies, uninstantiated templates | Facts that never reach any shipped artifact — the [source-only tail](../limitations.md#source-only-changes-invisible-to-binaryobject-analysis) | Highest setup cost; meaningless without the artifact layers underneath it to anchor the shipped-ABI verdict. |
 
 The pattern: **each approach is a projection of the library onto one kind of
 evidence.** None of the projections is the library. A checker is only complete to
@@ -71,8 +71,9 @@ all. Per-case minimums are machine-readable in
 | Vtable reordering | **L1/L2** | ❌ | ✅ | Every symbol still exists — only the *slot indexes* moved ([case09](../../examples/case09_cpp_vtable.md)) |
 | Source-only API breaks: access narrowed, `explicit` added, default argument removed, hidden friends | **L2** | ❌ | mostly ❌ | DWARF doesn't reliably model these; they live in the declared AST ([case34](../../examples/case34_access_level.md), [case106](../../examples/case106_ctor_became_explicit.md), [case123](../../examples/case123_default_argument_removed.md), [case96](../../examples/case96_hidden_friend_removed.md)) |
 | ELF/linker metadata: SONAME, visibility, symbol versions, RPATH | **L0** | ✅ | ✅ | Binary-only facts — which means *header-only* checkers (ABICC's XML mode) are the blind ones here ([case05](../../examples/case05_soname.md), [case65](../../examples/case65_symbol_version_removed.md)) |
-| Toolchain/build-flag drift: dual ABI, `-std` floor, ABI version | **L1/L3** | ❌ | partly | Compilers record flags in `DW_AT_producer`, so a `-g` build exposes some of it; the rest needs the compile DB ([case103](../../examples/case103_toolchain_flag_drift.md), [case104](../../examples/case104_glibcxx_dual_abi_flip.md)) |
-| Inline/template bodies, uninstantiated templates, macro & `constexpr` values | **L4** | ❌ | ❌ | These never reach the binary at all — only source replay sees them ([case122](../../examples/case122_template_signature_uninstantiated.md), [case124](../../examples/case124_header_constant_value_changed.md)) |
+| Toolchain/build-flag drift: `-std` floor, ABI version, flag changes | **L1/L3** | ❌ | partly | Compilers record their flags in `DW_AT_producer`, so a `-g` build exposes some drift; the rest needs the compile DB ([case103](../../examples/case103_toolchain_flag_drift.md)). The libstdc++ dual-ABI flip is the notable exception: it *renames mangled symbols* (`std::__cxx11::`), so even a stripped binary betrays it at L0 ([case104](../../examples/case104_glibcxx_dual_abi_flip.md)) |
+| Header constant / macro **values** | **L2** | ❌ | ❌ | The value lives in the declared AST, not the binary — header comparison sees it ([case124](../../examples/case124_header_constant_value_changed.md)) |
+| Inline/template **bodies**, uninstantiated templates | **L4** | ❌ | ❌ | These never reach the shipped binary at all — only source replay sees them ([case122](../../examples/case122_template_signature_uninstantiated.md)) |
 | Multi-library release skew (bundle SONAME/dependency drift) | release model | ❌ | ❌ | Not a property of any *single* binary diff — needs a bundle-level comparison ([multi-binary guide](../../user-guide/multi-binary.md), bundle cases 84/90–93 in `examples/`) |
 | Internal-only changes (**should be NO_CHANGE**) | **L2** | FP ⚠️ | FP ⚠️ | The inverse problem: without header scoping, tools *flag* private `detail::` churn as breaking. Evidence here removes false positives ([case118](../../examples/case118_internal_struct_field_added_scoped.md)–[120](../../examples/case120_internal_struct_reordered_scoped.md)) |
 
@@ -104,8 +105,8 @@ their evidence lets them see (details and per-case results in the
    workflow sees the declared contract but not the binary truth (exports,
    SONAME, symbol versions), and its `abi-dumper` workflow inherits the DWARF
    ceiling. Neither overlays *all* the layers, so each one misses families the
-   other catches — and both miss the L3/L4 tail (flag drift, macros, inline
-   bodies, uninstantiated templates).
+   other catches — and both miss the L3/L4 tail (flag drift, inline bodies,
+   uninstantiated templates).
 
 2. **No public-surface scoping.** Without resolving what is *public*, every
    internal `detail::` struct edit shows up as a break. In practice that
