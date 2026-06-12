@@ -344,47 +344,71 @@ class FilesystemRegistry:
         if metadata is None:
             metadata = BaselineMetadata.create(snap_json)
 
-        # Copy the evidence pack (if any) before writing metadata so the recorded
-        # content hash reflects exactly what is stored on disk.
+        # Stage the evidence change so it can be rolled back if the
+        # snapshot/metadata write fails: a previously-valid baseline must never be
+        # left with its metadata hash and stored pack disagreeing (Codex review).
+        # ``pending`` is a sibling temp dir holding the *prior* pack under ``old``
+        # (or None when there is nothing to preserve); on success it is dropped,
+        # on failure ``old`` is restored.
         evidence_dir = key_dir / _EVIDENCE_SUBDIR
-        stale_evidence_dir: Path | None = None
+        pending: Path | None = None
         if evidence is not None:
-            metadata.evidence_content_hash = self._store_evidence(evidence, evidence_dir)
+            metadata.evidence_content_hash, pending = self._store_evidence(
+                evidence, evidence_dir
+            )
         else:
             # No pack supplied: always clear the recorded hash so the metadata
             # never promises a pack that is not on disk (a caller-supplied
             # metadata could carry a stale hash even when the evidence dir does
-            # not exist — Codex review). Defer deleting any stale stored pack
-            # until *after* the metadata write below, so an interrupted write
-            # never leaves the old metadata (still recording a hash) on disk with
-            # the pack already removed (Codex review).
+            # not exist — Codex review).
             metadata.evidence_content_hash = None
             if evidence_dir.exists():
-                stale_evidence_dir = evidence_dir
+                pending = Path(tempfile.mkdtemp(dir=key_dir, prefix=".evstage-"))
+                os.replace(evidence_dir, pending / "old")
 
         snap_path = key_dir / "snapshot.json"
         meta_path = key_dir / "metadata.json"
 
-        # Atomic write: temp file then rename
-        _atomic_write(snap_path, snap_json)
-        _atomic_write(meta_path, json.dumps(metadata.to_dict(), indent=2))
-
-        # Metadata now records no evidence; safe to drop the stale pack.
-        if stale_evidence_dir is not None:
-            shutil.rmtree(stale_evidence_dir, ignore_errors=True)
+        try:
+            # Atomic write: temp file then rename
+            _atomic_write(snap_path, snap_json)
+            _atomic_write(meta_path, json.dumps(metadata.to_dict(), indent=2))
+        except BaseException:
+            # Roll the evidence change back to the pre-push state.
+            if pending is not None:
+                old = pending / "old"
+                if old.exists():
+                    if evidence_dir.exists():
+                        shutil.rmtree(evidence_dir, ignore_errors=True)
+                    os.replace(old, evidence_dir)
+                elif evidence_dir.exists():
+                    # Fresh key (no prior pack): drop the just-swapped new pack.
+                    shutil.rmtree(evidence_dir, ignore_errors=True)
+            raise
+        finally:
+            # Drop the staging dir (the prior pack is now stale on success, or has
+            # already been restored on failure).
+            if pending is not None:
+                shutil.rmtree(pending, ignore_errors=True)
 
         ref = f"fs://{key.path}"
         _logger.info("Baseline pushed: %s → %s", ref, key_dir)
         return ref
 
     @staticmethod
-    def _store_evidence(evidence: EvidencePack, dest: Path) -> str:
-        """Copy an evidence pack into ``dest`` and return its content hash.
+    def _store_evidence(evidence: EvidencePack, dest: Path) -> tuple[str, Path | None]:
+        """Swap an evidence pack into ``dest``; return ``(content_hash, staging)``.
 
         The pack must already be materialized on disk (a ``manifest.json`` under
         ``evidence.root``); ``collect-evidence`` and ``EvidencePack.write()``
         guarantee that. Copying the whole tree preserves both ``normalized/``
         facts and ``raw/`` provenance (ADR-028 D4).
+
+        ``staging`` is the sibling temp dir holding the *prior* pack under ``old``
+        (``None`` when there was no prior pack or this is a same-path no-op). The
+        caller drops it on success or restores ``old`` on a later failure, so the
+        evidence swap is reversible with respect to the metadata write (Codex
+        review). The slow copy goes to staging; only fast renames touch ``dest``.
         """
         manifest = evidence.root / "manifest.json"
         if not manifest.is_file():
@@ -410,18 +434,13 @@ class FilesystemRegistry:
         # and leaving the baseline pointing at a now-empty evidence dir. The pack
         # is already in place, so treat that as a no-op (Codex review).
         if evidence.root.resolve() == dest.resolve():
-            return content_hash
-        # Stage the new pack in a sibling temp dir and swap it in with atomic
-        # renames, so a failed/interrupted copy (disk full, Ctrl-C) never deletes
-        # the current pack before its replacement is ready — which would leave the
-        # baseline's metadata recording a hash for a now-missing pack (Codex
-        # review). The slow copy goes to staging; only fast renames touch dest.
+            return content_hash, None
         dest.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(dir=dest.parent, prefix=".evstage-"))
         new_pack = staging / "pack"
-        backup = None
         try:
             shutil.copytree(evidence.root, new_pack)
+            backup = None
             if dest.exists():
                 backup = staging / "old"
                 os.replace(dest, backup)  # move the current pack aside (same fs)
@@ -431,9 +450,12 @@ class FilesystemRegistry:
                 if backup is not None:  # roll the previous pack back into place
                     os.replace(backup, dest)
                 raise
-        finally:
+        except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
-        return content_hash
+            raise
+        # Keep `staging` (now holding only the prior pack under `old`) so the
+        # caller can roll the swap back if the metadata write fails.
+        return content_hash, staging
 
     def pull(self, key: BaselineKey) -> tuple[AbiSnapshot, BaselineMetadata] | None:
         """Retrieve a baseline snapshot from the filesystem.

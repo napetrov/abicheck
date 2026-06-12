@@ -775,3 +775,69 @@ class TestEvidencePackStorage:
         # No staging dirs left in the key directory.
         key_dir = registry.root / key.path
         assert not list(key_dir.glob(".evstage-*"))
+
+
+    def test_repush_rolls_back_evidence_when_metadata_write_fails(
+        self, registry: FilesystemRegistry, sample_snapshot: AbiSnapshot, tmp_path: Path
+    ) -> None:
+        # If the snapshot/metadata write fails mid-push, the previously-stored
+        # evidence pack must be restored — the baseline stays valid (Codex review).
+        import abicheck.baseline as bl
+        from abicheck.evidence import BuildEvidence, EvidencePack
+        from abicheck.evidence.build_evidence import Toolchain
+
+        key = BaselineKey(library="libfoo", version="1.0.0", platform="linux-x86_64")
+        registry.push(key, sample_snapshot, evidence=_make_pack(tmp_path / "p1.evidence"))
+        good_hash = registry.pull_evidence(key).content_hash()  # type: ignore[union-attr]
+
+        p2 = EvidencePack.empty(tmp_path / "p2.evidence", abicheck_version="9.9")
+        p2.build_evidence = BuildEvidence(
+            toolchains=[Toolchain(id="toolchain://clang", compiler_id="Clang", version="18")]
+        )
+        p2.write()
+
+        orig = bl._atomic_write
+
+        def _boom(path, content):
+            if path.name == "metadata.json":
+                raise OSError("disk full")
+            return orig(path, content)
+
+        bl._atomic_write = _boom  # type: ignore[assignment]
+        try:
+            with pytest.raises(OSError, match="disk full"):
+                registry.push(key, sample_snapshot, evidence=p2)
+        finally:
+            bl._atomic_write = orig  # type: ignore[assignment]
+
+        # The old pack is still intact and pullable; no staging dir left behind.
+        restored = registry.pull_evidence(key)
+        assert restored is not None
+        assert restored.content_hash() == good_hash
+        assert not list((registry.root / key.path).glob(".evstage-*"))
+
+    def test_repush_without_evidence_rolls_back_on_metadata_failure(
+        self, registry: FilesystemRegistry, sample_snapshot: AbiSnapshot, tmp_path: Path
+    ) -> None:
+        import abicheck.baseline as bl
+
+        key = BaselineKey(library="libfoo", version="1.0.0", platform="linux-x86_64")
+        registry.push(key, sample_snapshot, evidence=_make_pack(tmp_path / "p1.evidence"))
+        good_hash = registry.pull_evidence(key).content_hash()  # type: ignore[union-attr]
+
+        orig = bl._atomic_write
+
+        def _boom(path, content):
+            if path.name == "metadata.json":
+                raise OSError("disk full")
+            return orig(path, content)
+
+        bl._atomic_write = _boom  # type: ignore[assignment]
+        try:
+            with pytest.raises(OSError):
+                registry.push(key, sample_snapshot)  # no evidence → would remove pack
+        finally:
+            bl._atomic_write = orig  # type: ignore[assignment]
+
+        restored = registry.pull_evidence(key)
+        assert restored is not None and restored.content_hash() == good_hash
