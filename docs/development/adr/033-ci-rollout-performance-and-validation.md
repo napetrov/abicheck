@@ -1,7 +1,7 @@
 # ADR-033: CI Rollout, Performance, Caching, and Validation Strategy
 
 **Date:** 2026-06-09
-**Status:** Proposed
+**Status:** Proposed. **Amended 2026-06-12** (ADR-028 source-tree model) — see Amendment below.
 **Decision maker:** Nikolay Petrov
 
 ---
@@ -269,7 +269,7 @@ After every run, users should be able to answer:
 
 | Phase | Scope | Output |
 |---|---|---|
-| 1 | Add `--evidence-mode build` and timing/coverage summary | MVP CI mode |
+| 1 | Add `--collect-mode build` and timing/coverage summary | MVP CI mode |
 | 2 | Baseline registry pack storage | Evidence reusable across comparisons |
 | 3 | Changed-only source replay mode | PR source/API signals |
 | 4 | Policy controls for source/build/graph risks | Tunable fail behavior |
@@ -294,3 +294,12 @@ After every run, users should be able to answer:
   ([030-source-abi-replay-and-linked-source-surface.md](030-source-abi-replay-and-linked-source-surface.md))
 - ADR-031 — Source Graph Augmentation
   ([031-source-implementation-graph-augmentation.md](031-source-implementation-graph-augmentation.md))
+
+
+## Amendment (2026-06-12): merge flow and `collect` demotion (see ADR-028)
+
+- `abicheck merge a.json b.json -o out.json` combines independently-produced
+  build-side and source-side dumps into one baseline, enabling parallel baseline
+  preparation (the embedded single-artifact storage, ADR-028 D8, exists for this).
+- `collect` is demoted to an advanced command; the CI evidence modes (D2) select
+  the inputs/scopes for `dump --sources/--build-info` internally.

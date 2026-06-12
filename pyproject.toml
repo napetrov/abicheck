@@ -94,7 +94,7 @@ module = [
     "abicheck.pdb_utils",
     "abicheck.sycl_metadata",
     "abicheck.binary_fingerprint",
-    "abicheck.evidence.compiler_record",
+    "abicheck.buildsource.compiler_record",
 ]
 disallow_untyped_calls = false
 disable_error_code = ["attr-defined"]
@@ -110,7 +110,7 @@ module = [
     "abicheck.cli_compare_release",
     "abicheck.cli_debian_symbols",
     "abicheck.cli_baseline",
-    "abicheck.cli_evidence",
+    "abicheck.cli_buildsource",
     "abicheck.cli_plugin",
     "abicheck.cli_pr_comment",
     "abicheck.cli_probe",
@@ -146,7 +146,8 @@ module = [
     "abicheck.environment_matrix",
     "abicheck.probe_harness",
     "abicheck.bundle",
-    "abicheck.evidence.extractor_manifest",
+    "abicheck.buildsource.extractor_manifest",
+    "abicheck.buildsource.inline",
 ]
 disable_error_code = ["import-untyped"]
 

@@ -55,7 +55,7 @@ more when you need more confidence.
 | **L1** | + debug info | **Medium** | Struct layout, field offsets, enum values, calling convention, emitted-ABI type changes |
 | **L2** | + headers | **High** | Declared public API surface, source-level API breaks, inline/template-related surface |
 | **L3** | + build flags (`-p build/`) | **Higher** | The exact ABI-affecting flags the library was built with (`-std`, `_GLIBCXX_USE_CXX11_ABI`, `-fvisibility`, …) |
-| **L4** | + sources (evidence pack) | **Best** | Facts that never reach the binary: macro/`constexpr` values, default-argument values, uninstantiated templates |
+| **L4** | + sources (build/source pack) | **Best** | Facts that never reach the binary: macro/`constexpr` values, default-argument values, uninstantiated templates |
 
 abicheck reports the **artifact** depth it reached (L0–L2) as the
 **`evidence_tier`** field (`elf_only` → `dwarf_aware` → `header_aware`) so you

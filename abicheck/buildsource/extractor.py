@@ -19,7 +19,7 @@ the build adapters (ADR-029), source-ABI extractors (ADR-030), graph backends
 (ADR-031), and external CLI extractors (ADR-032 D3). It owns four things the
 rest of the evidence package builds on:
 
-* **The interface (D2).** :class:`EvidenceExtractor` — a ``Protocol`` with the
+* **The interface (D2).** :class:`DataExtractor` — a ``Protocol`` with the
   four lifecycle phases ``discover``/``collect``/``normalize``/``validate`` —
   plus :class:`CollectionContext` and the per-phase result dataclasses.
 * **The capability model (D4).** :class:`ExtractorCapabilities` — what an
@@ -322,7 +322,7 @@ class ValidationResult:
 
 
 @runtime_checkable
-class EvidenceExtractor(Protocol):
+class DataExtractor(Protocol):
     """The four-phase evidence-extractor contract (ADR-032 D2).
 
     An extractor collects and normalizes facts; it never decides a verdict (D1).

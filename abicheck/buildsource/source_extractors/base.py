@@ -42,7 +42,7 @@ from ...model import (
     Variable,
 )
 from ..build_evidence import CompileUnit
-from ..model import EvidenceConfidence
+from ..model import LayerConfidence
 from ..source_abi import SourceAbiTu, SourceEntity, SourceLocation
 
 #: Map a model ``ScopeOrigin`` to the (visibility, location-origin) pair used by
@@ -82,6 +82,15 @@ class SourceAbiExtractor(Protocol):
     """
 
     name: str
+
+    def available(self) -> bool:
+        """True when the backend's external tool is usable in this environment.
+
+        Implementations probe for their front-end (clang/castxml/header-abi
+        dumper); a ``False`` lets callers degrade L4 to partial coverage instead
+        of attempting an extraction that would only raise (ADR-028 D3).
+        """
+        ...
 
     def extract(
         self,
@@ -165,7 +174,7 @@ def entity_from_function(fn: Function) -> SourceEntity:
         # Private/protected members of a public class are not part of the callable
         # public surface, so keep them off it (Codex review #335, P2).
         api_relevant=fn.origin in _PUBLIC_ORIGINS and fn.access not in _NON_PUBLIC_ACCESS,
-        confidence=EvidenceConfidence.HIGH,
+        confidence=LayerConfidence.HIGH,
     )
 
 
@@ -184,7 +193,7 @@ def entity_from_record(rec: RecordType) -> SourceEntity:
         source_location=_location(rec.source_header, rec.source_location, rec.origin),
         visibility=_visibility(rec.origin),
         api_relevant=rec.origin in _PUBLIC_ORIGINS,
-        confidence=EvidenceConfidence.HIGH,
+        confidence=LayerConfidence.HIGH,
     )
 
 
@@ -201,7 +210,7 @@ def entity_from_enum(en: EnumType) -> SourceEntity:
         source_location=_location(en.source_header, en.source_location, en.origin),
         visibility=_visibility(en.origin),
         api_relevant=en.origin in _PUBLIC_ORIGINS,
-        confidence=EvidenceConfidence.HIGH,
+        confidence=LayerConfidence.HIGH,
     )
 
 
@@ -217,7 +226,7 @@ def entity_from_variable(var: Variable) -> SourceEntity:
         source_location=_location(var.source_header, var.source_location, var.origin),
         visibility=_visibility(var.origin),
         api_relevant=var.origin in _PUBLIC_ORIGINS,
-        confidence=EvidenceConfidence.HIGH,
+        confidence=LayerConfidence.HIGH,
     )
 
 
@@ -244,7 +253,7 @@ def entity_from_constant(
         source_location=SourceLocation(path=source_header, origin=origin),
         visibility="generated" if generated else "public_header",
         api_relevant=True,
-        confidence=EvidenceConfidence.HIGH,
+        confidence=LayerConfidence.HIGH,
     )
 
 
@@ -272,7 +281,7 @@ def entity_from_typedef(
         source_location=SourceLocation(path=source_header, origin=origin),
         visibility="generated" if generated else "public_header",
         api_relevant=True,
-        confidence=EvidenceConfidence.HIGH,
+        confidence=LayerConfidence.HIGH,
     )
 
 

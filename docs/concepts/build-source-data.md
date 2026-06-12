@@ -1,7 +1,7 @@
-# Source & Build Evidence Packs
+# Source & Build Data
 
 abicheck primarily compares **built artifacts** — binaries (L0), debug info
-(L1), and public headers (L2). An **EvidencePack** is an *optional* sidecar
+(L1), and public headers (L2). A **build/source pack** is an *optional* sidecar
 that augments a snapshot with **source and build evidence** (ADR-028): build
 context (L3), and — in later releases — source ABI replay (L4) and source
 graph summaries (L5).
@@ -72,7 +72,7 @@ pipeline, and `explain-finding` localizes a single finding through the graph.
 Two independent producers feed one decision engine. The **artifact pipeline**
 (always on, authoritative) turns each binary into an `AbiSnapshot`; the
 **evidence pipeline** (optional, post-build, never rebuilds) collects an
-out-of-band `EvidencePack`. At `compare` time both are diffed and reconciled
+out-of-band `build/source pack`. At `compare` time both are diffed and reconciled
 under the [authority rule](#the-authority-rule-the-one-rule-that-matters):
 
 ```mermaid
@@ -86,17 +86,17 @@ flowchart TD
     end
 
     subgraph evidence["Evidence pipeline — corroborating, post-build"]
-      BT["build tree (no rebuild)"] --> CE["collect-evidence"]
+      BT["build tree (no rebuild)"] --> CE["collect"]
       CE --> L3["L3 build facts<br/>compile DB / CMake / Ninja / Bazel / Make"]
       CE --> L4["L4 source ABI replay<br/>clang (--source-abi)"]
       CE --> L5["L5 graph summary<br/>(--source-graph)"]
-      L3 --> PACK["EvidencePack<br/>(content-addressed, out-of-band)"]
+      L3 --> PACK["build/source pack<br/>(content-addressed, out-of-band)"]
       L4 --> PACK
       L5 --> PACK
     end
 
     SNAP --> CMP{{"compare"}}
-    PACK -. "pass explicitly:<br/>--old/--new-evidence" .-> CMP
+    PACK -. "pass explicitly:<br/>--old/--new-build-info" .-> CMP
     CMP --> DIFFA["diff artifact layers<br/>L0/L1/L2 → can prove BREAKING"]
     CMP --> DIFFE["diff evidence layers<br/>L3/L4/L5 → API_BREAK / risk only"]
     DIFFA --> REC["reconcile (worst-wins +<br/>authority rule: L3/L4/L5 never<br/>deletes an artifact-proven break)"]
@@ -106,50 +106,121 @@ flowchart TD
 
 Three consequences fall out of this shape, all by design:
 
-- The pack is a **sidecar**. `dump --evidence` stores only a content-addressed
-  *reference* on the snapshot; the pack directory stays out-of-band, and
-  `compare` does **not** follow that reference — you hand the packs in explicitly
-  with `--old-evidence` / `--new-evidence`.
+- The facts are **embedded in the snapshot**. `dump --build-info/--sources`
+  folds the normalized build + source facts directly into the `.abi.json`, so a
+  later `compare old.json new.json` carries them with **no out-of-band
+  directories** (single-artifact UX). The pack directory that `collect`
+  produces stays available as an explicit per-side override
+  (`--old-build-info`/`--new-build-info`, `--old-sources`/`--new-sources`), and
+  raw provenance is never embedded — only the normalized facts that feed the
+  comparison.
 - Collection is **post-build and read-only**: it reads existing build outputs and
   build-system query interfaces; it never rebuilds your project or runs arbitrary
   commands.
-- The verdict is only as strong as the evidence behind it, so every pack-aware
-  run prints the `evidence_coverage` table and the capability report below.
+- The verdict is only as strong as the evidence behind it, so every
+  build/source-aware run prints the `layer_coverage` table and the capability
+  report below.
 
 ## Workflow
 
-The default path is unchanged. Evidence is **post-build and opt-in** — it never
-rebuilds your project or runs arbitrary commands; it reads existing build
-outputs and build-system query interfaces only.
+The default path is unchanged. Build/source data is **post-build and opt-in** —
+it never rebuilds your project or runs arbitrary commands; it reads existing
+build outputs and build-system query interfaces only.
+
+### The source-tree-centric flow (recommended)
+
+The common case is a **shipped binary** (e.g. a prebuilt package) plus a
+**source checkout at the tag it was built from**. Point `dump` straight at the
+source tree — `--sources <tree>` runs L4 source ABI replay **and** the L5 graph
+internally and embeds them; there are no separate `--source-abi`/`--source-graph`
+toggles, and the graph is always built (it is compact by design):
 
 ```bash
-# 1. Collect an evidence pack from an existing build tree (no rebuild).
-abicheck collect-evidence \
-  --compile-db build/compile_commands.json \
-  --build-dir build --cmake \
-  --output libfoo.evidence/
+# Source ABI replay (L4) + graph (L5) inline from a checkout, plus L3 from a
+# compile DB auto-discovered inside the tree (or pass --build-info explicitly):
+abicheck dump libfoo.so -H include/ \
+  --sources ./libfoo-src/ -o new.abi.json
 
-# 2a. Attach it to a snapshot (stores a lightweight content-addressed ref).
-abicheck dump build/libfoo.so -H include/ \
-  --evidence libfoo.evidence/ -o libfoo.abi.json
-
-# 2b. Or compare two snapshots together with their packs.
-abicheck compare old.abi.json new.abi.json \
-  --old-evidence old.evidence/ --new-evidence new.evidence/
+# Compare — the embedded L3/L4/L5 facts diff automatically, no pack dirs:
+abicheck compare old.abi.json new.abi.json
 ```
 
-To additionally collect **L4 source ABI replay**, add `--source-abi` (requires
-clang). The replay scope (ADR-030 D7) decides how many translation units are
-parsed:
+`--build-info <path>` is the optional, **decoupled** L3 input: a build dir, a
+`compile_commands.json`, or a pre-captured pack. When omitted, a
+`compile_commands.json` inside the source tree is auto-discovered; if there is
+none, L3 is reported as `not_collected` and the scan continues. Source ABI
+replay (L4) still **requires clang** (or castxml for the declaration subset) and
+degrades to partial coverage when the front-end is absent — the artifact tiers
+stay authoritative (ADR-028 D3).
+
+### Parallel baselines with `merge`
+
+Build-side and source-side facts can be produced independently — on different
+machines, at different times — and combined into one self-contained baseline:
 
 ```bash
-abicheck collect-evidence \
+abicheck dump libfoo.so -H include/   -o libfoo.bin.json   # L0/L1/L2 (+optional L3)
+abicheck dump --sources ./libfoo-src/ -o libfoo.src.json   # L3/L4/L5, no binary
+abicheck merge libfoo.bin.json libfoo.src.json -o libfoo.baseline.json
+```
+
+`merge` keeps the binary-bearing snapshot's ABI surface and folds every input's
+embedded `build_source` facts together per layer (each layer should come from
+exactly one input), so the result is a single `.abi.json` carrying all of
+L0–L5.
+
+### Build-tool query configuration (`.abicheck.yml`)
+
+A source checkout often *contains* the build system. abicheck can use it to
+recover exact ABI-affecting flags and generated headers — gated by a per-project
+config and the ADR-032 D5 action ceiling (**read by default, query opt-in, full
+build never**):
+
+```yaml
+# .abicheck.yml at the source-tree root (or pass --build-config <path>)
+build:
+  system: bazel            # bazel | cmake | make | meson | auto (default: auto-detect)
+  # A command that EMITS flags/exports without performing a full project build —
+  # e.g. a configured-graph/action query, not `cmake --build` / `make all`.
+  query: "bazel cquery 'deps(//cpp/oneapi/dal:core)' --output=jsonproto"
+  compile_db: bazel-out/.../compile_commands.json   # where the flags land
+sources:
+  public_headers: ["cpp/oneapi/dal/**/*.hpp"]
+  exclude: ["**/test/**", "**/backend/**"]
+```
+
+- **`inspect` (default, always on):** read existing build outputs / compile DBs
+  the checkout already has. No config needed.
+- **`query_build_system` (opt-in, `--allow-build-query`):** run the configured
+  `build.query` command to emit flags/exports. abicheck runs it with no shell
+  (parsed via `shlex`) in the source-tree directory.
+- **`run_build` / `wrap_build` (denied):** abicheck never performs a full
+  project build or compiler-wrapper interception.
+
+### Advanced: `collect` and out-of-band packs
+
+The `collect` command (which writes an on-disk pack directory) remains for
+advanced use — raw-provenance retention, external CLI extractors (ADR-032 D3),
+per-TU caching, and audit mode. The common workflow above never needs it. A
+pack directory it produces can still be embedded (`dump --build-info <pack>` /
+`--sources <pack>` auto-detect a pack by its `manifest.json`) or supplied
+out-of-band per side at compare time:
+
+```bash
+# (Advanced) Override or supply facts out-of-band per side instead of embedding:
+abicheck compare old.abi.json new.abi.json \
+  --old-build-info old.bs/ --new-build-info new.bs/
+
+# (Advanced) Collect a pack from an existing build tree (no rebuild), then embed:
+abicheck collect \
   --compile-db build/compile_commands.json \
   --source-abi \
   --source-abi-extractor clang \          # clang (default) | castxml | android
   --source-abi-scope target \             # off | headers-only | changed | target | full
   --source-abi-cache .abicache/source \   # optional per-TU dump cache (ADR-030 D8)
+  --source-graph summary \
   --output libfoo.evidence/
+abicheck dump libfoo.so -H include/ --sources libfoo.evidence/ -o new.abi.json
 ```
 
 - `--source-abi-scope changed --changed-path src/foo.cpp` replays only changed
@@ -157,17 +228,6 @@ abicheck collect-evidence \
 - `--source-abi-extractor android --android-dump libfoo.lsdump` reuses a
   pre-captured Android `header-abi-dumper`/`header-abi-linker` dump instead of
   running a compiler.
-
-To additionally collect the **L5 source graph summary** (ADR-031), add
-`--source-graph summary`. It folds the already-collected L3 build evidence into
-a compact target/source/header/build-option graph (no extra tool, no rebuild):
-
-```bash
-abicheck collect-evidence \
-  --compile-db build/compile_commands.json \
-  --source-graph summary \
-  --output libfoo.evidence/
-```
 
 Add `--call-graph` (requires `clang++`) to also fold approximate direct-call
 edges (`DECL_CALLS_DECL`, each labelled with a `call_kind` and `resolution`
@@ -189,9 +249,9 @@ absent):
 Localize a single finding through the graph:
 
 ```bash
-abicheck explain-finding --evidence libfoo.evidence/ --symbol _ZN3foo3barEv
+abicheck explain-finding --sources libfoo.evidence/ --symbol _ZN3foo3barEv
 # or resolve the symbol from a JSON report:
-abicheck explain-finding --evidence libfoo.evidence/ --report report.json --finding-id 0
+abicheck explain-finding --sources libfoo.evidence/ --report report.json --finding-id 0
 ```
 
 It reports what produced and reaches the symbol — exporting target, source
@@ -210,7 +270,7 @@ The diff is **structural** (which nodes/edges entered or left the graph). Per
 the authority rule it explains and prioritizes impact; it never, on its own,
 decides or suppresses an artifact-proven ABI break.
 
-`collect-evidence` accepts:
+`collect` accepts:
 
 - `--compile-db PATH` / `-p DIR` — a `compile_commands.json` (the universal,
   low-friction input).
@@ -247,9 +307,9 @@ cmake -S libfoo-1.0 -B build-old -DCMAKE_BUILD_TYPE=Debug \
       -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build build-old
 
-# 2. Collect the evidence pack from the existing build tree (no rebuild).
+# 2. Collect the build/source pack from the existing build tree (no rebuild).
 #    Add --source-abi for L4 (needs clang); drop it for L3-only.
-abicheck collect-evidence \
+abicheck collect \
     --compile-db build-old/compile_commands.json \
     --build-dir build-old --cmake \
     --source-abi \
@@ -265,16 +325,20 @@ abicheck dump build-old/libfoo.so -H libfoo-1.0/include -p build-old \
 
 # --- At compare time (CI), pass BOTH snapshots AND both packs ---
 abicheck compare libfoo-1.0.abi.json libfoo-2.0.abi.json \
-    --old-evidence libfoo-1.0.evidence/ \
-    --new-evidence libfoo-2.0.evidence/
+    --old-build-info libfoo-1.0.evidence/ \
+    --new-build-info libfoo-2.0.evidence/
 ```
 
 The compare prints the [coverage table and capability report](#evidence-coverage)
 first, so you can confirm every layer landed before trusting the verdict — if a
 row says `not_collected` or `[off]`, that is exactly the input or tool to add.
-Keep the `*.evidence/` directories next to the snapshots (e.g. as CI artifacts):
-the snapshot only stores a reference, so a compare without the packs silently
-drops the L3/L4 findings.
+
+Because `dump --build-info/--sources` embeds the normalized facts into the
+`.abi.json`, a normal `compare old.json new.json` carries the L3/L4/L5 findings
+with **no out-of-band directories**. Keeping the `*.evidence/` pack directories
+next to the snapshots (e.g. as CI artifacts) is therefore optional — useful only
+when you want to re-attach raw provenance, override a side at compare time with
+`--old/--new-build-info` / `--old/--new-sources`, or debug what was collected.
 
 ## External CLI extractors & the security model (ADR-032)
 
@@ -298,7 +362,7 @@ outputs:
 ```
 
 ```bash
-abicheck collect-evidence \
+abicheck collect \
   --extractor-manifest my-extractor.yaml \
   --allow-build-query \
   -o libfoo.evidence/
@@ -390,7 +454,7 @@ policy profiles decide whether a source-only finding blocks a release.
 ## Source graph findings (L5)
 
 When both packs carry an L5 source graph summary, comparing them (via `compare`
-with `--old/--new-evidence`, or directly with `compare-graph`) produces
+with `--old/--new-build-info`, or directly with `compare-graph`) produces
 graph-derived **risk** findings (ADR-031 D6):
 
 | ChangeKind | verdict | meaning |
@@ -422,9 +486,10 @@ Evidence coverage:
   L5 source graph summary    not_collected
 ```
 
-The same rows are emitted as a structured `evidence_coverage` array in the
-`--format json` report (schema `report_schema_version` 1.2+), so machine
-consumers can key off layer status and confidence.
+The same rows are emitted as a structured `layer_coverage` array in the
+`--format json` report (schema `report_schema_version` 2.0+; the key was
+`evidence_coverage` in 1.x), so machine consumers can key off layer status
+and confidence.
 
 ### What is being checked — and what is not, and why
 

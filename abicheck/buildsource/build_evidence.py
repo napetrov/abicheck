@@ -346,7 +346,7 @@ class BuildEvidence:
     def merge(self, other: BuildEvidence) -> None:
         """Fold another adapter's output into this one (in place).
 
-        Used by ``collect-evidence`` when several adapters run against the same
+        Used by ``collect`` when several adapters run against the same
         tree (e.g. CMake File API for targets + compile DB for exact argv).
         De-duplicates by entity id so a compile unit collected twice is kept
         once (CMake File API wins on target facts, compile DB on argv).

@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .model import EvidenceConfidence
+from .model import LayerConfidence
 
 #: Source-ABI schema version, independent of the pack/build/snapshot versions
 #: (ADR-030 D8 cache key; ADR-028 D8 versioning). Bumped on any breaking change
@@ -47,11 +47,11 @@ SOURCE_ABI_VERSION: int = 1
 EVIDENCE_TIER_L4 = "L4_SOURCE_ABI"
 
 
-def _confidence(raw: Any) -> EvidenceConfidence:
+def _confidence(raw: Any) -> LayerConfidence:
     try:
-        return EvidenceConfidence(raw if raw is not None else "unknown")
+        return LayerConfidence(raw if raw is not None else "unknown")
     except ValueError:
-        return EvidenceConfidence.UNKNOWN
+        return LayerConfidence.UNKNOWN
 
 
 def _as_bool(raw: Any, default: bool) -> bool:
@@ -118,7 +118,7 @@ class SourceEntity:
     #: public_header|private_header|system_header|generated|unknown
     visibility: str = "unknown"
     api_relevant: bool = True
-    confidence: EvidenceConfidence = EvidenceConfidence.UNKNOWN
+    confidence: LayerConfidence = LayerConfidence.UNKNOWN
 
     def identity(self) -> str:
         """Stable cross-version identity that keeps C++ overloads distinct.

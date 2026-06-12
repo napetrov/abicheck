@@ -54,7 +54,7 @@ from pathlib import Path
 from typing import Any
 
 from ..build_evidence import CompileUnit
-from ..model import EvidenceConfidence
+from ..model import LayerConfidence
 from ..source_abi import SourceAbiTu, SourceEntity, SourceLocation
 from ._argv import (
     is_msvc_mode,
@@ -720,7 +720,7 @@ def macros_from_preprocessor(
                 source_location=_location(file, 0, origin),
                 visibility=visibility,
                 api_relevant=True,
-                confidence=EvidenceConfidence.HIGH,
+                confidence=LayerConfidence.HIGH,
             )
         )
     return entities, sorted(touched)
@@ -931,7 +931,7 @@ def _emit_function(
             source_location=loc,
             visibility=visibility,
             api_relevant=True,
-            confidence=EvidenceConfidence.HIGH,
+            confidence=LayerConfidence.HIGH,
         )
     )
     # Any function/method *defined* in a public header (it has a CompoundStmt
@@ -957,7 +957,7 @@ def _emit_function(
                 source_location=loc,
                 visibility=visibility,
                 api_relevant=True,
-                confidence=EvidenceConfidence.HIGH,
+                confidence=LayerConfidence.HIGH,
             )
         )
 
@@ -982,7 +982,7 @@ def _emit_template(
             source_location=_location(file, _node_line(node), origin),
             visibility=visibility,
             api_relevant=True,
-            confidence=EvidenceConfidence.HIGH,
+            confidence=LayerConfidence.HIGH,
         )
     )
 
@@ -1010,7 +1010,7 @@ def _emit_constexpr(
             source_location=_location(file, _node_line(node), origin),
             visibility=visibility,
             api_relevant=True,
-            confidence=EvidenceConfidence.HIGH,
+            confidence=LayerConfidence.HIGH,
         )
     )
 
@@ -1041,7 +1041,7 @@ def _emit_type(
             source_location=_location(file, _node_line(node), origin),
             visibility=visibility,
             api_relevant=True,
-            confidence=EvidenceConfidence.HIGH,
+            confidence=LayerConfidence.HIGH,
         )
     )
 
@@ -1096,7 +1096,7 @@ def _emit_typedef(
             source_location=_location(file, _node_line(node), origin),
             visibility=visibility,
             api_relevant=True,
-            confidence=EvidenceConfidence.HIGH,
+            confidence=LayerConfidence.HIGH,
         )
     )
 

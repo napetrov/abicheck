@@ -28,10 +28,10 @@ Security model (D3 + D5):
   operator registers it explicitly (``--extractor-manifest <path>``).
 * **Declared actions are a ceiling, not a grant.** The manifest's
   ``allowed_actions`` are intersected at run time with the actions the operator
-  enabled (:func:`~abicheck.evidence.extractor.resolve_allowed_actions`); a
+  enabled (:func:`~abicheck.buildsource.extractor.resolve_allowed_actions`); a
   manifest can never escalate beyond the run-permitted set. Before any phase
   runs, every action the manifest declares it needs must be permitted, or
-  collection fails with :class:`~abicheck.evidence.extractor.ActionNotPermittedError`.
+  collection fails with :class:`~abicheck.buildsource.extractor.ActionNotPermittedError`.
 * **No shell, sanitized environment.** Commands run as an argv list with
   ``shell=False`` and a minimal environment, so a manifest cannot smuggle a
   shell pipeline or leak the operator's full environment to the tool.

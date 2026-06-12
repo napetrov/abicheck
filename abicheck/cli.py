@@ -28,8 +28,8 @@ from .checker import DiffResult, LibraryMetadata, compare
 from .cli_audit import echo_filtered_surface, echo_pattern_modulations
 from .cli_options import (
     adr027_compare_options,
-    evidence_compare_options,
-    evidence_dump_option,
+    build_source_compare_options,
+    build_source_dump_options,
 )
 from .cli_params import POLICY_FILE_PARAM
 from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
@@ -176,15 +176,24 @@ def _provenance_timestamp(source_date_epoch: str | None) -> str:
 def _write_snapshot_output(
     snap: AbiSnapshot,
     output: Path | None,
-    evidence_dir: Path | None = None,
+    build_info: Path | None = None,
+    sources: Path | None = None,
+    build_config: Path | None = None,
+    allow_build_query: bool = False,
 ) -> None:
     """Serialize snapshot and write to file or stdout.
 
-    When *evidence_dir* is given, attach the EvidencePack reference first (D8).
+    When *build_info* and/or *sources* are given, their normalized L3/L4/L5 facts
+    are collected (inline from a source tree / build dir, or loaded from a pack
+    directory) and embedded in the snapshot first (single-artifact UX) so a later
+    ``compare old.json new.json`` needs no out-of-band packs.
     """
-    if evidence_dir is not None:
-        from .cli_evidence import attach_evidence_pack
-        attach_evidence_pack(snap, evidence_dir)
+    if build_info is not None or sources is not None:
+        from .cli_buildsource import embed_build_source
+        embed_build_source(
+            snap, build_info, sources,
+            build_config=build_config, allow_build_query=allow_build_query,
+        )
     result = snapshot_to_json(snap)
     if output:
         _safe_write_output(output, result)
@@ -625,7 +634,7 @@ def _populate_dependency_info(
 
 
 @main.command("dump")
-@click.argument("so_path", type=click.Path(exists=True, path_type=Path))
+@click.argument("so_path", type=click.Path(exists=True, path_type=Path), required=False)
 @click.option("-H", "--header", "headers", multiple=True, type=click.Path(exists=True, path_type=Path),
               help="Public header file or directory (repeat for multiple).")
 @click.option("-I", "--include", "includes", multiple=True, type=click.Path(path_type=Path),
@@ -716,8 +725,8 @@ def _populate_dependency_info(
               help="Opaque build identifier (CI run ID, build number, etc.).")
 @click.option("--no-git", "no_git", is_flag=True, default=False,
               help="Do not auto-detect git commit SHA.")
-@evidence_dump_option  # ADR-028: --evidence
-def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
+@build_source_dump_options  # --build-info / --sources (embed inline)
+def dump_cmd(so_path: Path | None, headers: tuple[Path, ...], includes: tuple[Path, ...],
              public_headers: tuple[Path, ...], public_header_dirs: tuple[Path, ...],
              version: str, lang: str, output: Path | None,
              gcc_path: str | None, gcc_prefix: str | None, gcc_options: str | None,
@@ -732,21 +741,22 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
              debuginfod: bool, debuginfod_url: str | None,
              verbose: bool,
              git_tag: str | None, build_id: str | None, no_git: bool,
-             evidence_dir: Path | None = None) -> None:
+             build_info: Path | None = None, sources: Path | None = None,
+             build_config: Path | None = None, allow_build_query: bool = False) -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
     \b
     Example:
       abicheck dump libfoo.so.1 -H include/foo.h --version 1.2.3 -o snap.json
-      abicheck dump libfoo.so.1 -H include/foo.h --lang c -o snap.json
-      abicheck dump libfoo.so.1 -H include/foo.h --gcc-prefix aarch64-linux-gnu-
-      abicheck dump libfoo.so.1 --follow-deps -o snap.json
-      abicheck dump libfoo.so.1 --dwarf-only -o snap.json
-      abicheck dump libfoo.so.1 --show-data-sources
-      abicheck dump libfoo.so.1 -H include/ -p build/  # build context from compile_commands.json
-      abicheck dump libfoo.so.1 --debug-root /usr/lib/debug  # separate debug files
+      abicheck dump --sources ./libfoo-src/ -o libfoo.src.json  # source-only (no binary)
     """
     _setup_verbosity(verbose)
+
+    # Source-only dump (no binary) for the parallel-baseline / merge flow.
+    if so_path is None:
+        from .cli_buildsource import dump_source_only
+        dump_source_only(sources, build_info, version, output, build_config, allow_build_query, git_tag, build_id, no_git)
+        return
 
     # Reconcile the --debug-format selector with the legacy --btf/--ctf/--dwarf
     # flags. The selector supersedes the legacy flags whenever it is given:
@@ -794,7 +804,10 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             output,
             public_headers,
             public_header_dirs,
-            evidence_dir,
+            build_info,
+            sources,
+            build_config,
+            allow_build_query,
         )
         return
 
@@ -843,7 +856,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         _populate_dependency_info(snap, so_path, list(search_paths), sysroot, ld_library_path)
 
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-    _write_snapshot_output(snap, output, evidence_dir)
+    _write_snapshot_output(snap, output, build_info, sources, build_config, allow_build_query)
 
 
 def _handle_non_elf_dump(
@@ -861,7 +874,10 @@ def _handle_non_elf_dump(
     output: Path | None,
     public_headers: tuple[Path, ...] = (),
     public_header_dirs: tuple[Path, ...] = (),
-    evidence_dir: Path | None = None,
+    build_info: Path | None = None,
+    sources: Path | None = None,
+    build_config: Path | None = None,
+    allow_build_query: bool = False,
 ) -> None:
     """Handle PE/Mach-O native dump path and output writing."""
     if follow_deps:
@@ -878,7 +894,7 @@ def _handle_non_elf_dump(
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-    _write_snapshot_output(snap, output, evidence_dir)
+    _write_snapshot_output(snap, output, build_info, sources, build_config, allow_build_query)
 
 
 def _resolve_build_context_flags(
@@ -1678,7 +1694,7 @@ def _finalize_compare_result(
               help="Enable debuginfod network resolution for debug info (opt-in).")
 @click.option("--debuginfod-url", "debuginfod_url", default=None,
               help="debuginfod server URL (overrides DEBUGINFOD_URLS env var).")
-@evidence_compare_options  # ADR-028/029: --old-evidence/--new-evidence/--evidence-mode
+@build_source_compare_options  # --old/new-build-info, --old/new-sources, --collect-mode
 @adr027_compare_options  # ADR-027: --pattern-verdicts/--explain-patterns/--surface-metrics
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
@@ -1717,7 +1733,9 @@ def compare_cmd(
     explain_patterns: bool,
     surface_metrics: bool,
     verbose: bool,
-    old_evidence: Path | None = None, new_evidence: Path | None = None, evidence_mode: str = "off",
+    old_build_info: Path | None = None, new_build_info: Path | None = None,
+    old_sources: Path | None = None, new_sources: Path | None = None,
+    collect_mode: str = "off",
     probe_matrix_old: Path | None = None,
     probe_matrix_new: Path | None = None,
 ) -> None:
@@ -1865,14 +1883,22 @@ def compare_cmd(
 
     extra_changes = _load_probe_matrix_changes(probe_matrix_old, probe_matrix_new)
 
-    evidence_coverage_rows: list[dict[str, object]] = []
-    if old_evidence is not None or new_evidence is not None or evidence_mode != "off":
-        from .cli_evidence import collect_compare_evidence
+    layer_coverage_rows: list[dict[str, object]] = []
+    _any_pack_flag = any(
+        x is not None
+        for x in (old_build_info, new_build_info, old_sources, new_sources)
+    )
+    _has_embedded = old.build_source is not None or new.build_source is not None
+    if _any_pack_flag or collect_mode != "off" or _has_embedded:
+        from .cli_buildsource import diff_embedded_build_source
+        # Build-info + source facts come from each snapshot's embedded payload
+        # (single-artifact UX) unless an out-of-band pack flag overrides a side.
         # Header-parse-context drift is judged from the new snapshot's own
         # provenance (parsed_with_build_context, set by `dump -p`); compare adds
         # no build context of its own.
-        ev_changes, evidence_coverage_rows = collect_compare_evidence(
-            old_evidence, new_evidence, evidence_mode, new, old,
+        ev_changes, layer_coverage_rows = diff_embedded_build_source(
+            old_build_info, new_build_info, old_sources, new_sources,
+            collect_mode, new, old,
         )
         extra_changes = (extra_changes or []) + ev_changes if ev_changes else extra_changes
 
@@ -1885,8 +1911,8 @@ def compare_cmd(
         pattern_verdicts=apply_patterns,
         surface_metrics=surface_metrics,
     )
-    if evidence_coverage_rows:
-        result.evidence_coverage = evidence_coverage_rows
+    if layer_coverage_rows:
+        result.layer_coverage = layer_coverage_rows
 
     if explain_patterns:
         echo_pattern_modulations(result)
@@ -1959,9 +1985,9 @@ main.add_command(compat_group)
 from . import (  # noqa: E402  — must run after `main` and helpers are defined
     cli_appcompat,  # noqa: F401  — registers appcompat
     cli_baseline,  # noqa: F401  — registers baseline
+    cli_buildsource,  # noqa: F401  — registers collect
     cli_compare_release,  # noqa: F401  — registers compare-release
     cli_debian_symbols,  # noqa: F401  — registers debian-symbols
-    cli_evidence,  # noqa: F401  — registers collect-evidence
     cli_plugin,  # noqa: F401  — registers plugin-check
     cli_pr_comment,  # noqa: F401  — registers pr-comment
     cli_probe,  # noqa: F401  — registers probe (run, compare)

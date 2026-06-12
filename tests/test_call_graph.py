@@ -20,9 +20,8 @@ compiler is required; the live subprocess path is integration-only."""
 
 from __future__ import annotations
 
-from abicheck.checker_policy import COMPATIBLE_KINDS, ChangeKind
-from abicheck.evidence.build_evidence import BuildEvidence, CompileUnit
-from abicheck.evidence.call_graph import (
+from abicheck.buildsource.build_evidence import BuildEvidence, CompileUnit
+from abicheck.buildsource.call_graph import (
     CALL_KIND_DIRECT,
     CALL_KIND_FUNCTION_POINTER,
     CALL_KIND_VIRTUAL,
@@ -34,12 +33,13 @@ from abicheck.evidence.call_graph import (
     augment_graph_with_calls,
     parse_clang_ast_calls,
 )
-from abicheck.evidence.source_graph import (
+from abicheck.buildsource.source_graph import (
     GraphEdge,
     GraphNode,
     SourceGraphSummary,
     diff_source_graph_findings,
 )
+from abicheck.checker_policy import COMPATIBLE_KINDS, ChangeKind
 
 
 def _ref(kind: str, name: str, mangled: str = "", *, virtual: bool = False) -> dict:
@@ -252,7 +252,7 @@ class _FakeProc:
 
 
 def _patch_clang(monkeypatch, *, available: bool = True, proc=None, raises=None) -> None:
-    import abicheck.evidence.call_graph as cg
+    import abicheck.buildsource.call_graph as cg
 
     monkeypatch.setattr(cg.shutil, "which", lambda _b: "/usr/bin/clang++" if available else None)
 
@@ -310,7 +310,7 @@ def test_extract_from_build_dedupes_across_units(monkeypatch) -> None:
     assert edges == [CallEdge("_Zc", "_Zcallee", CALL_KIND_DIRECT, RESOLUTION_EXACT)]
 
 
-# ── collect-evidence --call-graph wiring (_collect_call_graph) ───────────────
+# ── collect --call-graph wiring (_collect_call_graph) ───────────────
 
 
 class _FakeExtractor:
@@ -331,15 +331,15 @@ class _FakeExtractor:
 
 
 def _patch_extractor(monkeypatch, fake: _FakeExtractor) -> None:
-    import abicheck.evidence.call_graph as cg
+    import abicheck.buildsource.call_graph as cg
 
     monkeypatch.setattr(cg, "ClangCallGraphExtractor", lambda **_k: fake)
 
 
 def test_collect_call_graph_folds_edges_and_refinalizes(monkeypatch) -> None:
-    from abicheck.cli_evidence import _collect_call_graph
-    from abicheck.evidence.model import ExtractorRecord
-    from abicheck.evidence.source_graph import build_source_graph
+    from abicheck.buildsource.model import ExtractorRecord
+    from abicheck.buildsource.source_graph import build_source_graph
+    from abicheck.cli_buildsource import _collect_call_graph
 
     _patch_extractor(monkeypatch, _FakeExtractor(available=True, edges=[CallEdge("_Za", "_Zb")]))
     graph = build_source_graph(BuildEvidence())
@@ -352,9 +352,9 @@ def test_collect_call_graph_folds_edges_and_refinalizes(monkeypatch) -> None:
 
 
 def test_collect_call_graph_missing_clang_records_failure(monkeypatch) -> None:
-    from abicheck.cli_evidence import _collect_call_graph
-    from abicheck.evidence.model import ExtractorRecord
-    from abicheck.evidence.source_graph import build_source_graph
+    from abicheck.buildsource.model import ExtractorRecord
+    from abicheck.buildsource.source_graph import build_source_graph
+    from abicheck.cli_buildsource import _collect_call_graph
 
     _patch_extractor(monkeypatch, _FakeExtractor(available=False))
     graph = build_source_graph(BuildEvidence())
@@ -370,8 +370,8 @@ def test_collect_evidence_call_graph_flag_end_to_end(monkeypatch, tmp_path) -> N
 
     from click.testing import CliRunner
 
+    from abicheck.buildsource.pack import BuildSourcePack
     from abicheck.cli import main
-    from abicheck.evidence.pack import EvidencePack
 
     src = tmp_path / "foo.cpp"
     src.write_text("int foo(){return 1;}\n")
@@ -384,9 +384,9 @@ def test_collect_evidence_call_graph_flag_end_to_end(monkeypatch, tmp_path) -> N
 
     out = tmp_path / "out.evidence"
     res = CliRunner().invoke(main, [
-        "collect-evidence", "--compile-db", str(cdb), "--call-graph", "-o", str(out),
+        "collect", "--compile-db", str(cdb), "--call-graph", "-o", str(out),
     ])
     assert res.exit_code == 0, res.output
-    pack = EvidencePack.load(out)
+    pack = BuildSourcePack.load(out)
     assert pack.source_graph is not None
     assert any(e.kind == "DECL_CALLS_DECL" for e in pack.source_graph.edges)

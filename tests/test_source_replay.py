@@ -25,10 +25,10 @@ from pathlib import Path
 
 import pytest
 
-from abicheck.evidence.build_evidence import BuildEvidence, CompileUnit, Target
-from abicheck.evidence.source_abi import SourceAbiTu, SourceEntity, SourceLocation
-from abicheck.evidence.source_extractors.base import SourceExtractionError
-from abicheck.evidence.source_replay import (
+from abicheck.buildsource.build_evidence import BuildEvidence, CompileUnit, Target
+from abicheck.buildsource.source_abi import SourceAbiTu, SourceEntity, SourceLocation
+from abicheck.buildsource.source_extractors.base import SourceExtractionError
+from abicheck.buildsource.source_replay import (
     CI_MODE_TO_SCOPE,
     REPLAY_SCOPES,
     SourceAbiCache,
