@@ -17,7 +17,7 @@
 Adds ``COMPILE_UNIT_INCLUDES_FILE`` edges from compiler depfiles (``-M``/``-MM``
 output) — the ADR-029 D3 / ADR-031 D3 source for "compile unit → include
 edges". The depfile *parser* is a pure function exercised by unit tests; the
-live ``clang -MM`` invocation is integration-only and degrades gracefully, like
+live ``clang -M`` invocation is integration-only and degrades gracefully, like
 the L4 source extractors and the call-graph extractor.
 """
 from __future__ import annotations
@@ -93,6 +93,21 @@ def depfile_args_from_argv(argv: list[str]) -> list[str]:
     return out
 
 
+def _lang_flag(language: str) -> list[str]:
+    """``-x <lang>`` forcing a compile unit's language for the depfile pass.
+
+    Preserves the compile command's language so a C TU replayed through the
+    ``clang++`` driver is parsed as C, not C++ (Codex review). An unknown
+    language adds no flag, leaving the driver/extension to decide.
+    """
+    lang = language.strip().upper()
+    if lang in ("C",):
+        return ["-x", "c"]
+    if lang in ("CXX", "C++", "CPP", "CC"):
+        return ["-x", "c++"]
+    return []
+
+
 def parse_depfile(text: str) -> list[str]:
     """Parse a make-style depfile (``clang -MM`` output) into prerequisite paths.
 
@@ -160,7 +175,7 @@ def augment_graph_with_includes(
 
 @dataclass
 class ClangIncludeExtractor:
-    """Run ``clang -MM`` to recover a TU's included files (integration only).
+    """Run ``clang -M`` to recover a TU's included files (integration only).
 
     Compiler-dependent and side-effecting: a missing ``clang`` or a failure
     records a diagnostic and yields ``{}`` so collection never aborts.
@@ -191,7 +206,18 @@ class ClangIncludeExtractor:
             argv = depfile_args_from_argv(cu.argv) if cu.argv else [cu.source]
             if not argv:
                 argv = [cu.source]
-            cmd = [self.clang_bin, "-MM", *(unredact_home(a) for a in argv)]
+            # `-M` (not `-MM`) so depfiles include *system*-classified headers: a
+            # project whose public headers are reached via `-isystem` (installed
+            # / SYSTEM include dirs) would otherwise be omitted, and the `changed`
+            # scope, treating a complete graph as authoritative, would select no
+            # TU for edits to them (Codex review). `-x <lang>` forces the compile
+            # unit's real language so a `.c` TU replayed through the clang++ driver
+            # is not parsed as C++ (wrong __cplusplus / language-conditioned
+            # includes) (Codex review).
+            cmd = [
+                self.clang_bin, "-M", *_lang_flag(cu.language),
+                *(unredact_home(a) for a in argv),
+            ]
             cwd = unredact_home(cu.directory) if cu.directory else None
             try:
                 proc = subprocess.run(  # noqa: S603 - fixed argv, never shell=True
@@ -199,7 +225,7 @@ class ClangIncludeExtractor:
                     text=True, timeout=120, check=False,
                 )
             except (OSError, subprocess.SubprocessError) as exc:
-                self.diagnostics.append(f"clang -MM failed for {cu.id}: {exc}")
+                self.diagnostics.append(f"clang -M failed for {cu.id}: {exc}")
                 continue
             if proc.stdout.strip():
                 out[cu.id] = parse_depfile(proc.stdout)

@@ -199,3 +199,32 @@ def test_extract_from_build_unredacts_home(monkeypatch) -> None:
     assert out == {"cu://a": ["foo.cpp", "a.h"]}
     assert not any("~" in str(tok) for tok in captured["cmd"])
     assert "~" not in (captured["cwd"] or "")
+
+
+def test_lang_flag_preserves_language() -> None:
+    from abicheck.evidence.include_graph import _lang_flag
+    assert _lang_flag("C") == ["-x", "c"]
+    assert _lang_flag("CXX") == ["-x", "c++"]
+    assert _lang_flag("C++") == ["-x", "c++"]
+    assert _lang_flag("") == []
+
+
+def test_extract_uses_dash_m_and_preserves_c_language(monkeypatch) -> None:
+    # -M (not -MM) so system-classified public headers appear; -x c so a C unit
+    # replayed through clang++ is parsed as C (Codex review).
+    import abicheck.evidence.include_graph as ig
+
+    captured: dict = {}
+
+    class _R:
+        stdout = "foo.o: foo.c sys.h"
+        stderr = ""
+
+    monkeypatch.setattr(ig.shutil, "which", lambda _b: "/usr/bin/clang++")
+    monkeypatch.setattr(ig.subprocess, "run",
+                        lambda cmd, **kw: (captured.update(cmd=cmd) or _R()))
+    cu = CompileUnit(id="cu://c", source="foo.c", language="C", argv=["cc", "-c", "foo.c"])
+    out = ClangIncludeExtractor().extract_from_build(BuildEvidence(compile_units=[cu]))
+    assert out == {"cu://c": ["foo.c", "sys.h"]}
+    assert "-M" in captured["cmd"] and "-MM" not in captured["cmd"]
+    assert captured["cmd"][captured["cmd"].index("-x") + 1] == "c"

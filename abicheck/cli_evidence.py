@@ -114,7 +114,7 @@ if TYPE_CHECKING:
                    "clang AST (ADR-031 D4, phase 6). REQUIRES clang++; without it "
                    "the graph is collected without call edges. Implies --source-graph summary.")
 @click.option("--include-graph", "include_graph", is_flag=True, default=False,
-              help="Add compile-unit include edges to the L5 graph via `clang -MM` "
+              help="Add compile-unit include edges to the L5 graph via `clang -M` "
                    "(ADR-031 D3). REQUIRES clang++. Implies --source-graph summary.")
 @click.option("--kythe-entries", "kythe_entries", type=click.Path(path_type=Path), default=None,
               help="Pre-captured Kythe entries JSON to fold into the L5 graph "
