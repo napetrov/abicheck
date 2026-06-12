@@ -895,13 +895,40 @@ def _diff_value_abi_traits(
     for fname in sorted((old_trait_keys & new_trait_keys) - already_reported_cc):
         old_trait = old_meta.value_abi_traits[fname]
         new_trait = new_meta.value_abi_traits[fname]
-        if old_trait != new_trait:
+        if old_trait == new_trait:
+            continue
+        # When the *return* component (ret:trivial ↔ ret:nontrivial) is what
+        # flipped, the aggregate is now returned through a different mechanism
+        # (in-register ↔ hidden sret pointer) — a struct-return convention
+        # change, the more specific finding. Otherwise it is a generic
+        # value-ABI (parameter-passing) trait change.
+        if _ret_component(old_trait) != _ret_component(new_trait):
+            results.append((
+                "struct_return_convention_changed", fname,
+                f"Aggregate return convention changed: {fname} "
+                f"({old_trait} → {new_trait})",
+                old_trait, new_trait,
+            ))
+        else:
             results.append((
                 "value_abi_trait_changed", fname,
                 f"DWARF value-ABI trait changed: {fname} ({old_trait} → {new_trait})",
                 old_trait, new_trait,
             ))
     return results
+
+
+def _ret_component(trait: str) -> str | None:
+    """Extract the ``ret:`` component of a value-ABI trait fingerprint.
+
+    Trait strings look like ``"ret:trivial|p0:nontrivial"``; returns the value
+    after ``ret:`` (e.g. ``"trivial"``) or ``None`` when the function has no
+    by-value aggregate return component.
+    """
+    for part in trait.split("|"):
+        if part.startswith("ret:"):
+            return part[4:]
+    return None
 
 
 def _diff_struct_packing(

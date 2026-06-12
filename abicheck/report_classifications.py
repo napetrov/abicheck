@@ -55,6 +55,7 @@ BINARY_ONLY_KINDS: frozenset[str] = frozenset({
     "dwarf_info_missing", "toolchain_flag_drift",
     # DWARF-derived calling convention and frame register changes (#117)
     "calling_convention_changed", "value_abi_trait_changed",
+    "struct_return_convention_changed",
     "frame_register_changed",
     # DWARF producer-derived vector-function (SIMD clone) ABI flag drift
     "vector_abi_changed",

@@ -1,8 +1,8 @@
 # ABICC vs Abicheck: Test Coverage Comparison
 
-> Updated: 2026-03-09; content reviewed 2026-06-07. The ABICC rule mapping is a historical parity snapshot; the current ChangeKind total is **239**, see the [Change Kind Reference](../reference/change-kinds.md).
+> Updated: 2026-03-09; content reviewed 2026-06-07. The ABICC rule mapping is a historical parity snapshot; the current ChangeKind total is **244**, see the [Change Kind Reference](../reference/change-kinds.md).
 > Source: ABICC `RulesBin.xml` (196 rules), `RulesSrc.xml` (100 rules + `Removed_Const_Overload`), `RegTests.pm` (~153 C++ + ~102 C named scenarios)
-> Target: abicheck `examples/` (129 cases; the original 74-case subset is the release-pinned cross-tool benchmark), `tests/` (large unit/integration/parity suite), `ChangeKind` enum (**239 change kinds** today; the per-rule mappings below were written against an earlier snapshot)
+> Target: abicheck `examples/` (129 cases; the original 74-case subset is the release-pinned cross-tool benchmark), `tests/` (large unit/integration/parity suite), `ChangeKind` enum (**244 change kinds** today; the per-rule mappings below were written against an earlier snapshot)
 >
 > **Analysis modes:** Abicheck uses **both** header comparison (via castxml) **and** binary analysis (ELF/DWARF).
 > The `dump()` function combines castxml header parsing (types, functions, enums, typedefs, constants) with
@@ -22,7 +22,7 @@
 | ABICC RegTests.pm named scenarios | ~255 (~153 C++ + ~102 C) |
 | ABICC de-duplicated scenarios | ~66 |
 | **Abicheck covers (has ChangeKind + tests)** | **66/66 (100%)** |
-| Abicheck ChangeKind enum members | **239 change kinds** (this table's per-rule mappings reflect an earlier snapshot) |
+| Abicheck ChangeKind enum members | **244 change kinds** (this table's per-rule mappings reflect an earlier snapshot) |
 | All ChangeKinds have assertion tests | **Yes** (enforced by `test_changekind_completeness.py`) |
 | Abicheck example cases | 129 |
 | ABICC scenarios NOT in abicheck | **0** |

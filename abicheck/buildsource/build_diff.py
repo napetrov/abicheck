@@ -31,6 +31,18 @@ from .build_evidence import BuildEvidence
 #: the generic ABI-flag finding.
 _TOOLCHAIN_OPTION_KEYS = frozenset({"target", "sysroot"})
 
+#: Canonical runtime-model option keys (set by ``derive_build_options``) routed
+#: to a dedicated mode-flip finding. Each maps to its ChangeKind plus the
+#: compiler default that an *absent* option implies — so an explicit on-value vs
+#: an omitted flag (both effectively "on") never reads as a change.
+_MODE_OPTION_FINDINGS: dict[str, tuple[ChangeKind, str]] = {
+    "exceptions": (ChangeKind.EXCEPTIONS_MODE_CHANGED, "on"),
+    "rtti": (ChangeKind.RTTI_MODE_CHANGED, "on"),
+    "threadsafe_statics": (ChangeKind.THREADSAFE_STATICS_MODE_CHANGED, "on"),
+    "tls_init": (ChangeKind.TLS_MODEL_CHANGED, "extern"),
+    "tls_model": (ChangeKind.TLS_MODEL_CHANGED, "default"),
+}
+
 
 def check_header_parse_drift(
     build_evidence: BuildEvidence,
@@ -125,6 +137,32 @@ def _diff_options(old: BuildEvidence, new: BuildEvidence) -> list[Change]:
         old_disp = _fmt_values(ov)
         new_disp = _fmt_values(nv)
         abi_relevant = key in old_abi or key in new_abi
+
+        # Runtime-model flips (exceptions/rtti/tls/threadsafe-statics) route to
+        # their dedicated finding. An absent option means the compiler default,
+        # so compare *effective* modes and skip an explicit-on vs omitted no-op.
+        if key in _MODE_OPTION_FINDINGS:
+            mode_kind, default = _MODE_OPTION_FINDINGS[key]
+            old_eff = ov or {default}
+            new_eff = nv or {default}
+            if old_eff == new_eff:
+                continue
+            changes.append(
+                Change(
+                    kind=mode_kind,
+                    symbol=f"build-option:{key}",
+                    description=(
+                        f"Runtime-model option {key!r} changed: "
+                        f"{_fmt_values(old_eff)!r} -> {_fmt_values(new_eff)!r}. "
+                        "Not link-compatible across consumers; the artifact diff "
+                        "confirms any concrete break."
+                    ),
+                    old_value=_fmt_values(old_eff),
+                    new_value=_fmt_values(new_eff),
+                )
+            )
+            continue
+
         # Toolchain-shaped options route to the dedicated toolchain finding.
         if key in _TOOLCHAIN_OPTION_KEYS and abi_relevant:
             changes.append(

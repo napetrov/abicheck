@@ -46,7 +46,26 @@ ABI_RELEVANT_FLAG_PREFIXES: tuple[str, ...] = (
     "-fpack-struct", "/Zp", "-fshort-enums", "-fshort-wchar",
     "-fabi-version", "-fno-rtti", "-frtti", "-fno-exceptions", "-fexceptions",
     "-flto", "-fno-lto", "-fwhole-program-vtables",
+    "-ftls-model", "-fextern-tls-init", "-fno-extern-tls-init",
+    "-fno-threadsafe-statics", "-fthreadsafe-statics",
+    "-freg-struct-return", "-fpcc-struct-return",
 )
+
+#: Runtime-model flags normalized to a canonical (key, value) so a mode flip is
+#: diffable regardless of spelling/order, and absence (= compiler default) never
+#: reads as a change. The build-evidence diff routes these canonical keys to the
+#: dedicated EXCEPTIONS/RTTI/TLS/THREADSAFE_STATICS_MODE_CHANGED findings.
+#: Keys here are intentionally distinct from the raw-flag keys other options use.
+_RUNTIME_MODE_FLAGS: dict[str, tuple[str, str]] = {
+    "-fexceptions": ("exceptions", "on"),
+    "-fno-exceptions": ("exceptions", "off"),
+    "-frtti": ("rtti", "on"),
+    "-fno-rtti": ("rtti", "off"),
+    "-fextern-tls-init": ("tls_init", "extern"),
+    "-fno-extern-tls-init": ("tls_init", "local"),
+    "-fthreadsafe-statics": ("threadsafe_statics", "on"),
+    "-fno-threadsafe-statics": ("threadsafe_statics", "off"),
+}
 
 #: Macro defines whose value is ABI-relevant even though they're plain -D flags.
 _ABI_RELEVANT_DEFINES: tuple[str, ...] = (
@@ -260,6 +279,14 @@ def derive_build_options(compile_units: list[CompileUnit]) -> list[BuildOption]:
                 # double-count and make split (``--sysroot /sdk``) vs combined
                 # (``--sysroot=/sdk``) spelling look like a change.
                 continue
+            elif flag in _RUNTIME_MODE_FLAGS:
+                key, value = _RUNTIME_MODE_FLAGS[flag]
+                add(key, value, raw=flag)
+            elif flag.startswith("-ftls-model"):
+                # -ftls-model=<model>: canonical key so a model switch diffs as a
+                # single option regardless of which model string is on each side.
+                model = flag.split("=", 1)[1] if "=" in flag else ""
+                add("tls_model", model, raw=flag)
             else:
                 add(flag.split("=", 1)[0], flag, raw=flag)
     return out

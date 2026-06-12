@@ -482,6 +482,102 @@ def test_header_parse_drift_silent_with_context():
     assert check_header_parse_drift(ev, headers_parsed_with_context=True) == []
 
 
+def _opt(key: str, value: str) -> BuildOption:
+    return BuildOption(key, value, abi_relevant=True)
+
+
+def test_runtime_mode_flags_normalize_to_canonical_keys():
+    from abicheck.buildsource.adapters.base import derive_build_options
+    from abicheck.buildsource.build_evidence import CompileUnit
+
+    cu = CompileUnit(
+        id="cu://x",
+        language="CXX",
+        abi_relevant_flags=[
+            "-fno-exceptions", "-fno-rtti",
+            "-ftls-model=initial-exec", "-fno-threadsafe-statics",
+        ],
+    )
+    opts = {(o.key, o.value) for o in derive_build_options([cu])}
+    assert ("exceptions", "off") in opts
+    assert ("rtti", "off") in opts
+    assert ("tls_model", "initial-exec") in opts
+    assert ("threadsafe_statics", "off") in opts
+
+
+def test_diff_emits_exceptions_mode_changed():
+    old = BuildEvidence(build_options=[_opt("exceptions", "on")])
+    new = BuildEvidence(build_options=[_opt("exceptions", "off")])
+    changes = diff_build_evidence(old, new)
+    assert any(c.kind is ChangeKind.EXCEPTIONS_MODE_CHANGED for c in changes)
+    # The specific mode finding replaces the generic ABI-flag finding for this key.
+    assert not any(c.kind is ChangeKind.ABI_RELEVANT_BUILD_FLAG_CHANGED for c in changes)
+
+
+def test_diff_emits_rtti_mode_changed():
+    old = BuildEvidence(build_options=[_opt("rtti", "on")])
+    new = BuildEvidence(build_options=[_opt("rtti", "off")])
+    changes = diff_build_evidence(old, new)
+    assert any(c.kind is ChangeKind.RTTI_MODE_CHANGED for c in changes)
+
+
+def test_diff_emits_threadsafe_statics_mode_changed():
+    old = BuildEvidence(build_options=[_opt("threadsafe_statics", "on")])
+    new = BuildEvidence(build_options=[_opt("threadsafe_statics", "off")])
+    changes = diff_build_evidence(old, new)
+    assert any(c.kind is ChangeKind.THREADSAFE_STATICS_MODE_CHANGED for c in changes)
+
+
+def test_diff_emits_tls_model_changed():
+    old = BuildEvidence(build_options=[_opt("tls_model", "global-dynamic")])
+    new = BuildEvidence(build_options=[_opt("tls_model", "initial-exec")])
+    changes = diff_build_evidence(old, new)
+    assert any(c.kind is ChangeKind.TLS_MODEL_CHANGED for c in changes)
+
+
+def test_exceptions_mode_on_vs_absent_is_no_change():
+    # Absent option == compiler default (exceptions on); an explicit -fexceptions
+    # against an omitted flag must not read as a mode flip.
+    old = BuildEvidence(build_options=[])
+    new = BuildEvidence(build_options=[_opt("exceptions", "on")])
+    changes = diff_build_evidence(old, new)
+    assert not any(c.kind is ChangeKind.EXCEPTIONS_MODE_CHANGED for c in changes)
+
+
+def test_exceptions_mode_off_vs_absent_is_a_change():
+    # Omitted (default on) → explicit off is a real flip.
+    old = BuildEvidence(build_options=[])
+    new = BuildEvidence(build_options=[_opt("exceptions", "off")])
+    changes = diff_build_evidence(old, new)
+    assert any(c.kind is ChangeKind.EXCEPTIONS_MODE_CHANGED for c in changes)
+
+
+def test_struct_return_convention_change_from_return_trait_flip():
+    from abicheck.dwarf_advanced import AdvancedDwarfMetadata, _diff_value_abi_traits
+
+    old = AdvancedDwarfMetadata()
+    new = AdvancedDwarfMetadata()
+    old.value_abi_traits["_Z3getv"] = "ret:trivial"
+    new.value_abi_traits["_Z3getv"] = "ret:nontrivial"
+    results = _diff_value_abi_traits(old, new, set())
+    kinds = {r[0] for r in results}
+    assert "struct_return_convention_changed" in kinds
+    assert "value_abi_trait_changed" not in kinds
+
+
+def test_param_only_trait_flip_stays_value_abi_trait():
+    from abicheck.dwarf_advanced import AdvancedDwarfMetadata, _diff_value_abi_traits
+
+    old = AdvancedDwarfMetadata()
+    new = AdvancedDwarfMetadata()
+    old.value_abi_traits["_Z3fooP1S"] = "ret:trivial|p0:trivial"
+    new.value_abi_traits["_Z3fooP1S"] = "ret:trivial|p0:nontrivial"
+    results = _diff_value_abi_traits(old, new, set())
+    kinds = {r[0] for r in results}
+    assert "value_abi_trait_changed" in kinds
+    assert "struct_return_convention_changed" not in kinds
+
+
 def test_diff_identical_evidence_is_empty():
     ev = BuildEvidence(
         build_options=[BuildOption("std:CXX", "c++20", abi_relevant=True)],

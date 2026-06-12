@@ -135,11 +135,26 @@ def test_calling_convention_unchanged_no_change() -> None:
 
 
 def test_value_abi_trait_changed_breaking() -> None:
+    # A parameter-position triviality flip (ret unchanged) stays a generic
+    # value-ABI trait change; a *return*-position flip is the more specific
+    # struct_return_convention_changed (see test below).
+    old = _snap(_adv(value_traits={"foo": "ret:v(trivial)|p0:trivial"}))
+    new = _snap(_adv(value_traits={"foo": "ret:v(trivial)|p0:nontrivial"}))
+    r = compare(old, new)
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.VALUE_ABI_TRAIT_CHANGED in kinds
+    assert r.verdict == Verdict.BREAKING
+
+
+def test_return_trait_flip_is_struct_return_convention_changed() -> None:
+    # A return-position triviality flip means the aggregate moved between
+    # in-register return and hidden sret pointer — struct_return_convention_changed.
     old = _snap(_adv(value_traits={"foo": "ret:v(trivial)"}))
     new = _snap(_adv(value_traits={"foo": "ret:v(nontrivial)"}))
     r = compare(old, new)
     kinds = {c.kind for c in r.changes}
-    assert ChangeKind.VALUE_ABI_TRAIT_CHANGED in kinds
+    assert ChangeKind.STRUCT_RETURN_CONVENTION_CHANGED in kinds
+    assert ChangeKind.VALUE_ABI_TRAIT_CHANGED not in kinds
     assert r.verdict == Verdict.BREAKING
 
 
@@ -411,9 +426,18 @@ def test_value_abi_traits_same_no_change_emitted() -> None:
 
 
 def test_value_abi_traits_changed_emits_change() -> None:
-    """Different value_abi_traits for same symbol → VALUE_ABI_TRAIT_CHANGED emitted."""
+    """Different value_abi_traits for same symbol → a value-ABI finding emitted.
+
+    A return-position flip is the struct-return-convention refinement; a
+    parameter-position flip stays the generic value-ABI trait change.
+    """
     old = _snap(_adv(value_traits={"_Z6computev": "ret:trivial"}))
     new = _snap(_adv(value_traits={"_Z6computev": "ret:nontrivial"}))
     r = compare(old, new)
     kinds = {c.kind for c in r.changes}
-    assert ChangeKind.VALUE_ABI_TRAIT_CHANGED in kinds
+    assert ChangeKind.STRUCT_RETURN_CONVENTION_CHANGED in kinds
+
+    old_p = _snap(_adv(value_traits={"_Z3fooP1S": "ret:trivial|p0:trivial"}))
+    new_p = _snap(_adv(value_traits={"_Z3fooP1S": "ret:trivial|p0:nontrivial"}))
+    r_p = compare(old_p, new_p)
+    assert ChangeKind.VALUE_ABI_TRAIT_CHANGED in {c.kind for c in r_p.changes}
