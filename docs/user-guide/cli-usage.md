@@ -248,6 +248,27 @@ abicheck dump libfoo.so -H foo.h -v
 abicheck compare old.json new.json -v
 ```
 
+#### Surface and source-graph reports
+
+Three companion commands report on the public surface and the L5 source graph
+rather than producing a compare verdict:
+
+```bash
+# Structural metrics + idiom/anti-pattern report for one library's public surface
+abicheck surface-report libfoo.so -H include/ --idioms --anti-patterns
+
+# Diff two L5 source-graph summaries (from `collect --source-graph`)
+abicheck compare-graph old-pack/ new-pack/
+
+# Localize a compare finding through the L5 source graph (which TU/include chain)
+abicheck explain-finding --report report.json --finding-id <id> --sources new-pack/
+```
+
+See [API Surface Intelligence](../concepts/api-surface-intelligence.md) for what
+the surface metrics and idiom recognizers mean, and
+[Build & Source Packs](../concepts/build-source-data.md) for producing the packs
+that `compare-graph` / `explain-finding` consume.
+
 ### Report filtering and display options
 
 `compare` provides several flags to control what is shown in the report.

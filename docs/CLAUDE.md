@@ -15,8 +15,9 @@ elsewhere in the nav — keep links pointing at the real file path.
   the User Guide**.
 - `troubleshooting.md` — top-level file, but navigated under **Development**.
 - `user-guide/` — end-user docs (getting started, GitHub Action, CLI flags,
-  policy files, suppression, output formats). Nav order is basics-first:
-  install/first check → CI usage → specialised workflows → expert/migration.
+  policy files, suppression, output formats). Nav is grouped basics-first:
+  Start Here → Everyday Use → CI & Gating → Specialised Checks →
+  Integrations & Migration.
 - `concepts/` — conceptual docs (verdicts, evidence model, architecture, and
   `abi-api-handling.md` — the consolidated ABI/API handling guide).
   `abi-cheat-sheet.md` and `abi-api-handling.md` are navigated under the
