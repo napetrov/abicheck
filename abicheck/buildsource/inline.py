@@ -38,10 +38,11 @@ the artifact tiers (L0/L1/L2) stay authoritative.
 from __future__ import annotations
 
 import datetime as _dt
+import os
 import shlex
 import subprocess
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from .build_evidence import BuildEvidence
@@ -459,30 +460,22 @@ def _check_build_info_source_mismatch(
     if not tree.is_dir():
         return
 
-    def _present(cu: object) -> bool | None:
-        """True/False if a compile unit's source resolves, ``None`` if it has no
-        usable path. A source counts as present when it exists at its own
-        resolved location (absolute, or relative to its compile-DB ``directory``)
-        OR under the ``--sources`` tree — so a CI compile DB plus a fresh local
-        checkout is not a false mismatch, while a genuinely different tree is."""
+    # Match by file *basename* against the set of filenames anywhere under the
+    # tree. This is deliberately separator/drive/absolute-path agnostic — the
+    # compile-DB adapter may store a source as relative or absolute with platform
+    # separators, so resolving paths directly is fragile across OSes (Windows CI).
+    # A4 only needs a coarse "is this file even in the checkout?" signal.
+    tree_names: set[str] = set()
+    for _root, _dirs, files in os.walk(tree):
+        tree_names.update(files)
+
+    flags: list[bool] = []
+    for cu in merged.compile_units:
         src = getattr(cu, "source", "")
         if not src:
-            return None
-        p = Path(src)
-        directory = getattr(cu, "directory", "") or ""
-        # Path relative to the compile-DB directory (used to probe the tree).
-        if p.is_absolute():
-            abs_p = p
-            try:
-                rel = p.relative_to(directory) if directory else Path(p.name)
-            except ValueError:
-                rel = Path(p.name)
-        else:
-            abs_p = (Path(directory) / p) if directory else p
-            rel = p
-        return abs_p.exists() or (tree / rel).exists()
-
-    flags = [r for r in (_present(cu) for cu in merged.compile_units) if r is not None]
+            continue
+        name = PurePosixPath(str(src).replace("\\", "/")).name
+        flags.append(name in tree_names)
     if len(flags) < _MISMATCH_MIN_UNITS:
         return
     missing = sum(1 for present in flags if not present)

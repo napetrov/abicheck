@@ -1420,3 +1420,28 @@ def test_build_info_source_match_no_mismatch(tmp_path):
     assert pack is not None
     assert not [e for e in pack.manifest.extractors
                 if e.name == "build_info_source_tree_mismatch"]
+
+
+def test_build_info_source_mismatch_basename_match_ignores_redacted_prefix(tmp_path):
+    """A4 (Codex): redacted '~/...' compile-DB paths must not cause a false
+    mismatch — matching is by basename, which redaction never strips."""
+    from abicheck.buildsource.inline import collect_inline_pack
+
+    tree = tmp_path / "tree"
+    (tree / "src").mkdir(parents=True)
+    cdb = []
+    for i in range(4):
+        (tree / "src" / f"r{i}.cpp").write_text("int x;", encoding="utf-8")
+        # directory/file carry a redacted home placeholder, not a real path.
+        cdb.append({
+            "directory": "~/proj",
+            "file": f"src/r{i}.cpp",
+            "arguments": ["c++", "-std=c++17", "-c", f"src/r{i}.cpp"],
+        })
+    db = tmp_path / "compile_commands.json"
+    db.write_text(json.dumps(cdb), encoding="utf-8")
+
+    pack = collect_inline_pack(sources=tree, build_info=db, layers=("L3",))
+    assert pack is not None
+    assert not [e for e in pack.manifest.extractors
+                if e.name == "build_info_source_tree_mismatch"]
