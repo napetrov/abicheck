@@ -30,6 +30,8 @@ EX = os.environ.get("ABICHECK_VALIDATION_LIBS", str(VALID_DIR / "libs" / "ex"))
 OUT = str(DATA)
 MANIFEST = DATA / "manifest.json"
 SCHEMA_VERSION = "run_matrix.v2"
+BREAKING_VERDICTS = {"BREAKING", "API_BREAK"}
+COMPATIBLE_VERDICTS = {"COMPATIBLE", "COMPATIBLE_WITH_RISK", "NO_CHANGE"}
 
 # Share the logical-library-name helper with the unified harness (validate.py).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -91,6 +93,29 @@ def evidence_asymmetry(mode: str) -> str:
     return "old-poor/new-rich"
 
 
+def normalize_verdict(verdict: str | None) -> str:
+    """Collapse abicheck verdicts to the manifest's compatibility axis."""
+    normalized = (verdict or "").strip().upper()
+    if normalized in BREAKING_VERDICTS:
+        return "BREAKING"
+    if normalized in COMPATIBLE_VERDICTS:
+        return "COMPATIBLE"
+    return "UNKNOWN"
+
+
+def comparison_status(expected: str | None, actual: str | None) -> str:
+    """Score a measured verdict against the curated manifest expectation."""
+    expected_norm = normalize_verdict(expected)
+    actual_norm = normalize_verdict(actual)
+    if expected_norm == "UNKNOWN" or actual_norm == "UNKNOWN":
+        return "UNCOMPARABLE"
+    if expected_norm == actual_norm:
+        return "MATCH"
+    if actual_norm == "BREAKING" and expected_norm == "COMPATIBLE":
+        return "ABICHECK_STRICTER"
+    return "ABICHECK_WEAKER"
+
+
 def make_record(
     manifest_row: dict,
     *,
@@ -150,6 +175,9 @@ def make_record(
         rec["release_recommendation"] = data.get("release_recommendation")
         if "layer_coverage" in data:
             rec["layer_coverage"] = data["layer_coverage"]
+    rec["normalized_expected"] = normalize_verdict(rec.get("expected"))
+    rec["normalized_got"] = normalize_verdict(rec.get("got"))
+    rec["comparison_status"] = comparison_status(rec.get("expected"), rec.get("got"))
     return rec
 
 
@@ -221,6 +249,14 @@ def make_run_metadata(results: list[dict], manifest: list[dict]) -> dict:
         "manifest_pairs": len(manifest),
         "comparisons": len(results),
         "modes": sorted({str(r.get("mode", "")) for r in results}),
+        "comparison_status_counts": {
+            status: sum(
+                1
+                for record in results
+                if record.get("comparison_status") == status
+            )
+            for status in sorted({str(r.get("comparison_status", "")) for r in results})
+        },
         "results_file": "validation/data/results.json",
     }
 

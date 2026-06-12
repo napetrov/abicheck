@@ -108,16 +108,18 @@ def test_summarizes_real_world_artifact(tmp_path: Path) -> None:
                     "mode": "sym->sym",
                     "got": "COMPATIBLE",
                     "expected": "COMPATIBLE",
+                    "comparison_status": "MATCH",
                     "source_layers": ["L0"],
                     "exit_code": 0,
                 },
                 {
                     "schema_version": "run_matrix.v2",
                     "mode": "dwarf->sym",
-                    "got": "BREAKING",
+                    "got": "API_BREAK",
                     "expected": "COMPATIBLE",
+                    "comparison_status": "ABICHECK_STRICTER",
                     "source_layers": ["L0", "L1"],
-                    "exit_code": 1,
+                    "exit_code": 2,
                 },
             ]
         )
@@ -137,10 +139,41 @@ def test_summarizes_real_world_artifact(tmp_path: Path) -> None:
     assert section["component"] == "real-world-matrix"
     assert section["schema_version"] == "run_matrix.v2"
     assert section["mode_counts"] == {"dwarf->sym": 1, "sym->sym": 1}
-    assert section["verdict_counts"] == {"BREAKING": 1, "COMPATIBLE": 1}
+    assert section["verdict_counts"] == {"API_BREAK": 1, "COMPATIBLE": 1}
     assert section["expected_counts"] == {"COMPATIBLE": 2}
+    assert section["comparison_status_counts"] == {
+        "ABICHECK_STRICTER": 1,
+        "MATCH": 1,
+    }
     assert section["source_layer_counts"] == {"L0": 2, "L1": 1}
+    assert section["run_errors"] == 0
+    assert section["expectation_mismatches"] == 1
     assert section["blocking_failures"] == 1
+
+
+def test_real_world_summary_infers_status_for_older_artifacts(tmp_path: Path) -> None:
+    summary = _load_summary()
+    artifact = tmp_path / "results.json"
+    artifact.write_text(
+        json.dumps(
+            [
+                {
+                    "mode": "sym->sym",
+                    "verdict": "API_BREAK",
+                    "expectation": "BREAKING",
+                    "source_layers": ["L0"],
+                    "exit_code": 2,
+                }
+            ]
+        )
+    )
+
+    section = summary.summarize_real_world(artifact)
+
+    assert section["comparison_status_counts"] == {"MATCH": 1}
+    assert section["verdict_counts"] == {"API_BREAK": 1}
+    assert section["expected_counts"] == {"BREAKING": 1}
+    assert section["blocking_failures"] == 0
 
 
 def test_main_writes_combined_summary(tmp_path: Path) -> None:

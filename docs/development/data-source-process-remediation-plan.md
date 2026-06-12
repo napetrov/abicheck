@@ -301,10 +301,14 @@ Gate:
     schema `run_matrix.v2`.
   - `validation/data/results.meta.json` records run-level metadata: runner,
     command, platform, manifest pair count, comparison count, and observed
-    evidence modes.
+    evidence modes and comparison-status counts.
   - Each real-world record includes component, case id, platform, mode,
     L0-L5/source-layer coverage, old/new source layers, evidence asymmetry,
-    runtime, expected verdict, actual verdict, exit code, and stderr.
+    runtime, expected verdict, actual verdict, normalized compatibility-axis
+    verdicts, comparison status, exit code, and stderr.
+  - Real-world release gating is based on expectation mismatch or missing
+    verdict, not raw exit code, because expected `BREAKING` / `API_BREAK`
+    verdicts legitimately return non-zero from `abicheck compare`.
 - Current validation inventory is treated as the starting corpus, not the final corpus:
   - 129 synthetic cases in `examples/ground_truth.json`
   - 11 curated real-world package pairs in `validation/data/manifest.json`

@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = "remeasurement_summary.v1"
+BREAKING_VERDICTS = {"BREAKING", "API_BREAK"}
+COMPATIBLE_VERDICTS = {"COMPATIBLE", "COMPATIBLE_WITH_RISK", "NO_CHANGE"}
 
 
 def load_json(path: Path) -> Any:
@@ -19,6 +21,40 @@ def load_json(path: Path) -> Any:
 
 def count_values(records: list[dict[str, Any]], field: str) -> dict[str, int]:
     return dict(sorted(Counter(str(record.get(field, "")) for record in records).items()))
+
+
+def count_first_value(
+    records: list[dict[str, Any]], primary: str, fallback: str
+) -> dict[str, int]:
+    values = [
+        str(record.get(primary) or record.get(fallback) or "")
+        for record in records
+    ]
+    return dict(sorted(Counter(values).items()))
+
+
+def normalize_verdict(verdict: str | None) -> str:
+    normalized = (verdict or "").strip().upper()
+    if normalized in BREAKING_VERDICTS:
+        return "BREAKING"
+    if normalized in COMPATIBLE_VERDICTS:
+        return "COMPATIBLE"
+    return "UNKNOWN"
+
+
+def comparison_status(record: dict[str, Any]) -> str:
+    status = record.get("comparison_status")
+    if status:
+        return str(status)
+    expected = normalize_verdict(record.get("expected") or record.get("expectation"))
+    actual = normalize_verdict(record.get("got") or record.get("verdict"))
+    if expected == "UNKNOWN" or actual == "UNKNOWN":
+        return "UNCOMPARABLE"
+    if expected == actual:
+        return "MATCH"
+    if actual == "BREAKING" and expected == "COMPATIBLE":
+        return "ABICHECK_STRICTER"
+    return "ABICHECK_WEAKER"
 
 
 def summarize_examples(path: Path) -> dict[str, Any]:
@@ -75,6 +111,18 @@ def summarize_real_world(path: Path, meta_path: Path | None = None) -> dict[str,
     if not isinstance(records, list):
         raise ValueError(f"{path} must contain a list of real-world records")
     meta = load_json(meta_path) if meta_path and meta_path.exists() else {}
+    statuses = [comparison_status(record) for record in records]
+    status_counts = dict(sorted(Counter(statuses).items()))
+    run_errors = sum(
+        1
+        for record in records
+        if comparison_status(record) == "UNCOMPARABLE"
+        and not (record.get("got") or record.get("verdict"))
+    )
+    expectation_mismatches = sum(
+        status_counts.get(status, 0)
+        for status in ("ABICHECK_STRICTER", "ABICHECK_WEAKER")
+    )
     return {
         "artifact": str(path),
         "metadata_artifact": str(meta_path) if meta_path else None,
@@ -86,12 +134,13 @@ def summarize_real_world(path: Path, meta_path: Path | None = None) -> dict[str,
         "command": meta.get("command"),
         "total": len(records),
         "mode_counts": count_values(records, "mode"),
-        "verdict_counts": count_values(records, "got"),
-        "expected_counts": count_values(records, "expected"),
+        "verdict_counts": count_first_value(records, "got", "verdict"),
+        "expected_counts": count_first_value(records, "expected", "expectation"),
+        "comparison_status_counts": status_counts,
         "source_layer_counts": layer_counts(records),
-        "blocking_failures": sum(
-            1 for record in records if int(record.get("exit_code") or 0) != 0
-        ),
+        "run_errors": run_errors,
+        "expectation_mismatches": expectation_mismatches,
+        "blocking_failures": run_errors + expectation_mismatches,
     }
 
 

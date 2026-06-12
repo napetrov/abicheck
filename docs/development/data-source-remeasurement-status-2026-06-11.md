@@ -200,11 +200,12 @@ Implemented in PR #351:
   schema `run_matrix.v2`.
 - Real-world records include component, case id, platform, logical library,
   mode, old/new source layers, evidence asymmetry, runtime, expected verdict,
-  actual verdict, exit code, stderr, summary counts, release recommendation, and
-  optional layer coverage.
+  actual verdict, normalized compatibility-axis verdicts, comparison status,
+  exit code, stderr, summary counts, release recommendation, and optional layer
+  coverage.
 - Real-world run metadata is written to `validation/data/results.meta.json`
   with runner, command, platform, manifest pair count, comparison count, and
-  observed evidence modes.
+  observed evidence modes and comparison-status counts.
 - `validation/scripts/run_component_suites.py` now emits component-suite
   records with schema `component_suites.v1`.
 - Component-suite records include suite/case id, platform, supported platforms,
@@ -214,7 +215,11 @@ Implemented in PR #351:
   `validate_examples.v2`, `component_suites.v1`, and `run_matrix.v2` artifacts
   and emits `remeasurement_summary.v1`.
 - The combined summary records total records, blocking failures,
-  status/verdict/mode/source-layer counts, and component-suite blocked reasons.
+  status/verdict/mode/source-layer counts, real-world expectation mismatches,
+  real-world run errors, and component-suite blocked reasons.
+- Real-world summaries no longer count expected non-zero compare exit codes as
+  blocking failures; expected `BREAKING` / `API_BREAK` outcomes are scored by
+  expected-vs-actual verdict status instead.
 
 Smoke proof:
 
