@@ -55,10 +55,17 @@ mismatched checkout produces a flood of bogus source findings.
 
 **Detection (hard-provenance with heuristic fallback — decided 2026-06-12):**
 
-- **Primary (hard):** cross-check a binary provenance signal — GNU build-id,
-  DWARF `DW_AT_producer`, or an embedded version string — against the source
-  tree's git metadata (HEAD commit / nearest tag). Fires on a definite mismatch.
-- **Fallback (heuristic):** when no hard provenance signal is available, fire
+- **Primary (hard):** only fire on a signal that **explicitly encodes the
+  repository revision/tag** — an embedded `git describe` / version string, a
+  `.note` VCS revision, or a recorded build-id↔commit manifest from the build —
+  cross-checked against the source tree's git metadata (HEAD commit / nearest
+  tag). Note GNU build-id is a hash of the *linked binary* and `DW_AT_producer`
+  identifies the *compiler/flags*, **not** the source commit; neither maps to a
+  checkout on its own, so they are at most auxiliary corroboration (e.g. a
+  build-id only as the key into a recorded build-id↔commit map), never the
+  revision source. If no VCS-encoding signal exists, the hard path simply does
+  not fire — fall through to the heuristic rather than comparing unrelated values.
+- **Fallback (heuristic):** when no explicit VCS provenance is available, fire
   when the source-decl → exported-symbol mapping-miss ratio exceeds a threshold
   (reuses the data already computed for `source_decl_binary_symbol_mismatch`,
   aggregated to a per-library signal).
@@ -70,12 +77,17 @@ Evidence tier: L4.
 ### A2. `merge_layer_conflict` (RISK)
 
 **Scenario (D5):** two `merge` inputs both supply the same layer (L3/L4/L5) with
-**differing `content_hash`** — a parallel-baseline prep mistake (e.g. two
-different source trees). Today `_combine_packs` first-wins silently.
+**differing facts** — a parallel-baseline prep mistake (e.g. two different
+source trees). Today `_combine_packs` first-wins silently.
 
 **Where:** `cli_buildsource.py::_combine_packs` — when >1 non-`None` contributor
-exists for a managed layer and their content hashes differ, emit a diagnostic +
-the finding. Partition: `RISK_KINDS`. Evidence tier: L3.
+exists for a managed layer, compare a **per-layer payload digest** (of just that
+layer's normalized facts), **not** the pack-wide `BuildSourcePack.content_hash()`.
+The pack hash folds in every layer plus coverage/extractor metadata, so two
+inputs with identical L4/L5 facts but a differing unrelated layer or extractor
+row would false-positive. Digest only the shared layer's payload; emit a
+diagnostic + the finding when those digests differ. Partition: `RISK_KINDS`.
+Evidence tier: L3.
 
 ### A3. `build_query_unavailable` (coverage status / capability report)
 
