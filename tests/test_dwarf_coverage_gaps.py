@@ -1761,3 +1761,89 @@ class TestDwarfSnapshotFallbacks:
         name, size = builder._die_to_type_name(die, cu, depth=0)
         assert name == "int[]"
         assert size == 40
+
+
+class TestAggregateHasUnalignedMemberNested:
+    """_aggregate_has_unaligned_member carries the parent offset into nested aggregates."""
+
+    def _double(self) -> MockDIE:
+        return MockDIE(tag="DW_TAG_base_type",
+                       attributes={"DW_AT_byte_size": MockAttr(8)}, offset=100)
+
+    def _char(self) -> MockDIE:
+        return MockDIE(tag="DW_TAG_base_type",
+                       attributes={"DW_AT_byte_size": MockAttr(1)}, offset=108)
+
+    def _inner(self) -> MockDIE:
+        # struct Inner { double d; }  — d at offset 0 within Inner
+        member_d = MockDIE(
+            tag="DW_TAG_member",
+            attributes={
+                "DW_AT_type": MockAttr(100, form="DW_FORM_ref4"),
+                "DW_AT_data_member_location": MockAttr(0),
+            },
+            offset=210,
+        )
+        return MockDIE(tag="DW_TAG_structure_type",
+                       attributes={"DW_AT_byte_size": MockAttr(8)},
+                       offset=200, children=[member_d])
+
+    def _wrapper(self, struct_offset: int) -> MockDIE:
+        # A DIE whose DW_AT_type is the (return) aggregate.
+        return MockDIE(tag="DW_TAG_subprogram",
+                       attributes={"DW_AT_type": MockAttr(struct_offset, form="DW_FORM_ref4")})
+
+    def test_packed_outer_misaligns_nested_double(self):
+        from abicheck.dwarf_advanced import _aggregate_has_unaligned_member
+
+        # struct __attribute__((packed)) Outer { char c; Inner i; };
+        # c at 0, i at offset 1 -> i.d lands at absolute offset 1 (misaligned for 8-byte double).
+        member_c = MockDIE(
+            tag="DW_TAG_member",
+            attributes={
+                "DW_AT_type": MockAttr(108, form="DW_FORM_ref4"),
+                "DW_AT_data_member_location": MockAttr(0),
+            },
+            offset=300,
+        )
+        member_i = MockDIE(
+            tag="DW_TAG_member",
+            attributes={
+                "DW_AT_type": MockAttr(200, form="DW_FORM_ref4"),
+                "DW_AT_data_member_location": MockAttr(1),
+            },
+            offset=310,
+        )
+        outer = MockDIE(tag="DW_TAG_structure_type",
+                        attributes={"DW_AT_byte_size": MockAttr(9)},
+                        offset=320, children=[member_c, member_i])
+        cu = MockCU(cu_offset=0, die_map={100: self._double(), 108: self._char(),
+                                          200: self._inner(), 320: outer})
+        assert _aggregate_has_unaligned_member(self._wrapper(320), cu) is True
+
+    def test_aligned_outer_with_nested_aggregate_is_not_unaligned(self):
+        from abicheck.dwarf_advanced import _aggregate_has_unaligned_member
+
+        # struct Outer { Inner i; char c; };  — i at offset 0, properly aligned.
+        member_i = MockDIE(
+            tag="DW_TAG_member",
+            attributes={
+                "DW_AT_type": MockAttr(200, form="DW_FORM_ref4"),
+                "DW_AT_data_member_location": MockAttr(0),
+            },
+            offset=330,
+        )
+        member_c = MockDIE(
+            tag="DW_TAG_member",
+            attributes={
+                "DW_AT_type": MockAttr(108, form="DW_FORM_ref4"),
+                "DW_AT_data_member_location": MockAttr(8),
+            },
+            offset=340,
+        )
+        outer = MockDIE(tag="DW_TAG_structure_type",
+                        attributes={"DW_AT_byte_size": MockAttr(16)},
+                        offset=350, children=[member_i, member_c])
+        cu = MockCU(cu_offset=0, die_map={100: self._double(), 108: self._char(),
+                                          200: self._inner(), 350: outer})
+        assert _aggregate_has_unaligned_member(self._wrapper(350), cu) is False

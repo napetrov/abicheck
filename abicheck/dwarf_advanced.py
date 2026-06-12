@@ -501,13 +501,22 @@ def _aggregate_byte_size_for_typed_die(die: Any, CU: Any, cache: _DwarfTypeCache
     return size if size > 0 else None
 
 
-def _aggregate_has_unaligned_member(die: Any, CU: Any, cache: _DwarfTypeCache | None = None) -> bool:
+def _aggregate_has_unaligned_member(
+    die: Any, CU: Any, cache: _DwarfTypeCache | None = None, base_offset: int = 0
+) -> bool:
     """Whether a by-value aggregate return type has an unaligned member.
 
     A struct/class/union with a member at a misaligned offset (e.g. a packed
     aggregate) is MEMORY-classified by the SysV AMD64 ABI regardless of size, so
     it is returned via a hidden sret pointer either way. Reuses the same
     offset-vs-natural-alignment check as packed-struct detection.
+
+    ``base_offset`` is the absolute offset of *this* aggregate within the
+    outermost return type, accumulated through nesting. A nested scalar is
+    misaligned when its *absolute* offset (``base_offset`` + its own member
+    offset) is not a multiple of its natural alignment — so a packed outer that
+    places an aligned-looking inner composite at a misaligned offset (e.g.
+    ``packed Outer{char c; Inner{double d};}`` → ``i.d`` at offset 1) is caught.
     """
     t0 = _resolve_type_die(die, CU)
     if t0 is None or t0.tag in (
@@ -522,15 +531,20 @@ def _aggregate_has_unaligned_member(die: Any, CU: Any, cache: _DwarfTypeCache | 
     for child in t.iter_children():
         if child.tag != "DW_TAG_member" or _attr_int(child, "DW_AT_bit_size"):
             continue
+        abs_offset = base_offset + _decode_member_location(child)
         natural = _get_type_align(child, CU)
-        if natural > 1 and _decode_member_location(child) % natural != 0:
+        if natural > 1 and abs_offset % natural != 0:
             return True
         # A by-value composite member (e.g. a packed inner struct) forces MEMORY
         # classification of the outer type even when its own offset is aligned;
-        # _get_type_align returns 0 for composites, so recurse into it. By-value
-        # nesting is a DAG (a struct cannot contain itself by value), so this
-        # terminates; pointer/reference members short-circuit at the top guard.
-        if natural <= 1 and _aggregate_has_unaligned_member(child, CU, cache=cache):
+        # _get_type_align returns 0 for composites, so recurse into it carrying
+        # the absolute offset so a nested scalar misaligned relative to the
+        # *outermost* type is detected. By-value nesting is a DAG (a struct cannot
+        # contain itself by value), so this terminates; pointer/reference members
+        # short-circuit at the top guard.
+        if natural <= 1 and _aggregate_has_unaligned_member(
+            child, CU, cache=cache, base_offset=abs_offset
+        ):
             return True
     return False
 
