@@ -142,35 +142,49 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         ))
 
     # Ordinal / forwarder stability for exports retained across versions.
-    # These are metadata-only signals (the name is unchanged, so the add/remove
-    # loops above and _diff_functions() never see them) and are keyed by name,
-    # so they cannot double-count.
-    old_by_name = o.export_map
-    new_by_name = n.export_map
-    for name in sorted(old_by_name.keys() & new_by_name.keys()):
-        oe = old_by_name[name]
-        ne = new_by_name[name]
+    # These are metadata-only signals (the export id — name when present, else
+    # ordinal — is unchanged, so the add/remove loops above and _diff_functions()
+    # never see them) and are keyed by that same id, so they cannot double-count.
+    # Keying by ordinal for nameless exports means an ordinal-only forwarder that
+    # is silently repointed to a different target is still caught.
+    def _export_id(e: Any) -> str:
+        return e.name if e.name else f"ordinal:{e.ordinal}"
+
+    old_by_id: dict[str, Any] = {}
+    for e in o.exports:
+        old_by_id.setdefault(_export_id(e), e)
+    new_by_id: dict[str, Any] = {}
+    for e in n.exports:
+        new_by_id.setdefault(_export_id(e), e)
+
+    for eid in sorted(old_by_id.keys() & new_by_id.keys()):
+        oe = old_by_id[eid]
+        ne = new_by_id[eid]
+        label = oe.name or eid
         # Ordinal reassignment: clients that bound by ordinal break even though
-        # the name still resolves. Only meaningful when both ordinals are known.
-        if oe.ordinal and ne.ordinal and oe.ordinal != ne.ordinal:
+        # the name still resolves. Only meaningful for *named* exports with two
+        # known ordinals — nameless exports are keyed BY ordinal, so a differing
+        # ordinal is already an add/remove, not a retained-export change.
+        if oe.name and oe.ordinal and ne.ordinal and oe.ordinal != ne.ordinal:
             changes.append(Change(
                 kind=ChangeKind.PE_ORDINAL_CHANGED,
-                symbol=name,
+                symbol=label,
                 old_value=str(oe.ordinal),
                 new_value=str(ne.ordinal),
                 description=(
-                    f"export '{name}' reassigned ordinal: {oe.ordinal} → {ne.ordinal}"
+                    f"export '{label}' reassigned ordinal: {oe.ordinal} → {ne.ordinal}"
                 ),
             ))
-        # Forwarder repoint: the name resolves to a different DLL!Symbol target.
+        # Forwarder repoint: the export resolves to a different DLL!Symbol target.
+        # Applies to both named and ordinal-only exports.
         if oe.forwarder != ne.forwarder and (oe.forwarder or ne.forwarder):
             changes.append(Change(
                 kind=ChangeKind.PE_FORWARDER_CHANGED,
-                symbol=name,
+                symbol=label,
                 old_value=oe.forwarder or "(direct export)",
                 new_value=ne.forwarder or "(direct export)",
                 description=(
-                    f"export '{name}' forwarder changed: "
+                    f"export '{label}' forwarder changed: "
                     f"{oe.forwarder or '(direct export)'} → "
                     f"{ne.forwarder or '(direct export)'}"
                 ),
@@ -272,15 +286,26 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             description=f"install name changed: {o.install_name} → {n.install_name}",
         ))
 
-    # Architecture drift — a dylib that changes CPU type is a different binary
-    # contract entirely (e.g. X86_64 → ARM64).
-    if o.cpu_type and n.cpu_type and o.cpu_type != n.cpu_type:
+    # Architecture drift — only breaking when an architecture slice that used to
+    # ship is GONE. Adding slices (single-arch → universal) keeps old clients
+    # loadable, so a superset is not a break. ``cpu_types`` carries every slice
+    # of a fat/universal binary; fall back to the single selected ``cpu_type``
+    # for snapshots that predate that field.
+    old_arches = set(getattr(o, "cpu_types", None) or ()) or ({o.cpu_type} if o.cpu_type else set())
+    new_arches = set(getattr(n, "cpu_types", None) or ()) or ({n.cpu_type} if n.cpu_type else set())
+    removed_arches = old_arches - new_arches
+    if old_arches and new_arches and removed_arches:
         changes.append(Change(
             kind=ChangeKind.MACHO_CPU_TYPE_CHANGED,
             symbol="MACHO_HEADER",
-            old_value=o.cpu_type,
-            new_value=n.cpu_type,
-            description=f"Mach-O CPU type/architecture changed: {o.cpu_type} → {n.cpu_type}",
+            old_value=", ".join(sorted(old_arches)),
+            new_value=", ".join(sorted(new_arches)),
+            description=(
+                "Mach-O architecture slice removed: "
+                f"{', '.join(sorted(removed_arches))} no longer present "
+                f"({', '.join(sorted(old_arches))} → {', '.join(sorted(new_arches))}); "
+                "existing clients of the dropped arch can no longer load the dylib"
+            ),
         ))
 
     # Compatibility version change (LC_ID_DYLIB compat_version — binary contract)

@@ -125,6 +125,21 @@ class TestPeForwarderChanged:
         new = _pe_snap([PeExport(**e)])
         assert ChangeKind.PE_FORWARDER_CHANGED not in _kinds(_diff_pe(old, new))
 
+    def test_ordinal_only_forwarder_repoint_is_caught(self) -> None:
+        # Nameless export at the SAME ordinal whose forwarder target is silently
+        # redirected — keyed by ordinal so the retained-export loop still sees it.
+        old = _pe_snap([PeExport(name="", ordinal=5,
+                                 sym_type=PeSymbolType.FORWARDED,
+                                 forwarder="NTDLL.RtlAllocateHeap")])
+        new = _pe_snap([PeExport(name="", ordinal=5,
+                                 sym_type=PeSymbolType.FORWARDED,
+                                 forwarder="KERNEL32.HeapAlloc")])
+        hits = _by_kind(_diff_pe(old, new), ChangeKind.PE_FORWARDER_CHANGED)
+        assert len(hits) == 1
+        assert hits[0].symbol == "ordinal:5"
+        assert hits[0].old_value == "NTDLL.RtlAllocateHeap"
+        assert hits[0].new_value == "KERNEL32.HeapAlloc"
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PE machine / architecture drift
