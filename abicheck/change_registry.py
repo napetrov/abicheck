@@ -254,6 +254,22 @@ REGISTRY = ChangeKindRegistry([
     # ── Mach-O specific ───────────────────────────────────────────────────
     _E("compat_version_changed", _B,
        impact="Mach-O compatibility version changed; dylibs linked against old version may fail to load."),
+    _E("macho_cpu_type_changed", _B,
+       impact="Mach-O CPU type/architecture changed (e.g. X86_64 → ARM64); the binary is a "
+              "different architecture and cannot link against or load into existing clients."),
+
+    # ── PE/COFF specific (binary-only, no PDB needed) ─────────────────────
+    _E("pe_ordinal_changed", _B,
+       impact="A named DLL export was reassigned to a different ordinal. Clients that bound by "
+              "ordinal (or via an import library that recorded the old ordinal) resolve the wrong "
+              "function or fail to load."),
+    _E("pe_forwarder_changed", _B,
+       impact="A DLL export forwarder was repointed to a different target (DLL!Symbol). The "
+              "effective implementation behind the exported name changed; dependent binaries get "
+              "different — and possibly missing — behaviour at load time."),
+    _E("pe_machine_changed", _B,
+       impact="PE machine/architecture changed (e.g. AMD64 → ARM64); the DLL is a different "
+              "architecture and cannot be loaded by existing clients."),
 
     # ── ELF security / bad practice ────────────────────────────────────────
     _E("executable_stack", _C,

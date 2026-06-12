@@ -141,6 +141,52 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             description=f"new export in DLL: {eid}",
         ))
 
+    # Ordinal / forwarder stability for exports retained across versions.
+    # These are metadata-only signals (the name is unchanged, so the add/remove
+    # loops above and _diff_functions() never see them) and are keyed by name,
+    # so they cannot double-count.
+    old_by_name = o.export_map
+    new_by_name = n.export_map
+    for name in sorted(old_by_name.keys() & new_by_name.keys()):
+        oe = old_by_name[name]
+        ne = new_by_name[name]
+        # Ordinal reassignment: clients that bound by ordinal break even though
+        # the name still resolves. Only meaningful when both ordinals are known.
+        if oe.ordinal and ne.ordinal and oe.ordinal != ne.ordinal:
+            changes.append(Change(
+                kind=ChangeKind.PE_ORDINAL_CHANGED,
+                symbol=name,
+                old_value=str(oe.ordinal),
+                new_value=str(ne.ordinal),
+                description=(
+                    f"export '{name}' reassigned ordinal: {oe.ordinal} → {ne.ordinal}"
+                ),
+            ))
+        # Forwarder repoint: the name resolves to a different DLL!Symbol target.
+        if oe.forwarder != ne.forwarder and (oe.forwarder or ne.forwarder):
+            changes.append(Change(
+                kind=ChangeKind.PE_FORWARDER_CHANGED,
+                symbol=name,
+                old_value=oe.forwarder or "(direct export)",
+                new_value=ne.forwarder or "(direct export)",
+                description=(
+                    f"export '{name}' forwarder changed: "
+                    f"{oe.forwarder or '(direct export)'} → "
+                    f"{ne.forwarder or '(direct export)'}"
+                ),
+            ))
+
+    # Architecture drift — a DLL that changes machine type is a different binary
+    # contract entirely (e.g. AMD64 → ARM64).
+    if o.machine and n.machine and o.machine != n.machine:
+        changes.append(Change(
+            kind=ChangeKind.PE_MACHINE_CHANGED,
+            symbol="PE_HEADER",
+            old_value=o.machine,
+            new_value=n.machine,
+            description=f"PE machine/architecture changed: {o.machine} → {n.machine}",
+        ))
+
     # Detect changed import dependencies
     old_deps = set(o.imports.keys())
     new_deps = set(n.imports.keys())
@@ -224,6 +270,17 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             old_value=o.install_name,
             new_value=n.install_name,
             description=f"install name changed: {o.install_name} → {n.install_name}",
+        ))
+
+    # Architecture drift — a dylib that changes CPU type is a different binary
+    # contract entirely (e.g. X86_64 → ARM64).
+    if o.cpu_type and n.cpu_type and o.cpu_type != n.cpu_type:
+        changes.append(Change(
+            kind=ChangeKind.MACHO_CPU_TYPE_CHANGED,
+            symbol="MACHO_HEADER",
+            old_value=o.cpu_type,
+            new_value=n.cpu_type,
+            description=f"Mach-O CPU type/architecture changed: {o.cpu_type} → {n.cpu_type}",
         ))
 
     # Compatibility version change (LC_ID_DYLIB compat_version — binary contract)
