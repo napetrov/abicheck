@@ -125,8 +125,58 @@ def diff_source_abi(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change
     changes.extend(_diff_inline_bodies(old, new))
     changes.extend(_diff_templates(old, new))
     changes.extend(_diff_mappings(old, new))
+    changes.extend(_diff_provenance(old, new))
     changes.extend(_diff_odr(old, new))
     return changes
+
+
+# A1 thresholds: the aggregate provenance signal only fires on a *strong* signal
+# (almost the whole public surface fails to map) over a non-trivial surface, so a
+# legitimately inline/template-heavy header is not mistaken for a wrong checkout.
+_PROVENANCE_MIN_DECLS = 5
+_PROVENANCE_MISS_THRESHOLD = 0.8
+
+
+def _diff_provenance(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change]:
+    """A1: aggregate source↔binary correspondence check.
+
+    When the *new* source surface has L0 exports available but the large majority
+    of its public declarations fail to map to any exported symbol, the source
+    checkout very likely does not correspond to the shipped binary (wrong
+    tag/commit) — in which case every L4/L5 source finding for this pair is
+    untrustworthy. Emits a single aggregate RISK finding; the per-declaration
+    mismatches are already covered by :func:`_diff_mappings`.
+
+    Inert (returns nothing) when no exports are known — the inline/merge flow must
+    plumb the binary's L0 exports into the surface for this heuristic to have a
+    signal — or when the surface is too small to judge. Per ADR-028 D3 it is a
+    context risk, never a proven binary break.
+    """
+    exports = set(new.roots.get("exported_symbols", []))
+    if not exports:
+        return []
+    mapping = new.mappings.get("source_decl_to_binary_symbol", {})
+    if len(mapping) < _PROVENANCE_MIN_DECLS:
+        return []
+    misses = sum(1 for sym in mapping.values() if not sym or sym not in exports)
+    if misses / len(mapping) < _PROVENANCE_MISS_THRESHOLD:
+        return []
+    return [
+        Change(
+            kind=ChangeKind.SOURCE_BINARY_PROVENANCE_MISMATCH,
+            symbol="",
+            description=(
+                f"{misses}/{len(mapping)} public declarations in the source tree "
+                "do not map to any exported binary symbol — the source checkout "
+                "likely does not correspond to this binary (wrong tag/commit). "
+                "Treat the L4/L5 source findings for this pair as unreliable until "
+                "the sources are checked out at the binary's build tag."
+            ),
+            old_value="",
+            new_value=f"{misses}/{len(mapping)} unmapped",
+            source_location=f"[{EVIDENCE_TIER_L4}]",
+        )
+    ]
 
 
 # -- generated headers -------------------------------------------------------

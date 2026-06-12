@@ -169,6 +169,16 @@ def _odr_source_conflict() -> tuple[SourceAbiSurface, SourceAbiSurface]:
     return _surface(), _surface(odr_conflicts=[conflict])
 
 
+def _provenance_mismatch() -> tuple[SourceAbiSurface, SourceAbiSurface]:
+    # A1: the new surface has L0 exports but (almost) none of its public decls
+    # map to an exported symbol → the source tree likely doesn't match the binary.
+    new = _surface(
+        roots={"exported_symbols": ["_Z3barv"]},
+        mappings={"source_decl_to_binary_symbol": {f"d{i}": "" for i in range(10)}},
+    )
+    return _surface(), new
+
+
 CORPUS = [
     (
         "public_macro_value_changed",
@@ -203,6 +213,11 @@ CORPUS = [
         ChangeKind.GENERATED_HEADER_CHANGED,
     ),
     ("odr_source_conflict", _odr_source_conflict, ChangeKind.ODR_SOURCE_CONFLICT),
+    (
+        "source_binary_provenance_mismatch",
+        _provenance_mismatch,
+        ChangeKind.SOURCE_BINARY_PROVENANCE_MISMATCH,
+    ),
 ]
 
 
@@ -250,3 +265,29 @@ def test_corpus_covers_every_source_replay_kind() -> None:
         source_replay_kinds - covered - {ChangeKind.SOURCE_DECL_BINARY_SYMBOL_MISMATCH}
     )
     assert not missing, f"source-replay kinds without a corpus entry: {missing}"
+
+
+def test_provenance_mismatch_inert_without_l0_exports() -> None:
+    # A1 is inert when no L0 exports are plumbed in (Codex): without the binary's
+    # exported symbols the mapping-miss heuristic has no signal, so it must not
+    # fire on an unmapped-but-export-less surface.
+    new = _surface(
+        roots={"exported_symbols": []},
+        mappings={"source_decl_to_binary_symbol": {f"d{i}": "" for i in range(10)}},
+    )
+    kinds = [c.kind for c in diff_source_abi(_surface(), new)]
+    assert ChangeKind.SOURCE_BINARY_PROVENANCE_MISMATCH not in kinds
+
+
+def test_provenance_mismatch_inert_when_mostly_mapped() -> None:
+    # Below the miss-ratio threshold (only 1/10 unmapped) → not a provenance
+    # mismatch; a healthy surface with a single lost mapping is handled by the
+    # per-declaration source_decl_binary_symbol_mismatch path instead.
+    mapping = {f"d{i}": "_Z3barv" for i in range(9)}
+    mapping["d9"] = ""
+    new = _surface(
+        roots={"exported_symbols": ["_Z3barv"]},
+        mappings={"source_decl_to_binary_symbol": mapping},
+    )
+    kinds = [c.kind for c in diff_source_abi(_surface(), new)]
+    assert ChangeKind.SOURCE_BINARY_PROVENANCE_MISMATCH not in kinds
