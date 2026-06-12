@@ -20,6 +20,7 @@ from tests.validate_examples import (  # noqa: E402
     DEFAULT_ARTIFACT_VARIANT,
     CaseResult,
     _build_info_path,
+    _embedded_present_layers,
     _evaluate_verdict,
     _json_payload,
     _normalize_verdict,
@@ -440,6 +441,23 @@ class TestArtifactVariants:
             new_build_source=pack2,
             sources=True,
         ) == ("L0", "L1", "L2", "L3", "L4", "L5")
+
+    def test_embedded_present_layers_reads_real_coverage(self, tmp_path: Path) -> None:
+        # Codex: a degraded `dump --sources` embeds source_abi coverage as
+        # partial/not_collected — only `present` rows count as real L4/L5.
+        snap = tmp_path / "snap.json"
+        snap.write_text(json.dumps({"build_source": {"manifest": {"coverage": [
+            {"layer": "L3_build", "status": "present"},
+            {"layer": "L4_source_abi", "status": "present"},
+            {"layer": "L5_source_graph", "status": "partial"},
+        ]}}}), encoding="utf-8")
+        assert _embedded_present_layers(snap) == {"L3", "L4"}
+
+        # No build_source / missing file → no layers claimed.
+        bare = tmp_path / "bare.json"
+        bare.write_text(json.dumps({"library": "l"}), encoding="utf-8")
+        assert _embedded_present_layers(bare) == set()
+        assert _embedded_present_layers(tmp_path / "nonexistent.json") == set()
 
     def test_json_payload_includes_run_metadata(self) -> None:
         result = CaseResult("case01", "FAIL", "BREAKING", "NO_CHANGE", "mismatch")

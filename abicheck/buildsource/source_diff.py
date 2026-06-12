@@ -145,6 +145,14 @@ _PROVENANCE_MISS_THRESHOLD = 0.8
 _PROVENANCE_EXPORTABLE_KINDS = frozenset(
     {"function", "variable", "method", "constructor", "destructor"}
 )
+# C / extern "C" decls export under their plain qualified_name when the extractor
+# leaves mangled_name empty, so a missing mangle is a usable fallback symbol for
+# these kinds only. For C++ members (method/constructor/destructor) the
+# qualified_name is the class-scoped name, NOT the export symbol — and castxml
+# routinely leaves constructors/destructors unmangled — so we must require a real
+# mangled symbol there rather than comparing the class name against L0's mangled
+# ctor symbols and false-firing on a correct ctor-only API (Codex).
+_PROVENANCE_QNAME_FALLBACK_KINDS = frozenset({"function", "variable"})
 
 
 def _provenance_finding(side: str, surface: SourceAbiSurface) -> Change | None:
@@ -177,8 +185,14 @@ def _provenance_finding(side: str, surface: SourceAbiSurface) -> Change | None:
         if d.kind not in _PROVENANCE_EXPORTABLE_KINDS:
             continue
         key = d.identity()
-        sym = d.mangled_name or d.qualified_name
-        if key and sym:
+        if not key:
+            continue
+        if d.kind in _PROVENANCE_QNAME_FALLBACK_KINDS:
+            sym = d.mangled_name or d.qualified_name
+        else:
+            # C++ member: only a real mangled symbol is comparable to L0.
+            sym = d.mangled_name
+        if sym:
             by_identity[key] = sym
     expected = list(by_identity.values())
     if len(expected) < _PROVENANCE_MIN_DECLS:

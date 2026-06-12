@@ -630,6 +630,35 @@ def _collect_build_source_evidence(
     return results[0], results[1], None
 
 
+def _embedded_present_layers(snap_path: Path) -> set[str]:
+    """Short tags (``L3``/``L4``/``L5``) for layers the dumped snapshot's embedded
+    build_source actually carries with ``present`` coverage.
+
+    Directory/flag presence is not enough: ``dump --sources`` degrades to a
+    partial/empty surface (exit 0) when the source-replay front-end is missing or
+    no TU parses, so the inline opt-ins must be confirmed from the *real* embedded
+    coverage rather than assumed (Codex). Pure JSON parsing — no abicheck import —
+    so it stays unit-testable and robust to a hand-edited snapshot.
+    """
+    layer_tags = {"L3_build": "L3", "L4_source_abi": "L4", "L5_source_graph": "L5"}
+    try:
+        data = json.loads(snap_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    pack = data.get("build_source")
+    if not isinstance(pack, dict):
+        return set()
+    coverage = (pack.get("manifest") or {}).get("coverage") or []
+    present: set[str] = set()
+    for row in coverage:
+        if not isinstance(row, dict):
+            continue
+        tag = layer_tags.get(str(row.get("layer", "")))
+        if tag and str(row.get("status", "")) == "present":
+            present.add(tag)
+    return present
+
+
 def _source_layers_for_result(
     variant: str,
     *,
@@ -812,21 +841,17 @@ def run_case(
         return CaseResult(name, "ERROR", expected_raw, None, dc_err, variant)
 
     allow_risk = bool(entry.get("bad_practice") or entry.get("category") == "quality")
-    # Report L3/L4/L5 from the inline opt-ins only when the input actually
-    # resolved — `_dump_and_compare` silently omits `--sources`/`--build-info`
-    # when the `<stem>.sources/` dir or `<stem>.compile_commands.json` is missing,
-    # so reporting off the raw flag would over-count a misconfigured case as
-    # covering source replay/graph it never exercised (Codex). Require both sides.
-    sources_flag = bool(entry.get("sources", False))
-    build_info_flag = bool(entry.get("build_info", False))
-    sources_present = (
-        _sources_path(case_dir, "v1", sources_flag) is not None
-        and _sources_path(case_dir, "v2", sources_flag) is not None
-    )
-    build_info_present = (
-        _build_info_path(case_dir, "v1", build_info_flag) is not None
-        and _build_info_path(case_dir, "v2", build_info_flag) is not None
-    )
+    # Report L3/L4/L5 from the inline opt-ins only when both dumped snapshots
+    # actually embedded those layers with `present` coverage. Directory/flag
+    # presence is insufficient: `_dump_and_compare` omits `--sources` when the
+    # tree is missing, AND inline replay degrades to an empty surface (exit 0)
+    # when the source front-end is absent, so a misconfigured/degraded case must
+    # not claim source-replay/graph coverage it never produced (Codex).
+    present1 = _embedded_present_layers(tmp / "snap1.json")
+    present2 = _embedded_present_layers(tmp / "snap2.json")
+    both_present = present1 & present2
+    sources_present = "L4" in both_present
+    build_info_present = "L3" in both_present
     source_layers = _source_layers_for_result(
         variant,
         v1_hdr=v1_hdr,

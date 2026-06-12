@@ -370,6 +370,20 @@ def test_provenance_fires_for_method_only_class_api() -> None:
     assert ChangeKind.SOURCE_BINARY_PROVENANCE_MISMATCH in kinds
 
 
+def test_provenance_inert_for_unmangled_ctor_only_class() -> None:
+    # A1 (Codex): castxml leaves constructors/destructors unmangled. A valid
+    # ctor/dtor-only class API must NOT false-fire — the class qualified_name is
+    # not a comparable export symbol, so these decls are skipped without a mangle.
+    new = _surface(
+        roots={"exported_symbols": ["_ZN3FooC1Ev", "_ZN3FooD1Ev"]},
+        reachable_declarations=[
+            _ent("Foo::Foo", "constructor", mangled="") for _ in range(3)
+        ] + [_ent("Foo::~Foo", "destructor", mangled="") for _ in range(3)],
+    )
+    kinds = [c.kind for c in diff_source_abi(_surface(), new)]
+    assert ChangeKind.SOURCE_BINARY_PROVENANCE_MISMATCH not in kinds
+
+
 def test_provenance_inert_for_constexpr_heavy_surface() -> None:
     # constexpr/typedef decls don't export; a header full of them must NOT trip
     # the provenance check even though none map to a symbol.
