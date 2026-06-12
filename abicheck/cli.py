@@ -1883,24 +1883,17 @@ def compare_cmd(
 
     extra_changes = _load_probe_matrix_changes(probe_matrix_old, probe_matrix_new)
 
-    layer_coverage_rows: list[dict[str, object]] = []
-    _any_pack_flag = any(
-        x is not None
-        for x in (old_build_info, new_build_info, old_sources, new_sources)
-    )
-    _has_embedded = old.build_source is not None or new.build_source is not None
-    if _any_pack_flag or collect_mode != "off" or _has_embedded:
-        from .cli_buildsource import diff_embedded_build_source
-        # Build-info + source facts come from each snapshot's embedded payload
-        # (single-artifact UX) unless an out-of-band pack flag overrides a side.
-        # Header-parse-context drift is judged from the new snapshot's own
-        # provenance (parsed_with_build_context, set by `dump -p`); compare adds
-        # no build context of its own.
-        ev_changes, layer_coverage_rows = diff_embedded_build_source(
+    # Build-info + source facts (ADR-028/033): each side's facts come from the
+    # snapshot's embedded payload unless an out-of-band pack flag overrides it.
+    # The helper wall-clocks inline diffing for the ADR-033 D6/D9 metrics and
+    # returns the coverage/metrics blocks to attach to the result post-compare.
+    from .cli_buildsource import attach_evidence_metrics, prepare_embedded_build_source
+    extra_changes, layer_coverage_rows, evidence_metrics, ev_changes = (
+        prepare_embedded_build_source(
+            old, new, collect_mode, extra_changes,
             old_build_info, new_build_info, old_sources, new_sources,
-            collect_mode, new, old,
         )
-        extra_changes = (extra_changes or []) + ev_changes if ev_changes else extra_changes
+    )
 
     apply_patterns = pattern_verdicts or explain_patterns  # --explain implies on
     result = compare(
@@ -1913,6 +1906,7 @@ def compare_cmd(
     )
     if layer_coverage_rows:
         result.layer_coverage = layer_coverage_rows
+    attach_evidence_metrics(result, evidence_metrics, ev_changes)
 
     if explain_patterns:
         echo_pattern_modulations(result)

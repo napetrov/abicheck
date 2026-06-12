@@ -125,6 +125,22 @@
         }
       }
     },
+    "evidence_metrics": {
+      "type": "object",
+      "description": "Optional evidence-collection timing and observability metrics (ADR-033 D6/D9). Present only when build-info/source facts were involved in the compare. Keys follow the D9 metric names so CI can tune evidence-mode selection.",
+      "additionalProperties": true,
+      "properties": {
+        "extractor.duration_seconds": { "type": "number", "minimum": 0 },
+        "coverage.build_context.present": { "type": "boolean" },
+        "coverage.source_abi.mode": { "type": "string" },
+        "coverage.graph.mode": { "type": "string" },
+        "findings.artifact_backed.count": { "type": "integer", "minimum": 0 },
+        "findings.source_only.count": { "type": "integer", "minimum": 0 },
+        "findings.build_context_drift.count": { "type": "integer", "minimum": 0 },
+        "findings.demoted_by_surface.count": { "type": "integer", "minimum": 0 },
+        "findings.suppressed_with_reason.count": { "type": "integer", "minimum": 0 }
+      }
+    },
     "detectors": {
       "type": "array",
       "items": {

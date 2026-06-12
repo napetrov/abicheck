@@ -256,6 +256,46 @@ def test_compare_json_without_evidence_omits_coverage(tmp_path):
     assert "layer_coverage" not in json.loads(result.stdout)
 
 
+def test_compare_json_carries_evidence_metrics_block(tmp_path):
+    """ADR-033 D6/D9: the JSON report carries an evidence_metrics block with
+    collection timing and the artifact-backed vs source-only finding split."""
+    old_cdb = _write_cdb(tmp_path, "c++17")
+    new_cdb = _write_cdb(tmp_path, "c++20")
+    ev_old = tmp_path / "old.evidence"
+    ev_new = tmp_path / "new.evidence"
+    runner = CliRunner()
+    runner.invoke(main, ["collect", "--compile-db", str(old_cdb), "-o", str(ev_old)])
+    runner.invoke(main, ["collect", "--compile-db", str(new_cdb), "-o", str(ev_new)])
+    old_snap = _make_snap(tmp_path, "old.json", "1.0")
+    new_snap = _make_snap(tmp_path, "new.json", "2.0")
+
+    result = runner.invoke(main, [
+        "compare", str(old_snap), str(new_snap),
+        "--old-build-info", str(ev_old), "--new-build-info", str(ev_new),
+        "--format", "json",
+    ])
+    assert result.exit_code in (0, 2, 4), result.output
+    metrics = json.loads(result.stdout)["evidence_metrics"]
+    # Timing is measured and non-negative; coverage flags reflect the run.
+    assert isinstance(metrics["extractor.duration_seconds"], (int, float))
+    assert metrics["extractor.duration_seconds"] >= 0
+    assert metrics["coverage.build_context.present"] is True
+    # The -std drift is a build-context-drift finding, not a source-only one.
+    assert metrics["findings.build_context_drift.count"] >= 1
+    assert metrics["findings.source_only.count"] == 0
+    # And the D6 timing summary is echoed to stderr alongside the coverage table.
+    assert "Evidence metrics:" in result.stderr
+
+
+def test_compare_json_without_evidence_omits_metrics(tmp_path):
+    """No evidence → no evidence_metrics key (additive, opt-in)."""
+    old_snap = _make_snap(tmp_path, "old.json", "1.0")
+    new_snap = _make_snap(tmp_path, "new.json", "2.0")
+    result = CliRunner().invoke(main, ["compare", str(old_snap), str(new_snap), "--format", "json"])
+    assert result.exit_code == 0, result.output
+    assert "evidence_metrics" not in json.loads(result.stdout)
+
+
 def test_compare_collect_mode_without_packs_is_noted(tmp_path):
     old_snap = _make_snap(tmp_path, "old.json", "1.0")
     new_snap = _make_snap(tmp_path, "new.json", "2.0")
