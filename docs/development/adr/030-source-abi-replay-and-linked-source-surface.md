@@ -2,8 +2,8 @@
 
 **Date:** 2026-06-09
 **Status:** Accepted — implemented (phases 1–7); follow-ups #2 (include-guard
-macro noise) and #3 (typedef/alias modeling) resolved, #1 partially (pure-Python
-validation corpus committed)
+macro noise), #3 (typedef/alias modeling) and #4 (include-graph scope selection)
+resolved, #1 partially (pure-Python validation corpus committed)
 **Decision maker:** Nikolay Petrov
 
 ---
@@ -376,7 +376,7 @@ info / no headers / no build data / no sources-or-clang).
 
 ### Known limitations / follow-ups
 
-The phases above are implemented and wired. Follow-ups #2 and #3 are now
+The phases above are implemented and wired. Follow-ups #2, #3 and #4 are now
 resolved and #1 is partially landed (see each item); the rest are deliberately
 deferred and should be handled in later work. None of them weaken the authority
 rule (L4 never gates a shipped-ABI `BREAKING` verdict on its own, ADR-028 D3);
@@ -407,12 +407,20 @@ they are coverage/precision gaps, not correctness holes.
    typedef leaves invisible to L0/L1. **castxml still omits typedefs** (no
    per-entry provenance, see `castxml.py`), so this finding is clang-only, the
    same backend-capability boundary as macros (#2).
-4. **Scope selection is approximate without a full include graph.** `headers-only`
-   picks one representative compile unit per target rather than the minimal set
-   that covers every public header, and `changed` maps a changed header to TUs
-   via target ownership (falling back to all TUs when there is no target/header
-   metadata, ADR-025 D3). A precise mapping needs a per-TU include graph
-   (depfiles or the L5 graph layer, ADR-031).
+4. **Scope selection now uses the include graph when available — done.**
+   `select_compile_units` accepts an optional per-TU include map
+   (`{compile_unit_id: [included_path, …]}`, ADR-031 D3, sourced from compiler
+   depfiles via `include_graph.parse_depfile` / `ClangIncludeExtractor`). With it,
+   `headers-only` selects the **minimal** set of TUs (greedy set cover) whose
+   includes cover every public header, and `changed` selects **exactly** the TUs
+   whose transitive includes contain a changed path — and, when the graph covers
+   every unit, trusts it to select nothing for a header that affects nothing
+   (no fail-open fan-out). Without the map, the previous target-ownership
+   heuristics apply unchanged (the fan-out + D8 cache still keep PR mode correct),
+   so the include graph is a precision upgrade, not a new dependency. The
+   remaining gap is purely *provenance*: `BuildEvidence` does not yet persist
+   depfiles, so the map must be produced live (`clang -MM`) or from pre-captured
+   depfiles; persisting it in the pack is ADR-031 graph-layer scope.
 5. **Inline auto-collection during `compare --evidence-mode` is still a stub.**
    `compare` consumes pre-built packs via `--old/--new-evidence`; it does not yet
    run `collect-evidence` inline for a requested evidence mode. That inline
