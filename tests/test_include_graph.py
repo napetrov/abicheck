@@ -170,3 +170,32 @@ def test_collect_evidence_include_graph_missing_clang_degrades(tmp_path, monkeyp
     assert pack.source_graph is not None
     assert any(e.name == "include_graph:clang" and e.status == "failed"
                for e in pack.manifest.extractors)
+
+
+def test_extract_from_build_unredacts_home(monkeypatch) -> None:
+    # argv/cwd persist with the home dir redacted to `~`; the depfile pass must
+    # un-redact them before subprocess, which does not expand `~` (Codex review).
+    import abicheck.evidence.include_graph as ig
+
+    captured: dict = {}
+
+    class _Result:
+        stdout = "foo.o: foo.cpp a.h"
+        stderr = ""
+
+    def _fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["cwd"] = kw.get("cwd")
+        return _Result()
+
+    monkeypatch.setattr(ig.shutil, "which", lambda _b: "/usr/bin/clang++")
+    monkeypatch.setattr(ig.subprocess, "run", _fake_run)
+
+    cu = CompileUnit(
+        id="cu://a", source="~/proj/foo.cpp", directory="~/proj",
+        argv=["clang++", "-c", "~/proj/foo.cpp", "-I", "~/proj/include"],
+    )
+    out = ig.ClangIncludeExtractor().extract_from_build(BuildEvidence(compile_units=[cu]))
+    assert out == {"cu://a": ["foo.cpp", "a.h"]}
+    assert not any("~" in str(tok) for tok in captured["cmd"])
+    assert "~" not in (captured["cwd"] or "")

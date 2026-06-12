@@ -472,7 +472,18 @@ class FilesystemRegistry:
                 )
             return None
 
-        pack = EvidencePack.load(evidence_dir)
+        # Loading parses the normalized build/source/graph payloads. A payload
+        # corrupted into invalid JSON would otherwise leak a raw ValueError past
+        # the integrity contract (e.g. through `baseline pull --evidence-output`,
+        # which only wraps AbicheckError) — a tampered stored pack must surface as
+        # a BaselineIntegrityError, not a stack trace (Codex review).
+        try:
+            pack = EvidencePack.load(evidence_dir)
+        except (ValueError, OSError) as exc:
+            raise BaselineIntegrityError(
+                f"Evidence pack for baseline {key.path} could not be loaded "
+                f"({exc}); the stored pack is corrupt. Re-push the baseline."
+            ) from exc
 
         # Two layers of integrity:
         #   1. the on-disk normalized payloads must still match the digests the

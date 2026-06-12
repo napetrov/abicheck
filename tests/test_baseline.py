@@ -734,3 +734,17 @@ class TestEvidencePackStorage:
         _, stored_meta = registry.pull(key)  # type: ignore[misc]
         assert stored_meta.evidence_content_hash is None
         assert registry.pull_evidence(key) is None
+
+
+    def test_pull_evidence_corrupt_payload_raises_integrity(
+        self, registry: FilesystemRegistry, sample_snapshot: AbiSnapshot, tmp_path: Path
+    ) -> None:
+        # A normalized payload corrupted into invalid JSON must surface as a
+        # BaselineIntegrityError, not leak a raw JSONDecodeError (Codex review).
+        pack = _make_pack(tmp_path / "src.evidence")
+        key = BaselineKey(library="libfoo", version="1.0.0", platform="linux-x86_64")
+        registry.push(key, sample_snapshot, evidence=pack)
+        stored = registry.root / key.path / "evidence" / "build" / "build_evidence.json"
+        stored.write_text("{ not valid json", encoding="utf-8")
+        with pytest.raises(BaselineIntegrityError, match="corrupt"):
+            registry.pull_evidence(key)

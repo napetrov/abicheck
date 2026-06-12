@@ -177,6 +177,13 @@ class ClangIncludeExtractor:
         if not self.available():
             self.diagnostics.append(f"{self.clang_bin} not found in PATH")
             return {}
+        # The redaction policy (ADR-032 D7) persists argv/cwd with the home dir
+        # rewritten to `~`; subprocess does not expand `~`, so a depfile pass over
+        # the redacted values would fail and silently degrade replay scoping
+        # (Codex review). Un-redact for the run only, exactly as the clang source
+        # extractor does.
+        from .source_extractors._argv import unredact_home
+
         out: dict[str, list[str]] = {}
         for cu in build.compile_units:
             if not cu.source:
@@ -184,10 +191,11 @@ class ClangIncludeExtractor:
             argv = depfile_args_from_argv(cu.argv) if cu.argv else [cu.source]
             if not argv:
                 argv = [cu.source]
-            cmd = [self.clang_bin, "-MM", *argv]
+            cmd = [self.clang_bin, "-MM", *(unredact_home(a) for a in argv)]
+            cwd = unredact_home(cu.directory) if cu.directory else None
             try:
                 proc = subprocess.run(  # noqa: S603 - fixed argv, never shell=True
-                    cmd, cwd=cu.directory or None, capture_output=True,
+                    cmd, cwd=cwd or None, capture_output=True,
                     text=True, timeout=120, check=False,
                 )
             except (OSError, subprocess.SubprocessError) as exc:
