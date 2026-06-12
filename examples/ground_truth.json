@@ -2056,6 +2056,36 @@
       "expected_kinds": [
         "type_size_changed"
       ]
+    },
+    "case127_data_object_size_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "min_evidence": "L0",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": true,
+      "api_break": false,
+      "bad_practice": true,
+      "description": "An exported global data object (config_table) grows from int[16] (64 bytes) to int[32] (128 bytes), changing its ELF symbol st_size. Consumers that reference the object get a copy relocation sized for the v1 definition, so after the upgrade library code that indexes the new slots writes past the consumer's fixed-size copy — silent out-of-bounds corruption. This is the static-variable-size regression the glibc testsuite guards and that Apple's dynamic-library guidelines classify as a major change; detected at L0 from the symbol table alone.",
+      "expected_kinds": [
+        "symbol_size_changed"
+      ]
+    },
+    "case128_symbol_binding_strengthened": {
+      "expected": "COMPATIBLE",
+      "category": "quality",
+      "min_evidence": "L0",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "The exported function helper changes from weak (STB_WEAK) to strong/global (STB_GLOBAL) binding. This is backward compatible: every binary that resolved to the weak definition still resolves to the same address, and the only difference is that the symbol can no longer be silently overridden by another strong definition. It is the benign counterpart to case27 (binding weakened, which is risky). Detected at L0 from the symbol table.",
+      "expected_kinds": [
+        "symbol_binding_strengthened"
+      ]
     }
   }
 }

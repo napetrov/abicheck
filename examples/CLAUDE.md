@@ -1,6 +1,6 @@
 # CLAUDE.md — `examples/`
 
-The ABI-scenario catalog: 126 cases numbered contiguously (`01–125` +
+The ABI-scenario catalog: 128 cases numbered contiguously (`01–128` +
 `26b`), including 5 multi-library bundle cases. Each case is a minimal,
 compilable C/C++ example demonstrating a specific ABI/API pitfall.
 
