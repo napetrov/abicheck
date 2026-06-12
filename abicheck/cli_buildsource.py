@@ -1190,6 +1190,70 @@ def _combine_packs(
         source_graph=source_graph,  # type: ignore[arg-type]
     )
 
+_MERGE_LAYER_ATTRS: dict[str, str] = {
+    DataLayer.L3_BUILD.value: "build_evidence",
+    DataLayer.L4_SOURCE_ABI.value: "source_abi",
+    DataLayer.L5_SOURCE_GRAPH.value: "source_graph",
+}
+
+def _detect_merge_layer_conflicts(
+    snaps: list[tuple[Path, AbiSnapshot]],
+) -> dict[str, list[tuple[str, str]]]:
+    """A2: per managed layer, return ``layer -> [(input_name, digest), ...]`` when
+    >1 input supplies that layer with *differing* normalized facts.
+
+    The comparison is a **per-layer payload digest** of just that layer's facts,
+    not the pack-wide ``BuildSourcePack.content_hash()`` — the pack hash folds in
+    every layer plus coverage/extractor metadata, so two inputs with identical
+    L4/L5 facts but a differing unrelated layer would false-positive. A layer with
+    one contributor, or several contributors that all agree, is not a conflict.
+    """
+    from .buildsource.pack import _payload_sha256
+
+    seen: dict[str, list[tuple[str, str]]] = {layer: [] for layer in _MERGE_LAYER_ATTRS}
+    for path, s in snaps:
+        pack = s.build_source
+        if pack is None:
+            continue
+        for layer, attr in _MERGE_LAYER_ATTRS.items():
+            payload = getattr(pack, attr, None)
+            if payload is None:
+                continue
+            digest = "sha256:" + _payload_sha256(payload.to_dict())
+            seen[layer].append((path.name, digest))
+
+    conflicts: dict[str, list[tuple[str, str]]] = {}
+    for layer, entries in seen.items():
+        if len(entries) > 1 and len({d for _n, d in entries}) > 1:
+            conflicts[layer] = entries
+    return conflicts
+
+def _record_merge_conflicts(
+    combined: BuildSourcePack, conflicts: dict[str, list[tuple[str, str]]]
+) -> None:
+    """Persist A2 conflicts into the combined pack's extractor ledger.
+
+    ``BuildSourceManifest.to_dict()`` serializes ``extractors`` (but has no
+    ``diagnostics`` field), so an ``ExtractorRecord`` is the channel that
+    survives embedding/round-trip. ``warn`` mode keeps first-wins facts and
+    leaves this record behind so the divergence rides forward in the baseline.
+    """
+    records = list(combined.manifest.extractors)
+    for layer, entries in sorted(conflicts.items()):
+        detail = "; ".join(f"{name}={digest}" for name, digest in entries)
+        records.append(
+            ExtractorRecord(
+                name="merge_layer_conflict",
+                status="failed",
+                detail=f"layer {layer} supplied with differing facts: {detail}",
+                diagnostics=[
+                    f"kept first-wins for {layer}; verify each layer comes from "
+                    "exactly one input."
+                ],
+            )
+        )
+    combined.manifest = replace(combined.manifest, extractors=records)
+
 def embed_build_source(
     snap: AbiSnapshot,
     build_info: Path | None,
@@ -1313,8 +1377,13 @@ def dump_source_only(
 @click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("-o", "--output", "output", type=click.Path(path_type=Path), required=True,
               help="Output combined baseline snapshot (.abi.json).")
+@click.option("--on-conflict", "on_conflict", type=click.Choice(["warn", "error"]),
+              default="warn", show_default=True,
+              help="What to do when two inputs supply the SAME layer (L3/L4/L5) "
+              "with DIFFERING facts: `warn` keeps first-wins and records a "
+              "diagnostic; `error` exits non-zero (good for baseline generation).")
 @click.option("-v", "--verbose", is_flag=True, default=False)
-def merge_cmd(inputs: tuple[Path, ...], output: Path, verbose: bool) -> None:
+def merge_cmd(inputs: tuple[Path, ...], output: Path, on_conflict: str, verbose: bool) -> None:
     """Combine independently-produced dumps into one self-contained baseline.
 
     \b
@@ -1347,6 +1416,13 @@ def merge_cmd(inputs: tuple[Path, ...], output: Path, verbose: bool) -> None:
         snaps[0],
     )
 
+    # A2: detect when two inputs both supply the same managed layer with DIFFERING
+    # normalized facts. `_combine_packs` silently first-wins per layer, so without
+    # this a parallel-baseline prep mistake (e.g. two different source trees) is
+    # dropped on the floor. Compared on a per-layer payload digest, not the
+    # pack-wide content_hash (which would false-positive on an unrelated layer).
+    conflicts = _detect_merge_layer_conflicts(snaps)
+
     # Fold every input's embedded pack together, left to right.
     combined: BuildSourcePack | None = None
     contributors = 0
@@ -1355,6 +1431,25 @@ def merge_cmd(inputs: tuple[Path, ...], output: Path, verbose: bool) -> None:
             continue
         contributors += 1
         combined = _combine_packs(combined, s.build_source)
+
+    if conflicts:
+        for layer, entries in sorted(conflicts.items()):
+            srcs = ", ".join(f"{name}" for name, _digest in entries)
+            click.echo(
+                f"merge conflict: layer {layer} supplied with differing facts by "
+                f"multiple inputs ({srcs}); kept first-wins.",
+                err=True,
+            )
+        if on_conflict == "error":
+            raise click.ClickException(
+                "merge aborted: conflicting layer facts and --on-conflict=error. "
+                "Each layer (L3/L4/L5) should come from exactly one input."
+            )
+        # warn mode: persist the conflict into the combined pack's extractor
+        # ledger (a serialized field, unlike a nonexistent manifest.diagnostics),
+        # so the recorded baseline carries the divergence forward.
+        if combined is not None:
+            _record_merge_conflicts(combined, conflicts)
 
     if combined is None:
         click.echo(

@@ -1074,6 +1074,65 @@ def test_merge_requires_two_inputs(tmp_path):
     assert "at least two" in result.output
 
 
+def _src_snapshot_with_l3(tmp_path, std, name):
+    """A source-only snapshot whose embedded pack carries an L3 build_evidence
+    folded from a compile DB built with -std=<std>."""
+    from abicheck.cli_buildsource import embed_build_source
+
+    snap = AbiSnapshot(library="libfoo.so", version="1")
+    embed_build_source(snap, _write_cdb(tmp_path, std), None)
+    path = tmp_path / name
+    save_snapshot(snap, path)
+    return path
+
+
+def test_merge_layer_conflict_warns_and_records(tmp_path):
+    """A2: two inputs supplying L3 with DIFFERING facts → warn + persisted record,
+    first-wins kept (exit 0 in the default warn mode)."""
+    a = _src_snapshot_with_l3(tmp_path, "c++17", "a.json")
+    b = _src_snapshot_with_l3(tmp_path, "c++20", "b.json")
+    out = tmp_path / "baseline.json"
+    result = CliRunner().invoke(main, ["merge", str(a), str(b), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    assert "merge conflict" in result.output
+    assert "L3_build" in result.output
+
+    merged = load_snapshot(out)
+    assert merged.build_source is not None
+    recs = [e for e in merged.build_source.manifest.extractors
+            if e.name == "merge_layer_conflict"]
+    assert recs, "conflict must be persisted in the extractor ledger"
+    assert recs[0].status == "failed"
+    assert recs[0].diagnostics  # carries a forward-looking note
+
+
+def test_merge_layer_conflict_error_mode_exits_nonzero(tmp_path):
+    """A2: --on-conflict=error aborts non-zero and writes no baseline."""
+    a = _src_snapshot_with_l3(tmp_path, "c++17", "a.json")
+    b = _src_snapshot_with_l3(tmp_path, "c++20", "b.json")
+    out = tmp_path / "baseline.json"
+    result = CliRunner().invoke(
+        main, ["merge", str(a), str(b), "--on-conflict", "error", "-o", str(out)]
+    )
+    assert result.exit_code != 0
+    assert "merge aborted" in result.output
+    assert not out.exists()
+
+
+def test_merge_identical_layer_is_not_a_conflict(tmp_path):
+    """A2: two inputs supplying L3 with the SAME facts must NOT flag a conflict."""
+    a = _src_snapshot_with_l3(tmp_path, "c++17", "a.json")
+    b = _src_snapshot_with_l3(tmp_path, "c++17", "b.json")
+    out = tmp_path / "baseline.json"
+    result = CliRunner().invoke(main, ["merge", str(a), str(b), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    assert "merge conflict" not in result.output
+    merged = load_snapshot(out)
+    assert merged.build_source is not None
+    assert not [e for e in merged.build_source.manifest.extractors
+                if e.name == "merge_layer_conflict"]
+
+
 def test_merge_without_embedded_facts_is_noted(tmp_path):
     from abicheck.model import AbiSnapshot
     from abicheck.serialization import load_snapshot, save_snapshot
