@@ -188,6 +188,12 @@ def collect_inline_pack(
     if compile_db is not None:
         _run_compile_db(compile_db, cfg.system, merged, extractors, build_cache_dir)
 
+    # A4: with both a --sources tree and L3 compile units, flag when the build
+    # metadata describes a different checkout than the source tree (decoupled
+    # inputs assembled from different trees). Collection-time diagnostic, not a
+    # ChangeKind — collection has no findings list (cf. A2).
+    _check_build_info_source_mismatch(merged, sources, extractors)
+
     surface = None
     if "L4" in layers:
         # Inline dump has no PR diff, so a 'changed' scope would select zero TUs
@@ -424,6 +430,60 @@ def _run_build_query(
 
 
 # ── L4: source ABI replay ─────────────────────────────────────────────────────
+
+
+# A4 thresholds: fire only on a *strong* signal (almost no compile-DB source
+# resolves under the tree) over a non-trivial number of units, so an unusual
+# build layout is not mistaken for a wrong checkout.
+_MISMATCH_MIN_UNITS = 3
+_MISMATCH_THRESHOLD = 0.9
+
+
+def _check_build_info_source_mismatch(
+    merged: BuildEvidence,
+    sources: Path | None,
+    extractors: list[ExtractorRecord],
+) -> None:
+    """A4: record a diagnostic when the L3 compile units describe a different
+    checkout than the ``--sources`` tree.
+
+    Collection-time only: ``merge``/collection has no ``DiffResult`` list, so this
+    is **not** a ``ChangeKind`` — it rides in the extractor ledger and
+    ``BuildEvidence.diagnostics`` (the channels the later compare's coverage
+    report surfaces), never as a verdict-bearing finding. Conservative by design
+    (see thresholds) so it does not trip the FP-rate gate on unusual layouts.
+    """
+    if sources is None or not merged.compile_units:
+        return
+    tree = Path(sources)
+    if not tree.is_dir():
+        return
+    rels: list[Path] = []
+    for cu in merged.compile_units:
+        src = getattr(cu, "source", "")
+        if not src:
+            continue
+        p = Path(src)
+        if not p.is_absolute():
+            rels.append(p)
+        elif cu.directory and p.is_relative_to(cu.directory):
+            rels.append(p.relative_to(cu.directory))
+        else:
+            rels.append(Path(p.name))
+    if len(rels) < _MISMATCH_MIN_UNITS:
+        return
+    missing = sum(1 for r in rels if not (tree / r).exists())
+    if missing / len(rels) >= _MISMATCH_THRESHOLD:
+        detail = (
+            f"{missing}/{len(rels)} compile-DB source files are absent from the "
+            "--sources tree; build metadata and sources may be different checkouts"
+        )
+        extractors.append(
+            ExtractorRecord(
+                name="build_info_source_tree_mismatch", status="failed", detail=detail
+            )
+        )
+        merged.diagnostics.append(f"build_info/source mismatch: {detail}")
 
 
 def _run_inline_source_abi(

@@ -1372,3 +1372,51 @@ def test_exported_symbols_from_snapshot_extracts_mangled_names():
     assert _exported_symbols_from_snapshot(snap) == ("_Z1g", "_Z3foov")
 
     assert _exported_symbols_from_snapshot(AbiSnapshot(library="l", version="1")) == ()
+
+
+def test_build_info_source_mismatch_records_diagnostic(tmp_path):
+    """A4: a compile DB whose sources are absent from the --sources tree records
+    a build_info_source_tree_mismatch diagnostic (collection-time, not a kind)."""
+    from abicheck.buildsource.inline import collect_inline_pack
+
+    # compile DB referencing files that do NOT exist under the (empty) tree.
+    cdb = [{
+        "directory": str(tmp_path),
+        "file": f"src/missing{i}.cpp",
+        "arguments": ["c++", "-std=c++17", "-c", f"src/missing{i}.cpp"],
+    } for i in range(4)]
+    db = tmp_path / "compile_commands.json"
+    db.write_text(json.dumps(cdb), encoding="utf-8")
+    tree = tmp_path / "tree"
+    tree.mkdir()  # empty: none of the compile-DB sources resolve here
+
+    pack = collect_inline_pack(sources=tree, build_info=db, layers=("L3",))
+    assert pack is not None
+    recs = [e for e in pack.manifest.extractors
+            if e.name == "build_info_source_tree_mismatch"]
+    assert recs and recs[0].status == "failed"
+    assert pack.build_evidence is not None
+    assert any("mismatch" in d for d in pack.build_evidence.diagnostics)
+
+
+def test_build_info_source_match_no_mismatch(tmp_path):
+    """A4: when the compile-DB sources exist under the tree, no mismatch fires."""
+    from abicheck.buildsource.inline import collect_inline_pack
+
+    tree = tmp_path / "tree"
+    (tree / "src").mkdir(parents=True)
+    cdb = []
+    for i in range(4):
+        (tree / "src" / f"f{i}.cpp").write_text("int x;", encoding="utf-8")
+        cdb.append({
+            "directory": str(tree),
+            "file": f"src/f{i}.cpp",
+            "arguments": ["c++", "-std=c++17", "-c", f"src/f{i}.cpp"],
+        })
+    db = tmp_path / "compile_commands.json"
+    db.write_text(json.dumps(cdb), encoding="utf-8")
+
+    pack = collect_inline_pack(sources=tree, build_info=db, layers=("L3",))
+    assert pack is not None
+    assert not [e for e in pack.manifest.extractors
+                if e.name == "build_info_source_tree_mismatch"]
