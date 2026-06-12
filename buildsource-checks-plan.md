@@ -7,7 +7,18 @@
 > example catalog.
 
 **Date:** 2026-06-12
-**Status:** Proposed — planning only, no code yet.
+**Status:** In progress.
+
+**Implementation status (PR #363):**
+- ✅ **A1** `source_binary_provenance_mismatch` — new RISK ChangeKind (245) +
+  L0-export plumbing into `dump <binary> --sources`.
+- ✅ **A2** `merge_layer_conflict` — `merge --on-conflict=warn|error`,
+  order-independent per-layer digest, accurate winner, persisted to the ledger.
+- ✅ **A4** `build_info_source_tree_mismatch` — collection-time diagnostic (not a
+  ChangeKind; see A4).
+- ✅ **Workstream B (partial)** — D5 merge gaps landed with the above.
+- ⏳ **A3**, remaining **B** gaps (D2/D3/D4/D6/D7), **C** examples (L4/L5 harness),
+  and the `merge`-path L0 plumbing for A1 — not yet done.
 
 ---
 
@@ -150,32 +161,37 @@ row and the capability report (`partial: build query failed` instead of silent
 `not_collected`). Optional risk finding under `--collection-mode strict`. May
 not need a new `ChangeKind` — primarily a coverage/reporting fix.
 
-### A4. `build_info_source_tree_mismatch` (RISK, optional)
+### A4. `build_info_source_tree_mismatch` (collection-time diagnostic — ✅ done)
 
 **Scenario (D1/D3):** decoupled `--build-info` compile DB references TUs absent
 from the `--sources` tree (facts assembled from different trees).
 
-**Where:** `inline.py::collect_inline_pack` — compare compile-DB file entries vs
-files present under the source tree; high non-overlap → risk. Partition:
-`RISK_KINDS`. Evidence tier: L4.
+**Where (as implemented):** `inline.py::_check_build_info_source_mismatch`,
+called from `collect_inline_pack`. Resolve each compile unit's `source` relative
+to its compile-DB `directory` and test existence under the `--sources` tree;
+when ≥90% of ≥3 units are absent, record an `ExtractorRecord`
+(`build_info_source_tree_mismatch`) + a `BuildEvidence.diagnostics` entry.
+
+**Not a `ChangeKind`** (revised from the original plan): like A2, this is a
+*collection-time* single-side property with no `DiffResult` list at collection,
+so modelling it as a compare ChangeKind would re-introduce the A2 anti-pattern.
+It rides the existing ledger/coverage channels. Conservative thresholds keep it
+off the FP-rate gate.
 
 **Priority:** A1 + A2 are the high-value closures (the two genuinely-new silent
 failure modes). A3 is a cheap reporting win. A4 is nice-to-have.
 
 ### Gating ripple — **only for the items that are actually new `ChangeKind`s**
 
-This applies to **A1 and A4 only** (the genuine new enum members), and to A3
-*only if* its optional compare finding is added. **A2 is not a `ChangeKind`** (it
-is a merge-time diagnostic, above) and **A3's coverage-status fix is not** —
-neither gets a partition / evidence-tier / doc-count entry, and adding one would
-reintroduce the very modelling error this plan avoids.
-
-For A1/A4 (and an A3 compare finding if added):
+In the end **only A1** became a new enum member. A2 and A4 are collection/merge
+diagnostics and A3 is a coverage-status fix — none gets a partition /
+evidence-tier / doc-count entry (modelling them as ChangeKinds would reintroduce
+the very error this plan avoids). For A1 (done) the ripple was:
 
 - `changekind-partition` (ERROR): in exactly one partition set in `checker_policy.py`.
 - `changekind-detector` (WARN): emitted somewhere.
 - `changekind-docs` (WARN): mentioned in `docs/`.
-- `doc-count-sync` (ERROR): bump `len(ChangeKind)` headline counts (currently **244** on `main`).
+- `doc-count-sync` (ERROR): bump `len(ChangeKind)` headline counts (**245** after A1).
 - `scripts/evidence_tiers.py`: map the kind to its tier (L4 for A1/A4).
 - `docs/concepts/build-source-data.md`: add to the L3/L4/L5 findings tables.
 
