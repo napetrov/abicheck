@@ -24,9 +24,11 @@ keep pace:
    `merge` silently first-wins on layer conflicts.
 2. **Tests** — the six buildsource test files cover happy paths well but miss
    error / conflict / interaction paths.
-3. **Examples** — **0** examples exercise L3/L4/L5 or the new workflow, and the
-   CMake example harness (`abicheck_add_case`) cannot emit a compile DB or drive
-   `--sources`/`--build-info`.
+3. **Examples** — **0** examples *detect at* L3/L4/L5 or exercise the new
+   workflow. (`case122` is labelled `min_evidence: L4`, but encodes the
+   uninstantiated-template residual with no detection mechanism yet — it yields
+   `NO_CHANGE` today; see C1.) The CMake example harness (`abicheck_add_case`)
+   also cannot emit a compile DB or drive `--sources`/`--build-info`.
 
 The authority rule still governs everything: every new finding below lands in
 `API_BREAK_KINDS` or `RISK_KINDS`, **never** `BREAKING` (ADR-028 D3).
@@ -162,8 +164,11 @@ regenerated `examples/README.md` + `docs/examples/*.md`.
 - `examples-readme-sync`: regenerate via `scripts/gen_examples_docs.py` so
   headline count, verdict distribution, and case-index rows match.
 - `doc-count-sync`: bump case-count anchors.
-- `scripts/evidence_tiers.py`: give the new L3/L4 kinds a defined tier (today
-  **no kind maps to L3/L4** — these examples make that real).
+- `scripts/evidence_tiers.py`: give the new L3/L4 kinds a defined tier. (Verify
+  the current `evidence_tiers.py` kind→tier map first — early reading suggests no
+  *kind* has L3/L4 as its first-detection tier, but confirm against the file
+  before relying on it, since the cumulative per-case tier distribution is a
+  separate metric.)
 
 ---
 
@@ -185,3 +190,7 @@ Steps 1–4 are pure-Python (fast lane). Step 5 needs clang/castxml (behind
 - Extends `buildsource-redesign-plan.md` (the feature plan it complements).
 - Implements coverage for ADR-028 D3 (authority rule), ADR-029 D9 (L3 findings),
   ADR-030 D6 (L4 findings), ADR-031 D6 (L5 findings), ADR-032 D5 (action ceiling).
+- **`ChangeKind` count is a snapshot (238 on `main` at time of writing).** Other
+  in-flight PRs move it — e.g. PR #362 adds five kinds (238 → 243), some L3
+  build-evidence. Re-read `len(ChangeKind)` and the `evidence_tiers.py` map
+  before implementing, rather than trusting the numbers frozen here.
