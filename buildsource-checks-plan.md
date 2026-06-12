@@ -244,6 +244,7 @@ already exist** (`case130`–`case133` for exceptions/rtti/threadsafe/tls,
 | L4 default argument | **L4** | default arg changed, signature identical | `default_argument_changed` |
 | L4 constexpr value | **L4** | public `constexpr` value changed | `constexpr_value_changed` |
 | L4 uninstantiated template | **L4** | gives existing **case122** residual its first real detection | `uninstantiated_template_removed` / `template_body_changed` |
+| **L5 source-graph reachability** | **L5** | a public decl enters/leaves the target→header→decl→symbol closure (and/or a decl remaps to a different exported symbol) — built via `--sources` so the L5 graph is folded | `public_reachability_changed`, `source_to_binary_mapping_changed` |
 | Provenance mismatch | **L4**, risk | source tree from the *wrong* tag vs binary | `source_binary_provenance_mismatch` (A1) |
 | Merge baseline | workflow | two independently-produced dumps merged (no-conflict path) | workflow smoke + A2 negative |
 
