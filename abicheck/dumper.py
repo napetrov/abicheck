@@ -570,16 +570,81 @@ def _castxml_dump(
     with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
         out_xml = Path(tmp.name)
 
-    # Determine aggregate header extension: .h for C-only, .hpp for C++ (FIX-A).
-    force_cpp = lang and lang.upper() in ("C++", "CPP")
+    # Determine language mode: .h / C parse for C-only, .hpp / C++ for C++ (FIX-A).
+    force_cpp = bool(lang and lang.upper() in ("C++", "CPP"))
     if not lang:
         force_cpp = _detect_cpp_headers(headers)
-    agg_ext = ".hpp" if force_cpp else ".h"
 
-    # Detect C++20 concept / requires syntax separately — castxml's default
-    # standard (typically C++17) rejects these, so we need to override
-    # the standard explicitly. Only meaningful when we're already in C++ mode.
-    force_cpp20 = bool(force_cpp) and _detect_cpp20_headers(headers)
+    try:
+        try:
+            root = _run_castxml_attempt(
+                cc_bin, cc_id, headers, extra_includes, out_xml,
+                sysroot=sysroot, nostdinc=nostdinc, gcc_options=gcc_options,
+                force_cpp=force_cpp,
+            )
+        except SnapshotError as primary:
+            # G16/A3: an explicit ``--lang c`` on a header that actually carries
+            # C++ constructs (the classic ``extern "C"`` shim guarded by
+            # ``#ifdef __cplusplus``, or a stray class/namespace) should degrade
+            # to a C++ retry rather than hard-fail. Skip the retry when we are
+            # already in C++ mode, when the failure is a frontend-too-old
+            # signature (a mode switch won't help), or when the header has no C++
+            # constructs at all (then C mode was the right call and re-parsing as
+            # C++ would only mask the real error).
+            if (
+                force_cpp
+                or _is_toolchain_version_failure(str(primary))
+                or not _detect_cpp_headers(headers)
+            ):
+                raise
+            log.warning(
+                "castxml failed to parse the header(s) under --lang c; the header "
+                "contains C++ constructs (e.g. extern \"C\" / class / namespace), "
+                "so retrying in C++ mode. Pass --lang c++ to select this directly "
+                "and silence this warning."
+            )
+            try:
+                root = _run_castxml_attempt(
+                    cc_bin, cc_id, headers, extra_includes, out_xml,
+                    sysroot=sysroot, nostdinc=nostdinc, gcc_options=gcc_options,
+                    force_cpp=True,
+                )
+            except SnapshotError:
+                # Both modes failed — surface the originally requested C-mode
+                # error (and its hint), not the fallback's, so the diagnostic
+                # matches what the user asked for.
+                raise primary from None
+        shutil.copy2(str(out_xml), str(cached))
+        return root
+    finally:
+        out_xml.unlink(missing_ok=True)
+
+
+def _run_castxml_attempt(
+    cc_bin: str, cc_id: str,
+    headers: list[Path],
+    extra_includes: list[Path],
+    out_xml: Path,
+    *,
+    sysroot: Path | None,
+    nostdinc: bool,
+    gcc_options: str | None,
+    force_cpp: bool,
+) -> Element:
+    """Run one castxml invocation in a fixed language mode and parse its output.
+
+    Writes the aggregate ``#include`` header (``.h`` for C, ``.hpp`` for C++),
+    builds and runs the castxml command, and validates the result. Raises
+    :class:`SnapshotError` on a non-zero exit, a timeout, or empty/invalid XML —
+    leaving *out_xml* in place on success so the caller can cache it. The agg
+    header is always cleaned up. Factored out of :func:`_castxml_dump` so the
+    C→C++ fallback (G16/A3) can re-run with a different mode without duplicating
+    the run/validate plumbing.
+    """
+    # Detect C++20 concept / requires syntax — castxml's default standard
+    # (typically C++17) rejects these, so we override it. Only in C++ mode.
+    force_cpp20 = force_cpp and _detect_cpp20_headers(headers)
+    agg_ext = ".hpp" if force_cpp else ".h"
 
     with tempfile.NamedTemporaryFile(suffix=agg_ext, mode="w", delete=False) as agg:
         for h in headers:
@@ -589,7 +654,7 @@ def _castxml_dump(
     cmd = _build_castxml_command(
         cc_bin, cc_id, extra_includes, out_xml, agg_path,
         sysroot=sysroot, nostdinc=nostdinc, gcc_options=gcc_options,
-        force_cpp=bool(force_cpp),
+        force_cpp=force_cpp,
         force_cpp20=force_cpp20,
     )
 
@@ -606,12 +671,9 @@ def _castxml_dump(
                 f"syntax that causes the compiler to hang. Check that the header "
                 f"is valid and can be compiled with gcc/g++.{stderr_snippet}"
             ) from exc
-        root = _validate_castxml_output(result, out_xml, headers, bool(force_cpp))
-        shutil.copy2(str(out_xml), str(cached))
-        return root
+        return _validate_castxml_output(result, out_xml, headers, force_cpp)
     finally:
         agg_path.unlink(missing_ok=True)
-        out_xml.unlink(missing_ok=True)
 
 
 

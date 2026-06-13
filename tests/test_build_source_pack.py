@@ -506,6 +506,71 @@ def test_runtime_mode_flags_normalize_to_canonical_keys():
     assert ("threadsafe_statics:CXX", "off") in opts
 
 
+@pytest.mark.parametrize("flag", [
+    "-stdlib=libc++",
+    "-march=x86-64-v3",
+    "-mtune=native",
+    "-mfloat-abi=hard",
+    "-mfpmath=sse",
+    "-fsanitize=address",
+    "-fno-sanitize=undefined",
+    "-fPIC", "-fpic", "-fPIE", "-fpie",
+    "-fno-pic", "-fno-pie", "-fno-PIC", "-fno-PIE",
+    "-fomit-frame-pointer", "-fno-omit-frame-pointer",
+])
+def test_broadened_abi_flag_vocabulary_is_captured(flag):
+    # B2: the ABI-relevant flag vocabulary was thin (std/exceptions/rtti/
+    # visibility only), so stdlib/march/sanitizer/PIC/frame-pointer flips were
+    # invisible. They must now survive extraction.
+    assert extract_abi_relevant_flags(["clang", flag, "-c", "foo.cpp"]) == [flag]
+
+
+def test_stdlib_flip_surfaces_as_abi_build_flag_drift(tmp_path):
+    # B2 acceptance: a libstdc++ -> libc++ swap is a hard C++ ABI change and must
+    # surface as build-flag drift (the artifact diff proves any concrete break).
+    from abicheck.buildsource.adapters.compile_db import CompileDbAdapter
+
+    def _db(stdlib):
+        p = tmp_path / f"cc_{stdlib}.json"
+        p.write_text(json.dumps([{
+            "directory": str(tmp_path),
+            "file": "foo.cpp",
+            "arguments": ["clang++", f"-stdlib={stdlib}", "-c", "foo.cpp"],
+        }]))
+        return CompileDbAdapter(p).collect()
+
+    old = _db("libstdc++")
+    new = _db("libc++")
+    drift = [
+        c for c in diff_build_evidence(old, new)
+        if c.kind is ChangeKind.ABI_RELEVANT_BUILD_FLAG_CHANGED
+        and c.symbol == "build-option:-stdlib"
+    ]
+    assert len(drift) == 1
+    assert "libstdc++" in (drift[0].old_value or "")
+    assert "libc++" in (drift[0].new_value or "")
+
+
+def test_march_added_surfaces_as_abi_build_flag_drift(tmp_path):
+    # B2: an added -march (microarch widening) shows as drift, not silence.
+    from abicheck.buildsource.adapters.compile_db import CompileDbAdapter
+
+    def _db(args):
+        p = tmp_path / f"cc_{abs(hash(tuple(args)))}.json"
+        p.write_text(json.dumps([{
+            "directory": str(tmp_path), "file": "foo.cpp", "arguments": args,
+        }]))
+        return CompileDbAdapter(p).collect()
+
+    old = _db(["clang++", "-c", "foo.cpp"])
+    new = _db(["clang++", "-march=x86-64-v3", "-c", "foo.cpp"])
+    assert any(
+        c.kind is ChangeKind.ABI_RELEVANT_BUILD_FLAG_CHANGED
+        and c.symbol == "build-option:-march"
+        for c in diff_build_evidence(old, new)
+    )
+
+
 @pytest.mark.parametrize("argv, source, expected", [
     # No forcing: extension wins.
     (["g++", "-c", "foo.cpp"], "foo.cpp", "CXX"),

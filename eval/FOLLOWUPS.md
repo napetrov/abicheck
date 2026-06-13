@@ -15,7 +15,7 @@ and the work already shipped on this branch. Each item carries **context**,
 |----|------|--------|-----------------|
 | P01 split conda pkgs | discovery | documented (field guide) | — (conda reality) |
 | P02 variant select | discovery | documented | — |
-| P03 `--show-data-sources` preview-only | UX | **OPEN** | §B1 NEW |
+| P03 `--show-data-sources` preview-only | UX | **shipped** (preview-only made explicit) | §B1 NEW |
 | P04 `-H` hard-errors w/o castxml | env | resolved (tool present) | — |
 | P05 clang L4 empty decl tables | C++ L4 | **OPEN** | §A1 (gap **G4**) |
 | P06 serial L4 | perf | **shipped** (parallel) | §C1 (scaling validation) |
@@ -28,8 +28,8 @@ and the work already shipped on this branch. Each item carries **context**,
 | P13 L4 infeasible on monorepo | perf/scope | documented + mitigations | §E4 (retry live) |
 | P14 castxml no compile-DB `-I` | C++ L2 | **OPEN** | §A2 (gap **G16**/G4) |
 | P15 castxml ✗ libstdc++ 13 | C++ L2/L4 | **OPEN** | §A1 (gap **G4**) |
-| P16 `--lang c` aborts on extern "C" | UX | **OPEN** | §A3 (gap **G16**) |
-| P17 thin build-option normalization | discovery | **OPEN** | §B2 NEW |
+| P16 `--lang c` aborts on extern "C" | UX | **shipped** (warn + C++ retry) | §A3 (gap **G16**) |
+| P17 thin build-option normalization | discovery | **shipped** (broadened vocabulary) | §B2 NEW |
 | P18 L5 coupled to L4 | UX | **shipped** (`graph-build`) | — |
 | P19 L4 needs generated headers | discovery | **shipped** (hint) | — |
 | P20 multi-`.so` pairing | discovery | documented + eval guard | §F2 NEW (FP corpus) |
@@ -87,7 +87,7 @@ need it most. These map to existing gaps **G4** and **G16**.
   includes a generated header **without** a manual `-I`.
 - **Effort·Risk.** S–M · low.
 
-### A3. `--lang c` heuristic should warn, not abort (P16) — gap **G16**
+### A3. `--lang c` heuristic should warn, not abort (P16) — gap **G16** — **shipped**
 - **Context.** `G16` already lists this (`--lang c` + `extern "C"` fails because
   castxml drives clang C++-ish). The eval reproduced it on `zlib.h`: the "header
   appears to contain C++ syntax" hint **aborts** instead of degrading.
@@ -98,12 +98,19 @@ need it most. These map to existing gaps **G4** and **G16**.
   language mode; never hard-fail a correct `extern "C"` header.
 - **Acceptance.** `dump zlib.h --lang c` succeeds (or warns + falls back), no abort.
 - **Effort·Risk.** S · low. Fold into the G16 work.
+- **Shipped.** `dumper._castxml_dump` now factors the single invocation into
+  `_run_castxml_attempt` and, when an explicit `--lang c` parse fails *and* the
+  header carries C++ constructs (`extern "C"`/class/namespace) *and* the failure
+  is not a frontend-too-old signature, retries once in C++ mode with a warning
+  rather than hard-failing. A pure-C header that fails in C mode is not retried
+  (the failure is real), and if both modes fail the originally-requested C-mode
+  error/hint is surfaced. Tests: `tests/test_castxml_toolchain_robustness.py::TestLangCFallsBackToCpp`.
 
 ---
 
 ## B. Net-new code fixes (NEW)
 
-### B1. `--show-data-sources` is preview-only (P03) — NEW
+### B1. `--show-data-sources` is preview-only (P03) — NEW — **shipped**
 - **Context.** Running `dump --show-data-sources` prints the L0–L5 table but
   **collects nothing** and embeds nothing — surprising; a user expects it to also
   produce the snapshot.
@@ -114,8 +121,13 @@ need it most. These map to existing gaps **G4** and **G16**.
 - **Acceptance.** Either the snapshot is written with embedded facts, or the
   preview-only nature is unmissable in output + `--help`.
 - **Effort·Risk.** S · low.
+- **Shipped (made the contract unmissable).** The `--show-data-sources` help now
+  opens with "Preview only … No snapshot is written and no L3/L4/L5 facts are
+  embedded", and `print_data_sources` prints a loud trailing notice to stderr
+  after the table. Tests: `test_dwarf_snapshot.py::TestCLIDwarfFlags::test_dump_help_flags_data_sources_preview_only`
+  and the `preview-only` assertions in `test_show_data_sources_via_runner`.
 
-### B2. Build-option normalization vocabulary is thin (P17) — NEW
+### B2. Build-option normalization vocabulary is thin (P17) — NEW — **shipped**
 - **Context.** LLVM produced **6 build_options from 2,719 TUs**; zstd 0. The
   `command`-string DB *is* shlex-parsed (`build_context.py:91`), so this is **not**
   a parsing gap — `derive_build_options` only normalizes a small flag set
@@ -130,6 +142,15 @@ need it most. These map to existing gaps **G4** and **G16**.
 - **Acceptance.** LLVM/zstd L3 surfaces the real ABI-affecting flag set; a flag
   flip between releases shows as `build_flag_changed` drift.
 - **Effort·Risk.** M · low.
+- **Shipped.** Extended `ABI_RELEVANT_FLAG_PREFIXES` (`adapters/base.py`) with
+  `-stdlib=`, `-march=`/`-mtune=`/`-mfloat-abi=`/`-mfpmath=`, `-fsanitize=`/
+  `-fno-sanitize=`, `-fPIC`/`-fpic`/`-fPIE`/`-fpie` (+ negatives) and
+  `-f[no-]omit-frame-pointer`. `derive_build_options` already projects unknown
+  ABI-relevant flags into `BuildOption`s and `build_diff._diff_options` already
+  emits `ABI_RELEVANT_BUILD_FLAG_CHANGED` for any keyed drift, so no new
+  ChangeKind was needed. A `-stdlib=libstdc++ → libc++` swap now reads as a single
+  drift finding. Tests: `tests/test_build_source_pack.py::test_broadened_abi_flag_vocabulary_is_captured`,
+  `test_stdlib_flip_surfaces_as_abi_build_flag_drift`, `test_march_added_surfaces_as_abi_build_flag_drift`.
 
 ---
 
@@ -258,6 +279,8 @@ The entire eval was **Linux/ELF**. These are untested paths, not known bugs.
 ## Recommended order
 1. **A1 (G4 libclang decl extractor)** — unblocks A2/A3, all C++ validation, real L4 value.
 2. **D1 + D2 (eval source tier + CI)** — turns this research into a standing guard.
-3. **B1, B2, A3** — cheap, high-friction-removal UX/discovery fixes.
+3. ~~**B1, B2, A3**~~ — **shipped** (cheap, high-friction-removal UX/discovery fixes:
+   `--show-data-sources` preview-only messaging, broadened build-flag vocabulary,
+   `--lang c` → C++ auto-retry). A2 still pending (needs A1).
 4. **E1 (PE/Mach-O)** — close the platform-coverage hole.
 5. **C1, E2–E4, F, G** — depth & breadth as capacity allows.

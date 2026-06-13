@@ -38,9 +38,19 @@ _LANG_BY_EXT: dict[str, str] = {
 
 #: ABI/API-affecting compiler-flag prefixes (ADR-029 D9). Drift in any of these
 #: is treated as a risk signal by the build-evidence diff, not mere noise.
+#:
+#: A flag here is captured per-TU into ``CompileUnit.abi_relevant_flags`` and
+#: projected into a global ``BuildOption`` by :func:`derive_build_options`; the
+#: build-evidence diff (``build_diff._diff_options``) then surfaces any drift as
+#: ``ABI_RELEVANT_BUILD_FLAG_CHANGED`` (unless the flag is a runtime-mode or
+#: toolchain flag with a dedicated finding). Per ADR-028 D3 these are risk/
+#: source-level signals — the artifact diff proves any concrete break.
 ABI_RELEVANT_FLAG_PREFIXES: tuple[str, ...] = (
-    "-std=", "/std:",
+    "-std=", "/std:", "-stdlib=",
     "--target=", "-target", "-mabi=", "/arch:", "-m32", "-m64",
+    # Microarchitecture / float ABI — can change struct alignment (vector ABI)
+    # or the hard/soft-float calling convention (ARM), so a flip is a risk.
+    "-march=", "-mtune=", "-mfloat-abi=", "-mfpmath=",
     "--sysroot", "-isysroot",
     "-fvisibility", "-fvisibility-inlines-hidden",
     "-fpack-struct", "/Zp", "-fshort-enums", "-fshort-wchar",
@@ -49,6 +59,12 @@ ABI_RELEVANT_FLAG_PREFIXES: tuple[str, ...] = (
     "-ftls-model", "-fextern-tls-init", "-fno-extern-tls-init",
     "-fno-threadsafe-statics", "-fthreadsafe-statics",
     "-freg-struct-return", "-fpcc-struct-return",
+    # Sanitizers change object layout/instrumentation and the runtime contract.
+    "-fsanitize=", "-fno-sanitize=",
+    # Position-independence / TLS access model and frame-pointer presence.
+    "-fPIC", "-fpic", "-fPIE", "-fpie",
+    "-fno-pic", "-fno-pie", "-fno-PIC", "-fno-PIE",
+    "-fomit-frame-pointer", "-fno-omit-frame-pointer",
 )
 
 #: Runtime-model flags normalized to a canonical (key, value) so a mode flip is
