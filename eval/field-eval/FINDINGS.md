@@ -88,9 +88,10 @@ gcc 13.3 / clang 18.1, castxml ABSENT.
   flow is the release tarball (ships `configure`). Not abicheck's bug but it's the discovery
   reality for autotools L3.
 
-- **P11 [PERF/high]** `compare` scales poorly with surface size + change count: ICU (20k funcs,
-  16k changes) = **30s** just for compare; dump of a 20MB `.so` = 6s; openblas 26k-func DWARF
-  snapshot = 23MB / 9.5s dump. Large libs make the diff the bottleneck, not parsing.
+- **P11 [PERF/high]** `compare` scales poorly with surface size + change count: ICU (8k
+  defined-export funcs, 16k changes) = **94.5s** just for compare (regenerated `results2.json`);
+  dump of a 20MB `.so` = 6s; openblas DWARF snapshot = 23MB / 9.5s dump. Large libs make the diff
+  the bottleneck, not parsing.
 
 - **P12 [DISCOVERY/low]** Compile-DB auto-discovery hint dirs are `("", build, out, _build,
   cmake-build-debug)`. Meson's common `builddir` name is NOT covered (only `build`/`_build`).
@@ -112,12 +113,13 @@ gcc 13.3 / clang 18.1, castxml ABSENT.
 ### Timings (iteration 2)
 - meson setup (freetype, 42 TU): 0.85s | autotools configure (libffi): 6.5s | bear -- make (libffi, 20 TU): 9.75s
 - L3 (meson auto-discover): 0.32s | L3+L4+L5 (freetype 42 TU): 31.9s (~0.76s/TU)
-- compare on huge surfaces: icu 30.1s, openssl 2.5s, openblas 4.4s
+- compare on huge surfaces: icu 94.5s, openssl 2.5s, openblas 3.4s (regenerated `results2.json`)
 
 ## Iteration 3 — LLVM scale stress test
 
-`libllvm17` 17.0.6 (libLLVM-17.so, 150MB, **146,339 funcs**) vs `libllvm18` 18.1.8
-(libLLVM.so.18.1, 154MB, **153,115 funcs**).
+`libllvm17` 17.0.6 (libLLVM-17.so, 150MB) vs `libllvm18` 18.1.8 (libLLVM.so.18.1, 154MB).
+Defined-export FUNCs **~31k** (libLLVM.so.18 = 30,913 measured). [Earlier raw readelf figures
+146,339 / 153,115 were inflated by `.symtab` + `UND` imports — see Correction.]
 
 | step | time | peak RSS | output |
 |---|---|---|---|
@@ -130,11 +132,12 @@ Result: 2,338 breaking, 44,771 risk, 3,334 additions. Top kinds:
 `func_added`×2,580, `func_removed_elf_only`×1,808.
 
 ### Findings
-- **POSITIVE** abicheck handles LLVM-scale (150MB / 146k symbols) in **~55s end-to-end**
+- **POSITIVE** abicheck handles LLVM-scale (150MB, ~31k defined exports) in **~55s end-to-end**
   with **~330MB RAM** — memory-efficient, no blowup. The L0 path scales fine to the biggest
   real-world C++ shared library.
 - **P11 refined [PERF]** Compare cost is driven by the **fuzzy rename matcher**, NOT raw symbol
-  count: LLVM (146k funcs, 93 renames) = 22s, but ICU (20k funcs, **2134** renames) = 30s. The
+  count: LLVM (~31k exports, 93 renames) = 22s, but ICU (8k exports, **2134** renames) = 94.5s —
+  *fewer* exports yet 4× slower, because rename detection dominates. The
   rename heuristic is ~O(removed×added); naming schemes that maximize add+remove churn (ICU's
   `_NN` version suffix) are the worst case. *Fix idea:* cap/bucket rename candidates, or skip
   rename detection above a churn threshold.
