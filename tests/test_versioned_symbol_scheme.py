@@ -163,3 +163,67 @@ def test_collapse_preset_reclassifies_versioned_pairs():
     assert "func_removed" not in ck and "func_added" not in ck, ck
     assert ck.get("versioned_symbol_scheme_detected") == 1, ck
     assert collapsed.verdict != Verdict.BREAKING
+
+
+# --- C++ inline-namespace stamp (G15 deeper half) -------------------------
+
+def _cpp_changes(removed_added):
+    """Build Change rows from (kind_value, mangled_symbol) tuples."""
+    from abicheck.checker_types import Change, ChangeKind
+    return [Change(kind=ChangeKind(k), symbol=s, description="") for k, s in removed_added]
+
+
+def test_cpp_inline_namespace_scheme_detected(monkeypatch):
+    """Mangled icu_75::→icu_78:: across a majority of symbols is recognised."""
+    import abicheck.versioned_symbol_scheme as vs
+    # synthetic demangle map: old symbols carry icu_75, new carry icu_78
+    dem = {}
+    rows = []
+    for leaf in ("alpha", "beta", "gamma", "delta"):
+        om, nm = f"_ZN6icu_75x{leaf}E", f"_ZN6icu_78x{leaf}E"
+        dem[om] = f"icu_75::C::{leaf}()"
+        dem[nm] = f"icu_78::C::{leaf}()"
+        rows += [("func_removed", om), ("func_added", nm)]
+    monkeypatch.setattr(vs, "demangle", lambda s: dem.get(s))
+    monkeypatch.setattr(vs, "demangle_batch", lambda names: {})
+    adv, matched = vs.analyze_versioned_scheme(_cpp_changes(rows))
+    assert adv is not None
+    assert len(matched) == 8  # 4 removed + 4 added
+
+
+def test_cpp_scheme_ignores_camelcase_digit_classes(monkeypatch):
+    """Sha256::/Sha512:: (no '_<digits>' token) must NOT be read as a version bump."""
+    import abicheck.versioned_symbol_scheme as vs
+    dem = {
+        "_ZN6Sha256d1E": "Sha256::digest()", "_ZN6Sha512d2E": "Sha512::digest()",
+        "_ZN6Sha256h1E": "Sha256::hash()",   "_ZN6Sha512h2E": "Sha512::hash()",
+        "_ZN6Sha256u1E": "Sha256::update()", "_ZN6Sha512u2E": "Sha512::update()",
+    }
+    rows = [("func_removed", s) for s in dem if "256" in s] + \
+           [("func_added", s) for s in dem if "512" in s]
+    monkeypatch.setattr(vs, "demangle", lambda s: dem.get(s))
+    monkeypatch.setattr(vs, "demangle_batch", lambda names: {})
+    adv, matched = vs.analyze_versioned_scheme(_cpp_changes(rows))
+    assert adv is None and matched == []
+
+
+def test_variables_participate_in_scheme():
+    """Versioned global variables (var_removed/var_added) collapse like functions."""
+    from abicheck.versioned_symbol_scheme import analyze_versioned_scheme
+    rows = []
+    for b in ("a", "b", "c", "d"):
+        rows.append(_ch("var_removed", f"u_{b}_data_75"))
+        rows.append(_ch("var_added", f"u_{b}_data_78"))
+    adv, matched = analyze_versioned_scheme(rows)
+    assert adv is not None and len(matched) == 8
+
+
+def test_likely_renamed_versioned_pairs_collapse():
+    """func_likely_renamed whose old→new differ only by a version token are matched."""
+    from abicheck.checker_types import Change, ChangeKind
+    from abicheck.versioned_symbol_scheme import analyze_versioned_scheme
+    rows = [Change(kind=ChangeKind.FUNC_LIKELY_RENAMED, symbol=f"u_{b}_75",
+                   description="", old_value=f"u_{b}_75", new_value=f"u_{b}_78")
+            for b in ("a", "b", "c", "d")]
+    adv, matched = analyze_versioned_scheme(rows)
+    assert adv is not None and len(matched) == 4

@@ -35,6 +35,7 @@ import re
 from typing import TYPE_CHECKING
 
 from .checker_policy import ChangeKind
+from .demangle import demangle, demangle_batch
 
 if TYPE_CHECKING:
     from .checker_types import Change
@@ -43,59 +44,136 @@ if TYPE_CHECKING:
 #: version number share a normalized form (``u_strlen_75`` ~ ``u_strlen_78``).
 _DIGITS = re.compile(r"\d+")
 
+#: An inline-namespace **version token** in a *demangled* C++ name: a namespace
+#: component ending in ``_<digits>`` immediately before ``::`` — ``icu_75::``,
+#: ``lts_20240722::``, libc++ ``__1::``. The mandatory ``_`` before the digits is
+#: what separates a real version stamp from a CamelCase class like ``Sha256::``
+#: (no underscore), so crypto-style names never false-pair.
+_NS_VER = re.compile(r"([A-Za-z_]\w*_\d+)(?=::)")
+_TOKEN_STEM = re.compile(r"_\d+$")
+
 #: Don't fire on a couple of coincidental renames — require a real, library-wide
 #: pattern: an absolute floor *and* a majority of the removed surface.
 _MIN_PAIRS = 3
 _MIN_FRACTION = 0.6
+#: A C++ inline-namespace token must be carried by this fraction of one side's
+#: mangled symbols to count as the library-wide version stamp.
+_TOKEN_MAJORITY = 0.5
 
-_REMOVED_KINDS = (ChangeKind.FUNC_REMOVED, ChangeKind.FUNC_REMOVED_ELF_ONLY)
+_REMOVED_KINDS = (ChangeKind.FUNC_REMOVED, ChangeKind.FUNC_REMOVED_ELF_ONLY,
+                  ChangeKind.VAR_REMOVED)
+_ADDED_KINDS = (ChangeKind.FUNC_ADDED, ChangeKind.VAR_ADDED)
 
 
 def _normalize(name: str) -> str:
     return _DIGITS.sub("#", name)
 
 
-def _is_version_scheme_candidate(name: str) -> bool:
-    """Return true when digits in *name* may encode a source-level version.
+def _cpp_key(dem: str, tok: str) -> str:
+    """Normalize a demangled name through its inline-namespace version token."""
+    return dem.replace(tok, _TOKEN_STEM.sub("_#", tok)) if dem else ""
 
-    Itanium C++ ABI names begin with ``_Z`` and contain structural digits such
-    as identifier lengths (``_Z4sym1``). Collapsing those digits can make
-    unrelated C++ symbols look like a versioned C naming convention, so leave
-    mangled C++ names to the normal per-symbol detectors.
+
+def _dominant_ns_token(demangled: list[str]) -> str | None:
+    """Return the inline-namespace version token (e.g. ``icu_75``) carried by a
+    majority of *demangled* names, or ``None`` when no single token dominates."""
+    if not demangled:
+        return None
+    counts: dict[str, int] = {}
+    for d in demangled:
+        for tok in set(_NS_VER.findall(d)):
+            counts[tok] = counts.get(tok, 0) + 1
+    if not counts:
+        return None
+    tok, n = max(counts.items(), key=lambda kv: kv[1])
+    return tok if n >= _TOKEN_MAJORITY * len(demangled) else None
+
+
+def _cpp_tokens(removed: list[Change], added: list[Change]) -> tuple[str, str] | None:
+    """Return ``(old_token, new_token)`` for a library-wide C++ inline-namespace
+    version stamp (ICU ``icu_75``→``icu_78``), or ``None``. Warms the demangle
+    cache for all mangled candidates in one batched call."""
+    r_cpp = [c.symbol for c in removed if c.symbol.startswith("_Z")]
+    a_cpp = [c.symbol for c in added if c.symbol.startswith("_Z")]
+    if len(r_cpp) < _MIN_PAIRS or not a_cpp:
+        return None
+    demangle_batch([*r_cpp, *a_cpp])  # one batched warm
+    r_dem = [d for d in (demangle(s) or "" for s in r_cpp) if d]
+    a_dem = [d for d in (demangle(s) or "" for s in a_cpp) if d]
+    if not r_dem or not a_dem:
+        return None  # no demangler → can't normalize mangled names
+    r_tok = _dominant_ns_token(r_dem)
+    a_tok = _dominant_ns_token(a_dem)
+    if not r_tok or not a_tok or r_tok == a_tok:
+        return None
+    if _TOKEN_STEM.sub("", r_tok) != _TOKEN_STEM.sub("", a_tok):
+        return None  # different stems → not one version bump
+    return r_tok, a_tok
+
+
+def _scheme_key(name: str, tokens: tuple[str, str] | None) -> str | None:
+    """Side-agnostic version-normalized key for a symbol, or ``None`` when the
+    name is not part of a versioned scheme.
+
+    C names → collapse every digit run. Mangled C++ names → demangle and replace
+    whichever inline-namespace token (old or new) appears with the shared stem,
+    so ``icu_75::Foo`` and ``icu_78::Foo`` map to the same key.
     """
-    return bool(name) and not name.startswith("_Z")
+    if not name.startswith("_Z"):
+        return _normalize(name) if _DIGITS.search(name) else None
+    if tokens is None:
+        return None
+    dem = demangle(name) or ""
+    if not dem:
+        return None
+    r_tok, a_tok = tokens
+    if r_tok not in dem and a_tok not in dem:
+        return None
+    return _cpp_key(_cpp_key(dem, r_tok), a_tok)
 
 
 def analyze_versioned_scheme(changes: list[Change]) -> tuple[Change | None, list[Change]]:
     """Analyze removed/added churn for a versioned-symbol scheme.
 
+    Handles two shapes: the **C-style** suffix (``u_strlen_75``→``u_strlen_78``,
+    blunt digit collapse) and the **mangled C++ inline-namespace** stamp
+    (``icu_75::``→``icu_78::``, found via demangling + a dominant-token majority).
+
     Returns ``(advisory, matched)`` where *advisory* is the single
-    ``versioned_symbol_scheme_detected`` finding (or ``None`` when no scheme is
-    present) and *matched* is the list of the removed **and** added ``Change``
-    objects that form the version-rename pairs — the inputs the opt-in collapse
-    preset reclassifies as compatible. Pure — no snapshot/IO, unit-testable.
+    ``versioned_symbol_scheme_detected`` finding (or ``None``) and *matched* is
+    the removed **and** added ``Change`` objects forming the version-rename pairs
+    — the inputs the opt-in collapse preset reclassifies as compatible. Pure
+    except for an optional batched demangle of mangled candidates.
     """
     from .checker_types import Change
 
-    removed = [c for c in changes
-               if c.kind in _REMOVED_KINDS and _is_version_scheme_candidate(c.symbol)]
-    added = [c for c in changes
-             if c.kind is ChangeKind.FUNC_ADDED and _is_version_scheme_candidate(c.symbol)]
-    if len(removed) < _MIN_PAIRS or not added:
+    all_removed = [c for c in changes if c.kind in _REMOVED_KINDS]
+    all_added = [c for c in changes if c.kind in _ADDED_KINDS]
+    likely_n = sum(1 for c in changes if c.kind is ChangeKind.FUNC_LIKELY_RENAMED)
+    # Nothing to work with unless removed↔added pairing or rename findings could
+    # plausibly reach the floor.
+    if (len(all_removed) < _MIN_PAIRS or not all_added) and likely_n < _MIN_PAIRS:
         return None, []
 
-    added_by_norm: dict[str, list[Change]] = {}
-    for a in added:
-        added_by_norm.setdefault(_normalize(a.symbol), []).append(a)
+    tokens = _cpp_tokens(all_removed, all_added)
+
+    # Pair removed↔added (funcs and vars) by their side-agnostic version key.
+    added_by_key: dict[str, list[Change]] = {}
+    for a in all_added:
+        k = _scheme_key(a.symbol, tokens)
+        if k is not None:
+            added_by_key.setdefault(k, []).append(a)
 
     matched_removed: list[Change] = []
     matched_added: list[Change] = []
     seen_added: set[int] = set()
-    for r in removed:
-        norm = _normalize(r.symbol)
-        if norm == r.symbol:  # no digits → not a versioned name
+    eligible = 0
+    for r in all_removed:
+        k = _scheme_key(r.symbol, tokens)
+        if k is None:
             continue
-        cands = [a for a in added_by_norm.get(norm, []) if a.symbol != r.symbol]
+        eligible += 1
+        cands = [a for a in added_by_key.get(k, []) if a.symbol != r.symbol]
         if not cands:
             continue
         matched_removed.append(r)
@@ -104,24 +182,35 @@ def analyze_versioned_scheme(changes: list[Change]) -> tuple[Change | None, list
                 seen_added.add(id(a))
                 matched_added.append(a)
 
-    pairs = len(matched_removed)
-    if pairs < _MIN_PAIRS or pairs < _MIN_FRACTION * len(removed):
+    # func_likely_renamed already encodes a pair (old_value→new_value); collapse
+    # the ones that are version-renames under the same scheme.
+    matched_renamed: list[Change] = []
+    for c in changes:
+        if c.kind is ChangeKind.FUNC_LIKELY_RENAMED and c.old_value and c.new_value:
+            ko = _scheme_key(c.old_value, tokens)
+            kn = _scheme_key(c.new_value, tokens)
+            if ko is not None and ko == kn and c.old_value != c.new_value:
+                matched_renamed.append(c)
+
+    pairs = len(matched_removed) + len(matched_renamed)
+    eligible += len(matched_renamed)
+    if pairs < _MIN_PAIRS or eligible == 0 or pairs < _MIN_FRACTION * eligible:
         return None, []
 
     advisory = Change(
         kind=ChangeKind.VERSIONED_SYMBOL_SCHEME_DETECTED,
         symbol="<library>",
         description=(
-            f"{pairs} of {len(removed)} removed symbols reappear as added symbols "
-            "differing only by a version token in the name (versioned-symbol "
-            "scheme, e.g. ICU 'u_strlen_75'->'u_strlen_78'). The large "
-            "removed/added churn is likely a library-wide rename, not independent "
-            "API removals."
+            f"{pairs} of {eligible} versioned symbols are renamed between releases, "
+            "differing only by a version token (versioned-symbol scheme: a C suffix "
+            "like ICU 'u_strlen_75'->'_78', or a C++ inline-namespace stamp like "
+            "'icu_75::'->'icu_78::'). The large churn is likely a library-wide "
+            "rename, not independent API changes."
         ),
-        old_value=f"{len(removed)} removed",
+        old_value=f"{eligible} versioned symbols",
         new_value=f"{pairs} version-renamed",
     )
-    return advisory, matched_removed + matched_added
+    return advisory, matched_removed + matched_added + matched_renamed
 
 
 def detect_versioned_symbol_scheme(changes: list[Change]) -> Change | None:
