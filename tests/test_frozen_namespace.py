@@ -231,6 +231,79 @@ class TestFrozenNamespaceBlocksDowngrade:
         r = compare(old, new, policy_file=pf)
         assert r.verdict == Verdict.COMPATIBLE
 
+    def test_severity_exit_code_honors_frozen_downgrade_guard(self) -> None:
+        """Severity-aware CI exits must preserve the same frozen-namespace
+        downgrade guard as the legacy verdict path."""
+        from abicheck.severity import PRESET_DEFAULT, compute_exit_code
+
+        old = _snap("1.0", [
+            _fn("ns::detail::r1::dispatch", "_ZN2ns6detail2r18dispatchEi",
+                params=[Param(name="n", type="int")]),
+        ])
+        new = _snap("2.0", [
+            _fn("ns::detail::r1::dispatch", "_ZN2ns6detail2r18dispatchEi",
+                params=[Param(name="n", type="long")]),
+        ])
+        pf = PolicyFile(
+            base_policy="strict_abi",
+            overrides={ChangeKind.FUNC_PARAMS_CHANGED: Verdict.COMPATIBLE},
+            frozen_namespaces=["**::detail::r1::*"],
+        )
+        r = compare(old, new, policy_file=pf)
+
+        assert r.verdict == Verdict.BREAKING
+        assert any(
+            c.kind == ChangeKind.FUNC_PARAMS_CHANGED
+            and c.frozen_namespace_violation == "**::detail::r1::*"
+            for c in r.changes
+        )
+        assert compute_exit_code(
+            r.changes,
+            PRESET_DEFAULT,
+            policy=r.policy,
+            kind_sets=r._effective_kind_sets(),
+            policy_file=r.policy_file,
+        ) == 4
+
+        from abicheck.cli import _exit_with_severity_or_verdict
+
+        with pytest.raises(SystemExit) as excinfo:
+            _exit_with_severity_or_verdict(r, PRESET_DEFAULT, True)
+        assert excinfo.value.code == 4
+        assert len(r.breaking) >= 1
+
+    def test_severity_exit_code_still_allows_non_frozen_downgrade(self) -> None:
+        """The per-change guard must not make all overrides ineffective."""
+        from abicheck.severity import PRESET_DEFAULT, compute_exit_code
+
+        old = _snap("1.0", [
+            _fn("ns::pub::dispatch", "_ZN2ns3pub8dispatchEi",
+                params=[Param(name="n", type="int")]),
+        ])
+        new = _snap("2.0", [
+            _fn("ns::pub::dispatch", "_ZN2ns3pub8dispatchEi",
+                params=[Param(name="n", type="long")]),
+        ])
+        pf = PolicyFile(
+            base_policy="strict_abi",
+            overrides={
+                ChangeKind.FUNC_PARAMS_CHANGED: Verdict.COMPATIBLE,
+                ChangeKind.OVERLOAD_SET_REROUTED: Verdict.COMPATIBLE,
+            },
+            frozen_namespaces=["**::detail::r1::*"],
+        )
+        r = compare(old, new, policy_file=pf)
+
+        assert r.verdict == Verdict.COMPATIBLE
+        assert compute_exit_code(
+            r.changes,
+            PRESET_DEFAULT,
+            policy=r.policy,
+            kind_sets=r._effective_kind_sets(),
+            policy_file=r.policy_file,
+        ) == 0
+        assert r.breaking == []
+
 
 # ── Suppression namespace selector ─────────────────────────────────────────
 

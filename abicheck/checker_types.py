@@ -28,7 +28,6 @@ from .checker_policy import (
     Confidence,
     EvidenceTier,
     Verdict,
-    effective_category,
 )
 from .checker_policy import (
     policy_kind_sets as _policy_kind_sets,
@@ -227,40 +226,47 @@ class DiffResult:
                 sets[idx].add(kind)
         return frozenset(b), frozenset(a), frozenset(c), frozenset(r)
 
+    def _effective_verdict_for_change(self, change: Change) -> Verdict:
+        """Return the per-change verdict, including frozen namespace guards."""
+        from .severity import effective_verdict_for_change
+
+        return effective_verdict_for_change(
+            change,
+            policy=self.policy,
+            kind_sets=self._effective_kind_sets(),
+            policy_file=self.policy_file,
+        )
+
     @property
     def breaking(self) -> list[Change]:
         """Changes classified as BREAKING under the active policy."""
-        sets = self._effective_kind_sets()
         return [
-            c for c in self.changes if effective_category(c, *sets) == Verdict.BREAKING
+            c for c in self.changes
+            if self._effective_verdict_for_change(c) == Verdict.BREAKING
         ]
 
     @property
     def source_breaks(self) -> list[Change]:
         """Changes classified as API_BREAK under the active policy."""
-        sets = self._effective_kind_sets()
         return [
-            c for c in self.changes if effective_category(c, *sets) == Verdict.API_BREAK
+            c for c in self.changes
+            if self._effective_verdict_for_change(c) == Verdict.API_BREAK
         ]
 
     @property
     def compatible(self) -> list[Change]:
         """Changes classified as COMPATIBLE under the active policy."""
-        sets = self._effective_kind_sets()
         return [
-            c
-            for c in self.changes
-            if effective_category(c, *sets) == Verdict.COMPATIBLE
+            c for c in self.changes
+            if self._effective_verdict_for_change(c) == Verdict.COMPATIBLE
         ]
 
     @property
     def risk(self) -> list[Change]:
         """Changes classified as COMPATIBLE_WITH_RISK under the active policy."""
-        sets = self._effective_kind_sets()
         return [
-            c
-            for c in self.changes
-            if effective_category(c, *sets) == Verdict.COMPATIBLE_WITH_RISK
+            c for c in self.changes
+            if self._effective_verdict_for_change(c) == Verdict.COMPATIBLE_WITH_RISK
         ]
 
 
