@@ -46,8 +46,16 @@ def main():
             rec["dl_mb"] = round((osz + nsz) / 1024, 1)
             rec["so"] = os.path.basename(oso); rec["old_funcs"] = on; rec["new_funcs"] = nn
             os_ = f"/tmp/scan/snap/{disp}_old.json"; ns_ = f"/tmp/scan/snap/{disp}_new.json"
+            for stale in (os_, ns_):  # don't read a prior run's snapshot if dump fails
+                if os.path.exists(stale):
+                    os.remove(stale)
             td1, p1 = run(["abicheck", "dump", oso, "-o", os_])
             td2, p2 = run(["abicheck", "dump", nso, "-o", ns_])
+            if p1.returncode or p2.returncode:
+                rec["error"] = "dump failed: " + (p1.stderr or p2.stderr)[-200:]
+                print(json.dumps(rec)); out.append(rec)
+                json.dump(out, open("/tmp/scan/results2.json", "w"), indent=2)
+                continue
             rec["dump_s"] = round(td1 + td2, 2)
             rec["snap_mb"] = round((os.path.getsize(os_) + os.path.getsize(ns_)) / 1048576, 2)
             tc, pc = run(["abicheck", "compare", os_, ns_, "--format", "json"])

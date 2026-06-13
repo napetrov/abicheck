@@ -222,3 +222,66 @@ llvm-project @ llvmorg-18.1.8, source-level (the full L3/L4/L5 `--sources` flow)
 
 ### Timings (iteration 5)
 - clone 153s · configure 19s · L3 4.4s · L5-graph-from-L3 3.6s · L4 ~4s/TU (needs built tree)
+
+## Iteration 6 — oneDAL (Intel) full scan
+
+`dal` 2025.9.0 → 2026.1.0. Binary scan matched on `libonedal_core`:
+
+| | |
+|---|---|
+| SONAME | libonedal_core.so.**3** → .so.**4** (deliberate major bump) |
+| sizes | 110MB → 105MB, 64k funcs |
+| dump | 8.7s / 5.4s | compare | 9.1s |
+| verdict | **BREAKING**: 8,104 breaking, 6,368 func_removed, vtable_slot_count_changed×1, **soname_changed×1** |
+
+abicheck correctly pairs the deliberate SONAME bump with the wall of removals — a maintainer
+*signalled* break, not an accidental one.
+
+### Problems found
+- **P20 [DISCOVERY/high]** Multi-`.so` packages: a "pick the biggest .so" heuristic picks
+  *different libraries* across versions. My first pass compared `libonedal_dpc.so.3` (old, 298MB,
+  SYCL variant) vs `libonedal_core.so.4` (new) → a meaningless 2.4% result. You must pair by
+  library-name/SONAME stem, not size. A real footgun for anyone scanning bundles (oneDAL ships
+  libonedal, _core, _dpc, _thread, _parameters). abicheck's `compare-release`/bundle mode should
+  be the recommended path here, not hand-picking a `.so`.
+- **P21 [DISCOVERY/high]** oneDAL build/source (L3/L4) is **infeasible without the full Intel
+  toolchain**. Build system = **Bazel + legacy makefile, no CMake**, no in-tree
+  `compile_commands.json` generator. L3 would need either `bazel aquery` (needs bazel + DPC++/icpx
+  toolchain resolution) or `bear -- make` (needs a full build: oneMKL + TBB + DPC++). So for
+  heavyweight projects the artifact (L0/L1) scan is the only practical path in a generic CI box;
+  source/build data requires the project's own build environment. (Clone was cheap: 3s/68MB.)
+
+---
+
+## L4 source-replay optimization — the options (answering "how not to be so lengthy")
+
+L4 cost = (number of TUs) × (per-TU clang parse). Both factors are reducible:
+
+1. **Scope to changed TUs** *(biggest lever; already in-tree)* — `--collect-mode source-changed` /
+   `recommend-collect-mode` replays only TUs touched by a PR diff. LLVM PR touching 5 files → 5 TUs,
+   not 2,719. Turns hours into seconds for the common CI case.
+2. **Parallelize per-TU clang** *(P06; not yet done)* — the replay is embarrassingly parallel;
+   N cores ≈ N× speedup. 50min → ~12min on 4 cores, less on CI runners.
+3. **Per-TU content-addressed cache** *(ADR-030 D8 `SourceAbiCache`, already in-tree via
+   `build_cache_dir`)* — unchanged TUs skip re-parse across runs; incremental builds near-free.
+4. **Precompiled headers / Clang modules** — header re-parsing dominates header-heavy TUs (LLVM
+   ~4s/TU is mostly the same headers re-read). A shared PCH amortizes it; potentially 5–10× per-TU.
+5. **Surface-reachability pruning** — only replay TUs that define exported public symbols (walk
+   public-header → symbol map); skip unit tests / internal TUs. On LLVM, `unittests/**` is dead
+   weight for libLLVM's ABI.
+6. **Decouple L5 from L4** *(P18)* — if you only need build options + the structural graph, build
+   L5 from L3 alone (seconds, no parse). Add a `graph-build` collect-mode.
+7. **Lighter extractor / decl-only mode** — castxml-style declaration/type extraction is cheaper
+   than clang full-body fingerprints when you don't need inline/template body diffs.
+
+**Recommended default:** scope=changed + cache + parallel for CI; full-target only on releases,
+and never on a monorepo without scoping.
+
+## Why CI didn't catch the 2 mypy errors (#367/#368)
+CI installs mypy **unpinned** (`pyproject` `mypy>=1.0`; `ci.yml` does `pip install mypy` and
+`pip install -e ".[dev,mcp]" mypy`). The type gate therefore uses whatever mypy is latest on the
+run date — non-reproducible across time. The two patterns (`getattr(object,...)[k]` returning
+`Any` → `no-any-return`; passing `object` where a `HasKind` Protocol is expected → `arg-type`) are
+flagged by current mypy (1.19.1) but slipped through whatever version ran on #367/#368. *Fix:* pin
+mypy to an exact version in `[dev]` and CI so the gate is deterministic. (The 2 errors are now fixed
+→ baseline back to 0.)
