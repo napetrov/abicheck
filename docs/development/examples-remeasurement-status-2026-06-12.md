@@ -15,6 +15,18 @@
   - `validation/data/runs/examples-stripped-headers-2026-06-12.json`
   - `validation/data/runs/examples-build-source-2026-06-12.json`
 
+CI entrypoint:
+
+- Blocking default gate: `.github/workflows/examples-validation.yml` runs
+  `PYTHONPATH=. python tests/validate_examples.py --json >
+  results/validate_examples.json` and `python tests/check_validate_results.py`.
+- Runtime smoke artifact: the same workflow now runs
+  `validation/scripts/run_example_runtime_smoke.py --json`.
+- Mode-matrix artifacts: the workflow also records release, stripped, and
+  build-source JSON artifacts as informational outputs. They remain
+  informational because the current baseline still intentionally contains known
+  non-green cases.
+
 ## Command
 
 ```bash
@@ -51,31 +63,19 @@ change, or stdout change.
 
 Result:
 
-- DEMONSTRATED: `69`
-- NO_RUNTIME_SIGNAL: `41`
-- SKIP: `13`
-- BUILD_ERROR: `3`
-- BASELINE_ERROR: `8`
+- DEMONSTRATED: `70`
+- NO_RUNTIME_SIGNAL: `47`
+- BASELINE_SIGNAL: `7`
+- SKIP: `10`
 
 Runtime smoke is intentionally descriptive, not the policy oracle. A
 `NO_RUNTIME_SIGNAL` result can still be a valid `BREAKING` or `API_BREAK` case
 when the issue is source-only, policy-only, or requires abicheck evidence layers
 rather than old-binary execution.
 
-Runtime smoke error buckets to triage:
-
-- BUILD_ERROR: `case104_glibcxx_dual_abi_flip`,
-  `case115_bit_int_width_changed`, `case116_atomic_qualifier_changed`
-- BASELINE_ERROR: `case06_visibility`,
-  `case109_flow_graph_policy_renames`,
-  `case110_concurrent_unordered_map_api_drift`,
-  `case111_enumerable_thread_specific_lambda_ambiguity`,
-  `case112_lp64_ilp64`, `case42_type_alignment_changed`,
-  `case50_soname_inconsistent`, `case78_task_arena_attach_tag`
-
-These are now explicit demo-quality follow-ups: either the runtime smoke harness
-needs case-specific expectations, or the case README/build should make the
-baseline behavior clearer.
+Runtime smoke now has no `BUILD_ERROR` or `BASELINE_ERROR` bucket. Cases whose
+old app intentionally exits non-zero with `libv1` are reported as
+`BASELINE_SIGNAL`, not as harness failures.
 
 ## abicheck Mode Matrix
 
@@ -93,16 +93,18 @@ PYTHONPATH=. python tests/validate_examples.py --artifact-variant build-source -
 | `debug-headers` | debug binary + headers | 109 | 5 | 7 | 10 | 3 |
 | `release-headers` | stock/release binary + headers | 109 | 5 | 7 | 10 | 3 |
 | `stripped-headers` | stripped binary + headers | 103 | 7 | 7 | 14 | 3 |
-| `build-source` | binary + headers + build/source evidence | 96 | 5 | 7 | 13 | 13 |
+| `build-source` | binary + headers + build/source evidence | 108 | 6 | 7 | 10 | 3 |
 
 Variant-specific observations:
 
 - `release-headers` currently matches `debug-headers`.
 - `stripped-headers` loses additional signal in `case103`,
   `case117`, `case129`, and `case62`.
-- `build-source` exposes a larger CastXML/build-context failure bucket,
-  mostly from compile-command flags passed through to CastXML, and currently
-  fails the new build-flag examples `case130`-`case133` as `NO_CHANGE`.
+- `build-source` now detects the new build-flag examples `case130`-`case133`
+  without checked-in compile DB files; the generated CMake compile database is
+  used as the build-context source.
+- `build-source` now has the same unexpected `FAIL`/`ERROR` set as the default
+  mode, except for one additional known `XFAIL`.
 
 ## New Examples
 
@@ -182,8 +184,7 @@ Classification is clear for this first run:
 
 Next useful work:
 
-1. Fix or document the runtime smoke `BUILD_ERROR`/`BASELINE_ERROR` cases.
-2. Investigate the `stripped-headers` regressions where debug/release pass or
+1. Investigate the `stripped-headers` regressions where debug/release pass or
    XFAIL but stripped loses the expected signal.
-3. Fix `build-source` compile-command/CastXML handling, then remeasure the
-   `case130`-`case133` build-flag examples in that mode.
+2. Continue triage of the shared 10 unexpected false negatives and 3 CastXML
+   fixture errors.

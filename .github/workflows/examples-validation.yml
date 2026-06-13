@@ -62,6 +62,23 @@ jobs:
           PYTHONPATH=. python tests/validate_examples.py --json > results/validate_examples.json
           python tests/check_validate_results.py
 
+      - name: Runtime smoke examples
+        if: always()
+        run: |
+          PYTHONPATH=. python validation/scripts/run_example_runtime_smoke.py --json > results/example-runtime-smoke.json
+
+      - name: Artifact mode matrix (informational)
+        if: always()
+        run: |
+          set +e
+          PYTHONPATH=. python tests/validate_examples.py --artifact-variant release-headers --json > results/validate_examples-release-headers.json
+          echo "release-headers rc=$?"
+          PYTHONPATH=. python tests/validate_examples.py --artifact-variant stripped-headers --json > results/validate_examples-stripped-headers.json
+          echo "stripped-headers rc=$?"
+          PYTHONPATH=. python tests/validate_examples.py --artifact-variant build-source --json > results/validate_examples-build-source.json
+          echo "build-source rc=$?"
+          set -e
+
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v7

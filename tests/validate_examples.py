@@ -209,16 +209,18 @@ def _compile(src: Path, out: Path, *, variant: str = DEFAULT_ARTIFACT_VARIANT) -
     if not compiler:
         return f"no {'C++' if is_cpp else 'C'} compiler found"
 
+    stock_variant = variant in {"release-headers", "build-source"}
+
     if compiler == "cl":
         args = [compiler, "/LD", "/Fe:" + str(out), str(src)]
-        args.insert(2, "/O2" if variant == "release-headers" else "/Zi")
+        args.insert(2, "/O2" if stock_variant else "/Zi")
     elif sys.platform == "darwin":
-        opt_flags = ["-O2"] if variant == "release-headers" else ["-g", "-Og"]
+        opt_flags = ["-O2"] if stock_variant else ["-g", "-Og"]
         args = [compiler, "-dynamiclib", *opt_flags, "-fvisibility=default",
                 "-install_name", "@rpath/lib.dylib",
                 "-o", str(out), str(src)]
     else:
-        opt_flags = ["-O2"] if variant == "release-headers" else ["-g", "-Og"]
+        opt_flags = ["-O2"] if stock_variant else ["-g", "-Og"]
         args = [compiler, "-shared", "-fPIC", *opt_flags, "-fvisibility=default",
                 "-o", str(out), str(src)]
 
@@ -262,7 +264,7 @@ def _build_with_cmake(
 
     case_name = case_dir.name
     case_out = build_dir / case_name
-    build_type = "Release" if variant == "release-headers" else "Debug"
+    build_type = "Release" if variant in {"release-headers", "build-source"} else "Debug"
 
     r = subprocess.run(
         [cmake, "-S", str(case_dir.parent), "-B", str(build_dir),
@@ -422,7 +424,8 @@ def _dump_and_compare(
     old_build_source: Path | None = None,
     new_build_source: Path | None = None,
     case_dir: Path | None = None,
-    build_info: bool = False,
+    old_build_info: Path | None = None,
+    new_build_info: Path | None = None,
     sources: bool = False,
 ) -> tuple[str | None, str | None]:
     """Run abicheck dump+compare. Returns (verdict, error_msg).
@@ -436,9 +439,8 @@ def _dump_and_compare(
         old_compile_db = tmp / "old_compile_commands.json"
         if old_build_source is not None and old_compile_db.exists():
             cmd1 += ["-p", str(old_compile_db)]
-    bi1 = _build_info_path(case_dir, "v1", build_info)
-    if bi1 is not None:
-        cmd1 += ["--build-info", str(bi1)]
+    if old_build_info is not None:
+        cmd1 += ["--build-info", str(old_build_info)]
     sr1 = _sources_path(case_dir, "v1", sources)
     if sr1 is not None:
         cmd1 += ["--sources", str(sr1)]
@@ -453,9 +455,8 @@ def _dump_and_compare(
         new_compile_db = tmp / "new_compile_commands.json"
         if new_build_source is not None and new_compile_db.exists():
             cmd2 += ["-p", str(new_compile_db)]
-    bi2 = _build_info_path(case_dir, "v2", build_info)
-    if bi2 is not None:
-        cmd2 += ["--build-info", str(bi2)]
+    if new_build_info is not None:
+        cmd2 += ["--build-info", str(new_build_info)]
     sr2 = _sources_path(case_dir, "v2", sources)
     if sr2 is not None:
         cmd2 += ["--sources", str(sr2)]
@@ -569,6 +570,41 @@ def _write_source_compile_db(
             return out
     _write_compile_db(out, src=src, case_dir=case_dir, compiler=fallback_compiler)
     return out
+
+
+def _resolved_build_info_path(
+    tmp: Path,
+    side: str,
+    src: Path,
+    case_dir: Path,
+    *,
+    enabled: bool,
+    fallback_compiler: str,
+    target_suffix: str,
+) -> Path | None:
+    """Return the build-info compile DB used for inline L3 comparisons.
+
+    Prefer an explicit per-case ``v1/v2.compile_commands.json`` when the fixture
+    carries one, otherwise derive the side-specific entry from the real CMake
+    compile database produced during the current build. This keeps examples from
+    needing checked-in compile DB files just to make build-mode flags visible.
+    """
+    if not enabled:
+        return None
+    explicit = _build_info_path(case_dir, "v1" if side == "old" else "v2", True)
+    if explicit is not None:
+        return explicit
+    cmake_db = tmp / "cmake_build" / "compile_commands.json"
+    if cmake_db.exists():
+        return _write_source_compile_db(
+            tmp,
+            side,
+            src,
+            case_dir,
+            fallback_compiler=fallback_compiler,
+            target_suffix=target_suffix,
+        )
+    return None
 
 
 def _registered_cli_command(*args: str) -> list[str]:
@@ -827,6 +863,31 @@ def run_case(
                 return CaseResult(name, "SKIP", expected_raw, None, ev_err[5:], variant)
             return CaseResult(name, "ERROR", expected_raw, None, ev_err, variant)
 
+    old_build_info = new_build_info = None
+    if entry.get("build_info"):
+        compiler = _find_compiler(v1_src.suffix == ".cpp")
+        if compiler:
+            old_build_info = _resolved_build_info_path(
+                tmp,
+                "old",
+                v1_src,
+                case_dir,
+                enabled=True,
+                fallback_compiler=compiler,
+                target_suffix="v1",
+            )
+        compiler = _find_compiler(v2_src.suffix == ".cpp")
+        if compiler:
+            new_build_info = _resolved_build_info_path(
+                tmp,
+                "new",
+                v2_src,
+                case_dir,
+                enabled=True,
+                fallback_compiler=compiler,
+                target_suffix="v2",
+            )
+
     # Dump + compare
     got, dc_err = _dump_and_compare(
         tmp, v1_so, v2_so, v1_hdr, v2_hdr,
@@ -834,7 +895,8 @@ def run_case(
         old_build_source=old_build_source,
         new_build_source=new_build_source,
         case_dir=case_dir,
-        build_info=bool(entry.get("build_info", False)),
+        old_build_info=old_build_info,
+        new_build_info=new_build_info,
         sources=bool(entry.get("sources", False)),
     )
     if dc_err is not None:

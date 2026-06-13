@@ -5,7 +5,8 @@
 > Same source, same exported symbols. The only difference is the **build mode**:
 > v1 was built with C++ exceptions enabled (`-fexceptions`), v2 with
 > `-fno-exceptions`. abicheck captures the per-side build context (L3) from a
-> `compile_commands.json` and reports `exceptions_mode_changed`.
+> generated CMake `compile_commands.json` and reports
+> `exceptions_mode_changed`.
 
 ## What this demonstrates
 The two modes are not link-compatible: an exception thrown in `-fexceptions`
@@ -20,16 +21,17 @@ own; the artifact diff proves any concrete break. This flags the elevated risk
 and localizes the cause for review.
 
 ## How abicheck detects it
-`v1.compile_commands.json` carries `-fexceptions`, `v2.compile_commands.json`
-carries `-fno-exceptions`. The L3 build-evidence diff normalizes these to the
-canonical `exceptions` option and reports the flip.
+The CMake fixture builds v1 with `-fexceptions` and v2 with `-fno-exceptions`.
+The generated build-dir `compile_commands.json` carries those flags; the L3
+build-evidence diff normalizes them to the canonical `exceptions` option and
+reports the flip.
 
 ## Reproduce manually
 ```bash
-g++ -shared -fPIC -g -fexceptions v1.cpp -o libv1.so
-g++ -shared -fPIC -g -fno-exceptions v2.cpp -o libv2.so
-abicheck dump libv1.so --build-info v1.compile_commands.json -o v1.abi.json
-abicheck dump libv2.so --build-info v2.compile_commands.json -o v2.abi.json
+cmake -S examples -B /tmp/abicheck-examples-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build /tmp/abicheck-examples-build --target case130_exceptions_mode_flip_v1 case130_exceptions_mode_flip_v2
+abicheck dump /tmp/abicheck-examples-build/case130_exceptions_mode_flip/libv1.so --build-info /tmp/abicheck-examples-build/compile_commands.json -o v1.abi.json
+abicheck dump /tmp/abicheck-examples-build/case130_exceptions_mode_flip/libv2.so --build-info /tmp/abicheck-examples-build/compile_commands.json -o v2.abi.json
 abicheck compare v1.abi.json v2.abi.json   # → exceptions_mode_changed
 ```
 

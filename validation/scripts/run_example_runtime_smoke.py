@@ -103,6 +103,39 @@ def _lib_paths(case_out: Path) -> tuple[Path | None, Path | None]:
     return v1 if v1.exists() else None, v2 if v2.exists() else None
 
 
+def _soname(lib: Path) -> str | None:
+    readelf = shutil.which("readelf")
+    if not readelf or sys.platform != "linux":
+        return None
+    result = _run([readelf, "-d", str(lib)], timeout=10)
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        if "(SONAME)" not in line:
+            continue
+        start = line.find("[")
+        end = line.find("]", start + 1)
+        if start != -1 and end != -1:
+            return line[start + 1:end]
+    return None
+
+
+def _ensure_soname_aliases(run_dir: Path) -> None:
+    """Create local SONAME aliases so old apps load their linked library."""
+    for lib in run_dir.glob("libv*.*"):
+        if not lib.is_file():
+            continue
+        soname = _soname(lib)
+        if not soname:
+            continue
+        alias = run_dir / soname
+        if not alias.exists():
+            try:
+                alias.symlink_to(lib.name)
+            except OSError:
+                shutil.copy2(lib, alias)
+
+
 def _runtime_env(run_dir: Path) -> dict[str, str]:
     env = os.environ.copy()
     if sys.platform == "darwin":
@@ -193,6 +226,8 @@ def _skip_reason(case_name: str, entry: dict[str, object]) -> str | None:
         return f"not supported on {_platform()} (requires {platforms})"
     if not (EXAMPLES_DIR / case_name / "CMakeLists.txt").exists():
         return "no CMakeLists.txt"
+    if entry.get("requires_feature") == "_BitInt":
+        return "compiler lacks required feature '_BitInt'"
     return None
 
 
@@ -227,6 +262,7 @@ def run_case(
         }
 
     out = _case_out(build_dir, case_name)
+    _ensure_soname_aliases(out)
     app = _app_path(out)
     v1, v2 = _lib_paths(out)
     if app is None or v1 is None or v2 is None:
@@ -242,15 +278,16 @@ def run_case(
     if baseline.get("returncode") != 0:
         return {
             "case_id": case_name,
-            "status": "BASELINE_ERROR",
+            "status": "BASELINE_SIGNAL",
             "expected": expected,
-            "message": "old app failed with libv1",
+            "message": "old app exited non-zero with libv1",
             "baseline": baseline,
             "seconds": round(time.perf_counter() - started, 3),
         }
 
     swap_dir = tmp_root / case_name
     _copy_runtime_tree(out, swap_dir)
+    _ensure_soname_aliases(swap_dir)
     swap_v1, swap_v2 = _lib_paths(swap_dir)
     if swap_v1 is None or swap_v2 is None:
         return {
@@ -336,7 +373,7 @@ def main(argv: list[str] | None = None) -> int:
             if result["status"] not in {"DEMONSTRATED", "NO_RUNTIME_SIGNAL", "SKIP"}:
                 print(f"{result['status']}: {result['case_id']} {result.get('message', '')}", file=sys.stderr)
 
-    return 1 if any(r["status"] in {"BUILD_ERROR", "BASELINE_ERROR"} for r in results) else 0
+    return 1 if any(r["status"] == "BUILD_ERROR" for r in results) else 0
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 **Category:** Build mode | **Verdict:** 🟡 COMPATIBLE_WITH_RISK
 
 > Same source, same symbols; v1 built with `-ftls-model=global-dynamic`, v2 with
-> `-ftls-model=initial-exec`. The L3 build context reveals the change →
+> `-ftls-model=initial-exec`. The generated CMake L3 build context reveals the change →
 > `tls_model_changed`.
 
 ## What this demonstrates
@@ -17,16 +17,17 @@ A build-mode signal, not a proven binary break (ADR-028 D3); the artifact diff
 proves any concrete break, this localizes the risk.
 
 ## How abicheck detects it
-`v1.compile_commands.json` carries `-ftls-model=global-dynamic`,
-`v2.compile_commands.json` carries `-ftls-model=initial-exec`; the L3 diff
-normalizes both to the canonical `tls_model` option and reports the switch.
+The CMake fixture builds v1 with `-ftls-model=global-dynamic` and v2 with
+`-ftls-model=initial-exec`; the generated build-dir `compile_commands.json`
+carries those flags. The L3 diff normalizes both to the canonical `tls_model`
+option and reports the switch.
 
 ## Reproduce manually
 ```bash
-g++ -shared -fPIC -g -ftls-model=global-dynamic v1.cpp -o libv1.so
-g++ -shared -fPIC -g -ftls-model=initial-exec v2.cpp -o libv2.so
-abicheck dump libv1.so --build-info v1.compile_commands.json -o v1.abi.json
-abicheck dump libv2.so --build-info v2.compile_commands.json -o v2.abi.json
+cmake -S examples -B /tmp/abicheck-examples-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build /tmp/abicheck-examples-build --target case133_tls_model_flip_v1 case133_tls_model_flip_v2
+abicheck dump /tmp/abicheck-examples-build/case133_tls_model_flip/libv1.so --build-info /tmp/abicheck-examples-build/compile_commands.json -o v1.abi.json
+abicheck dump /tmp/abicheck-examples-build/case133_tls_model_flip/libv2.so --build-info /tmp/abicheck-examples-build/compile_commands.json -o v2.abi.json
 abicheck compare v1.abi.json v2.abi.json   # → tls_model_changed
 ```
 

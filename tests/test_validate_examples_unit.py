@@ -142,17 +142,22 @@ class TestBuildInfoPath:
         assert _build_info_path(tmp_path, "v1", True) is None
         assert _build_info_path(tmp_path, "v2", True) is not None
 
-    def test_real_build_info_cases_ship_both_sides(self) -> None:
-        # Every ground_truth case flagged build_info must ship both per-side
-        # compile DBs so the harness actually exercises the L3 diff.
+    def test_real_build_info_cases_have_explicit_or_generated_build_context(self) -> None:
+        # Every ground_truth case flagged build_info must either ship both
+        # per-side compile DBs or have a CMake fixture whose generated
+        # compile_commands.json supplies the real build flags.
         gt = json.loads(_GROUND_TRUTH.read_text())["verdicts"]
         examples_dir = _GROUND_TRUTH.parent
         bi_cases = [k for k, v in gt.items() if v.get("build_info")]
         assert bi_cases, "expected at least one build_info example case"
         for name in bi_cases:
             case_dir = examples_dir / name
-            assert _build_info_path(case_dir, "v1", True) is not None, name
-            assert _build_info_path(case_dir, "v2", True) is not None, name
+            has_explicit = (
+                _build_info_path(case_dir, "v1", True) is not None
+                and _build_info_path(case_dir, "v2", True) is not None
+            )
+            has_generated = (case_dir / "CMakeLists.txt").exists()
+            assert has_explicit or has_generated, name
 
 
 class TestSourcesPath:
