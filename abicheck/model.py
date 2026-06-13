@@ -23,10 +23,11 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .build_mode import BuildMode
+    from .buildsource.model import BuildSourceRef
+    from .buildsource.pack import BuildSourcePack
     from .dwarf_advanced import AdvancedDwarfMetadata
     from .dwarf_metadata import DwarfMetadata
     from .elf_metadata import ElfMetadata
-    from .evidence.model import EvidencePackRef
     from .macho_metadata import MachoMetadata
     from .pe_metadata import PeMetadata
     from .sycl_metadata import SyclMetadata
@@ -137,6 +138,17 @@ def stdlib_namespaces_excluded(old: AbiSnapshot, new: AbiSnapshot) -> bool:
     those types are the surface under test.  Single source of truth so every
     registered detector that consumes ``snapshot.types`` agrees on whether to
     keep std:: records (validation/REPORT.md FP-1; Codex reviews on PR #273).
+
+    Note (cross-implementation comparisons): when two snapshots are built
+    against *different* stdlib implementations (libstdc++ ↔ libc++), standalone
+    ``std::`` records in debug info differ wholesale even when the public ABI
+    does not embed them — so this filter stays ON to avoid flooding BREAKING
+    findings for toolchain-owned internals. The cross-implementation hazard is
+    surfaced instead by the build-mode diff (``diff_stdlib_impl.py``) as a RISK
+    finding, and a public owner type that *does* embed a ``std::`` type by value
+    is caught through its own (non-``std::``, never-filtered) layout change.
+    Per-owner un-filtering of the specific embedded records is deferred to the
+    layout-closure work.
     """
     old_elf = getattr(old, "elf", None)
     new_elf = getattr(new, "elf", None)
@@ -469,6 +481,31 @@ class RecordType:
     # Provenance (ADR-015, schema v6) — see Function.source_header.
     source_header: str | None = None
     origin: ScopeOrigin = ScopeOrigin.UNKNOWN
+    # ── Fine-grained layout descriptor (layout-closure work) ─────────────────
+    # All tri-state / optional so "unknown" (DWARF-only or symbols-only dumps,
+    # older snapshots) stays distinct from a real value; the layout detectors
+    # skip a comparison whenever either side is None/empty, avoiding false
+    # findings from schema evolution or an evidence-tier downgrade.
+    #
+    # Itanium "data size" (a.k.a. dsize/nvsize): the size occupied by the
+    # object's own members *excluding* trailing tail padding. A derived class
+    # may reuse a base's tail padding, so a change here can shift a derived
+    # layout even when ``size_bits`` (the padded sizeof) is unchanged.
+    data_size_bits: int | None = None
+    # C++ type traits that govern tail-padding reuse and how the type is passed
+    # by value (in registers vs. on the stack / via hidden reference).
+    is_standard_layout: bool | None = None
+    is_trivially_copyable: bool | None = None
+    # Bit offset of the vtable pointer within the object (0 for a simple
+    # polymorphic class; nonzero with virtual bases). None when the type is
+    # non-polymorphic or the dumper could not determine it. Introducing the
+    # first virtual function makes this go from None → 0 and shifts every field.
+    vptr_offset_bits: int | None = None
+    # Base-class subobject offsets: base name → bit offset within this object.
+    # Distinct from ``bases`` (declaration order only): a base can *move* (e.g.
+    # an empty-base-optimization is lost, or a member is inserted ahead of it)
+    # without the name list reordering. Empty when unknown.
+    base_offsets: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -563,13 +600,23 @@ class AbiSnapshot:
     # Used by binary-only fallback detectors that need lightweight disassembly.
     source_path: str | None = field(default=None, kw_only=True)
 
-    # ADR-028 (schema v7) — optional reference to an out-of-band EvidencePack
+    # ADR-028 (schema v7) — optional reference to an out-of-band BuildSourcePack
     # carrying L3/L4/L5 source/build/graph evidence. Only a lightweight
     # reference (content hash + coverage summary) lives in the snapshot; the
     # heavyweight pack is content-addressed on disk and versions independently
-    # (EVIDENCE_PACK_VERSION). None when no evidence was collected. Old readers
+    # (BUILD_SOURCE_PACK_VERSION). None when no evidence was collected. Old readers
     # ignore this optional field (ADR-015 backward-compatibility).
-    evidence_pack: EvidencePackRef | None = field(default=None, kw_only=True)
+    build_source_pack: BuildSourceRef | None = field(default=None, kw_only=True)
+
+    # Single-artifact UX — optional *inline* BuildSourcePack carrying the
+    # normalized L3 build-info + L4/L5 source facts directly inside the
+    # snapshot, so `compare old.json new.json` works with no out-of-band pack
+    # directories. Populated by `dump --build-info/--sources`; serialized under
+    # the "build_source" key. None when nothing was embedded. Old readers ignore
+    # this optional field (ADR-015). When both are present, the embedded facts
+    # are authoritative for the compare and `build_source_pack` is the matching
+    # provenance reference.
+    build_source: BuildSourcePack | None = field(default=None, kw_only=True)
 
     # ADR-029 — True when this snapshot's public-header AST was parsed using the
     # real build context (a compile_commands.json supplied to `dump -p`), so the

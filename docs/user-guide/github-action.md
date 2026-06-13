@@ -39,6 +39,32 @@ automatically, then runs ABI comparison and reports results.
 | `old-include` | no | Include dirs for old side only |
 | `new-include` | no | Include dirs for new side only |
 
+!!! note "Evidence layers in the Action"
+    The Action drives the same [five-layer evidence
+    model](../concepts/evidence-and-detectability.md) as the CLI. The inputs
+    above cover **L0** (`old-library`/`new-library`), **L1** (debug info —
+    embedded, or `debug-info1`/`debug-info2` packages in `compare-release`
+    mode), and **L2** (`header`/`include`).
+
+    **L3** build context (`-p build/`) can be folded in by pre-dumping a
+    snapshot with the CLI — the build flags are applied at dump time, so the
+    resulting snapshot is parsed with the correct ABI-affecting options — and
+    passing that JSON as `old-library`/`new-library`:
+
+    ```bash
+    abicheck dump build/libfoo.so -H include/ -p build/ -o abi-baseline.json
+    ```
+
+    Embedded **build-info / source data** (`dump --build-info`/`--sources`) and
+    **L4** source ABI replay are driven from the **CLI** today. Because
+    `dump --build-info`/`--sources` embed the facts inline in the snapshot, a
+    snapshot dumped that way *does* carry its L3/L4 findings into any later
+    `compare` — including one run from this Action on two such snapshots. What
+    the Action does not yet expose are dedicated inputs to *collect* build/source
+    data inline; to produce the embedded snapshots, run `abicheck collect` + `dump
+    --build-info/--sources` (or `compare … --old-build-info … --new-build-info …`)
+    as plain CLI steps in your workflow. See [Build Info & Sources](../concepts/build-source-data.md).
+
 ### Application compatibility inputs (appcompat mode)
 
 | Input | Required | Description |

@@ -83,6 +83,19 @@ _LEAK_TRIGGERING_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.STRUCT_FIELD_REMOVED,
     ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
     ChangeKind.STRUCT_ALIGNMENT_CHANGED,
+    # Fine-grained class-layout descriptor kinds (layout-closure work): like the
+    # coarse type/struct kinds above, they carry an owner type name and are a
+    # layout change on a type, so they must participate in the internal-leak
+    # pipeline too — otherwise a private ``detail::Impl`` with only a
+    # TRIVIALLY_COPYABLE_LOST / BASE_CLASS_OFFSET_CHANGED finding is neither
+    # attributed to a real public leak nor demoted as unreachable internal churn
+    # (Codex review #345).
+    ChangeKind.BASE_CLASS_OFFSET_CHANGED,
+    ChangeKind.VPTR_INTRODUCED,
+    ChangeKind.TRIVIALLY_COPYABLE_LOST,
+    ChangeKind.STANDARD_LAYOUT_LOST,
+    ChangeKind.TAIL_PADDING_REUSE_CHANGED,
+    ChangeKind.LAYOUT_UNVERIFIABLE,
 })
 
 
@@ -379,10 +392,26 @@ def _enqueue_record_children(
             queue.append((cand, new_path + [f"field:{fld.name}"]))
 
 
+def _enqueue_typedef_targets(
+    typename: str,
+    typedefs: dict[str, str],
+    path: list[str],
+    queue: collections.deque[tuple[str, list[str]]],
+) -> None:
+    """Enqueue the underlying type candidates for a typedef alias."""
+    target = typedefs.get(typename)
+    if not target:
+        return
+    for cand in _candidate_type_names(target):
+        if cand and cand != typename:
+            queue.append((cand, path + [f"typedef:{typename}"]))
+
+
 def _bfs_collect_paths(
     queue: collections.deque[tuple[str, list[str]]],
     type_map: dict[str, RecordType],
     internal_set: set[str],
+    typedefs: dict[str, str] | None = None,
 ) -> dict[str, list[list[str]]]:
     """Drive the BFS walk; return raw (un-deduped) internal-type paths."""
     paths: dict[str, list[list[str]]] = collections.defaultdict(list)
@@ -410,6 +439,8 @@ def _bfs_collect_paths(
                 paths[typename].append(list(path + [typename]))
             continue
         visited.add(key)
+
+        _enqueue_typedef_targets(typename, typedefs or {}, path, queue)
 
         if is_internal_type(typename, internal_set):
             paths[typename].append(list(path + [typename]))
@@ -453,6 +484,7 @@ def compute_leak_paths(
 
       - Every public function's return type and parameter types
       - Every public variable's type
+      - Typedef/using targets reached from those public signatures
       - For each visited type, its bases (and virtual bases) and the types
         of its non-pointer, non-reference fields
 
@@ -470,7 +502,7 @@ def compute_leak_paths(
     _seed_queue_from_variables(snap, queue)
     _seed_queue_from_public_types(type_map, internal_set, queue, is_dwarf_fallback=is_dwarf_fallback)
 
-    paths = _bfs_collect_paths(queue, type_map, internal_set)
+    paths = _bfs_collect_paths(queue, type_map, internal_set, snap.typedefs)
     return _dedup_paths(paths)
 
 

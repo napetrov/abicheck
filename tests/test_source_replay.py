@@ -25,10 +25,10 @@ from pathlib import Path
 
 import pytest
 
-from abicheck.evidence.build_evidence import BuildEvidence, CompileUnit, Target
-from abicheck.evidence.source_abi import SourceAbiTu, SourceEntity, SourceLocation
-from abicheck.evidence.source_extractors.base import SourceExtractionError
-from abicheck.evidence.source_replay import (
+from abicheck.buildsource.build_evidence import BuildEvidence, CompileUnit, Target
+from abicheck.buildsource.source_abi import SourceAbiTu, SourceEntity, SourceLocation
+from abicheck.buildsource.source_extractors.base import SourceExtractionError
+from abicheck.buildsource.source_replay import (
     CI_MODE_TO_SCOPE,
     REPLAY_SCOPES,
     SourceAbiCache,
@@ -187,6 +187,137 @@ def test_scope_changed_unowned_header_fails_open_despite_target_metadata() -> No
         _build(), scope="changed", changed_paths=["include/detail/config.h"]
     )
     assert {u.id for u in units} == {u.id for u in _build().compile_units}
+
+
+# -- scope selection with an include graph (ADR-030 follow-up #4) -------------
+
+
+def test_headers_only_set_cover_picks_minimal_units() -> None:
+    # One target owning both its public headers: the greedy cover picks the single
+    # owning TU that includes both, not one representative per source file.
+    build = BuildEvidence(
+        targets=[Target(id="t", public_headers=["include/a.h", "include/b.h"])],
+        compile_units=[
+            _cu("cu://x", "x.cpp", "t"),
+            _cu("cu://y", "y.cpp", "t"),
+        ],
+    )
+    include_map = {
+        "cu://x": ["include/a.h", "include/b.h"],  # owns + includes both
+        "cu://y": ["include/a.h"],
+    }
+    units = select_compile_units(build, scope="headers-only", include_map=include_map)
+    assert {u.id for u in units} == {"cu://x"}
+
+
+def test_headers_only_set_cover_ignores_non_owning_includer() -> None:
+    # A downstream TU (different target) that merely *includes* a public header
+    # must NOT cover it — only the owning target's TU may, so the header is
+    # fingerprinted under the right compile context (Codex review).
+    build = BuildEvidence(
+        targets=[
+            Target(id="lib", public_headers=["include/foo.h"]),
+            Target(id="app", public_headers=[]),
+        ],
+        compile_units=[
+            _cu("cu://lib", "lib.cpp", "lib"),
+            _cu("cu://app", "app.cpp", "app"),
+        ],
+    )
+    # The app TU includes foo.h but does not own it; the lib TU owns it.
+    include_map = {
+        "cu://app": ["include/foo.h"],
+        "cu://lib": ["include/foo.h"],
+    }
+    units = select_compile_units(build, scope="headers-only", include_map=include_map)
+    assert {u.id for u in units} == {"cu://lib"}
+
+
+def test_headers_only_set_cover_needs_two_units() -> None:
+    # No single TU covers both headers → cover needs two (one per header).
+    include_map = {
+        "cu://b": ["include/foo.h"],
+        "cu://c": ["include/bar.h"],
+    }
+    units = select_compile_units(
+        _build(), scope="headers-only", include_map=include_map
+    )
+    assert {u.id for u in units} == {"cu://b", "cu://c"}
+
+
+def test_headers_only_falls_back_when_include_graph_covers_no_header() -> None:
+    # Include graph present but reaches none of the public headers → defer to the
+    # representative-per-target heuristic rather than emit an empty surface.
+    include_map = {"cu://a": ["src/unrelated.h"]}
+    units = select_compile_units(
+        _build(), scope="headers-only", include_map=include_map
+    )
+    assert {u.id for u in units} == {"cu://a", "cu://c"}
+
+
+def test_headers_only_partial_cover_falls_back_to_heuristic() -> None:
+    # Graph reaches foo.h (via cu://b) but NOT bar.h → the greedy cover cannot
+    # satisfy every public header, so defer to the representative-per-target
+    # heuristic rather than drop bar.h's TUs (Codex review).
+    include_map = {"cu://b": ["include/foo.h"]}
+    units = select_compile_units(
+        _build(), scope="headers-only", include_map=include_map
+    )
+    assert {u.id for u in units} == {"cu://a", "cu://c"}
+
+
+def test_changed_with_include_graph_is_precise() -> None:
+    # Only cu://a actually includes the changed header; cu://b is in the same
+    # target but does NOT include it, so target-ownership would over-select it.
+    include_map = {
+        "cu://a": ["include/foo.h"],
+        "cu://b": ["include/other.h"],
+        "cu://c": ["include/bar.h"],
+        "cu://d": ["include/bar.h"],
+    }
+    units = select_compile_units(
+        _build(), scope="changed", changed_paths=["include/foo.h"],
+        include_map=include_map,
+    )
+    assert {u.id for u in units} == {"cu://a"}
+
+
+def test_changed_full_include_graph_no_match_selects_nothing() -> None:
+    # Every TU is covered by the graph and none includes the changed header →
+    # authoritative: select nothing (no fail-open fan-out).
+    include_map = {
+        "cu://a": ["include/other.h"],
+        "cu://b": ["include/other.h"],
+        "cu://c": ["include/other.h"],
+        "cu://d": ["include/other.h"],
+    }
+    units = select_compile_units(
+        _build(), scope="changed", changed_paths=["include/ghost.h"],
+        include_map=include_map,
+    )
+    assert units == []
+
+
+def test_changed_partial_include_graph_falls_back_to_fan_out() -> None:
+    # Graph covers only some TUs and the changed header matches none of them →
+    # a header changed with incomplete coverage still fails open to all units.
+    include_map = {"cu://a": ["include/other.h"]}
+    units = select_compile_units(
+        _build(), scope="changed", changed_paths=["include/ghost.h"],
+        include_map=include_map,
+    )
+    assert {u.id for u in units} == {u.id for u in _build().compile_units}
+
+
+def test_changed_with_graph_still_matches_changed_source() -> None:
+    # A TU whose own source changed is selected even if the graph says it
+    # includes nothing relevant.
+    include_map = {"cu://b": ["include/other.h"]}
+    units = select_compile_units(
+        _build(), scope="changed", changed_paths=["src/b.cpp"],
+        include_map=include_map,
+    )
+    assert {u.id for u in units} == {"cu://b"}
 
 
 def test_unknown_scope_raises() -> None:
@@ -460,6 +591,20 @@ def test_run_source_replay_links_selected_units() -> None:
     assert surface.coverage["compile_units_parsed"] == 2
 
 
+def test_run_source_replay_forwards_include_graph_for_precise_changed() -> None:
+    extractor = _FakeExtractor()
+    surface, _ = run_source_replay(
+        _build(), extractor, scope="changed",
+        changed_paths=["include/foo.h"],
+        public_header_roots=["include/foo.h"],
+        include_map={"cu://a": ["include/foo.h"], "cu://b": ["include/other.h"],
+                     "cu://c": ["include/bar.h"], "cu://d": ["include/bar.h"]},
+    )
+    # Only the TU that includes the changed header is parsed (precise mapping).
+    assert extractor.calls == ["cu://a"]
+    assert surface.coverage["include_graph_used"] is True
+
+
 def test_run_source_replay_records_failures_as_diagnostics() -> None:
     extractor = _FakeExtractor(fail_for={"cu://b"})
     surface, diagnostics = run_source_replay(
@@ -500,3 +645,67 @@ def test_run_source_replay_uses_cache_to_skip_reextraction(tmp_path: Path) -> No
     )
     assert second.calls == []
     assert len(surface.reachable_declarations) == 1
+
+
+# ── ADR-033 D3 PR-diff localizer ─────────────────────────────────────────────
+
+
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.mark.parametrize("paths,expected", [
+    (["CMakeLists.txt"], "build"),
+    (["cmake/foo.cmake"], "build"),
+    (["Makefile", "docs/x.md"], "build"),
+    (["BUILD.bazel"], "build"),
+    (["meson.build"], "build"),
+    (["src/foo.cpp"], "source-changed"),
+    (["include/foo.hpp"], "source-changed"),
+    (["src/foo.cpp", "CMakeLists.txt"], "source-changed"),  # source wins (superset)
+    (["README.md", "docs/x.rst"], "off"),
+    ([], "off"),
+])
+def test_recommend_collect_mode(paths, expected):
+    from abicheck.buildsource.source_replay import recommend_collect_mode
+    assert recommend_collect_mode(paths) == expected
+
+
+def test_graph_full_maps_to_full_scope():
+    """ADR-033 D2 (Codex): graph-full collects the full replay scope, not target."""
+    from abicheck.buildsource.source_replay import (
+        collection_for_ci_mode,
+        scope_for_ci_mode,
+    )
+    assert scope_for_ci_mode("graph-full") == "full"
+    scope, layers = collection_for_ci_mode("graph-full")
+    assert scope == "full"
+    assert layers == ("L3", "L4", "L5")
+
+
+def _build_many(n: int) -> BuildEvidence:
+    return BuildEvidence(
+        targets=[Target(id="target://lib", public_headers=["include/foo.h"])],
+        compile_units=[_cu(f"cu://u{i}", f"src/u{i}.cpp", "target://lib") for i in range(n)],
+    )
+
+
+def _replay_all(extractor, jobs, monkeypatch):
+    monkeypatch.setenv("ABICHECK_L4_JOBS", str(jobs))
+    return run_source_replay(
+        _build_many(12), extractor, scope="target", target_id="target://lib",
+        public_header_roots=["include/foo.h"],
+    )
+
+
+def test_parallel_l4_is_deterministic(monkeypatch):
+    """P06: parallel extraction (ABICHECK_L4_JOBS>1) yields a byte-identical
+    surface + diagnostics to the serial run, including ordering."""
+    s_serial, d_serial = _replay_all(_FakeExtractor(fail_for={"cu://u3", "cu://u9"}), 1, monkeypatch)
+    s_par, d_par = _replay_all(_FakeExtractor(fail_for={"cu://u3", "cu://u9"}), 6, monkeypatch)
+
+    assert d_serial == d_par                      # same diagnostics, same order
+    assert len(d_serial) == 2
+    assert s_serial.coverage["compile_units_parsed"] == s_par.coverage["compile_units_parsed"] == 10
+    ids_serial = [e.id for e in s_serial.reachable_declarations]
+    ids_par = [e.id for e in s_par.reachable_declarations]
+    assert ids_serial == ids_par                  # same linked surface, same order

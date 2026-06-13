@@ -17,15 +17,9 @@ source-replay diff findings (D4, D5, D6, D10)."""
 
 from __future__ import annotations
 
-from abicheck.checker_policy import (
-    API_BREAK_KINDS,
-    BREAKING_KINDS,
-    RISK_KINDS,
-    ChangeKind,
-)
-from abicheck.evidence import (
+from abicheck.buildsource import (
     SOURCE_ABI_VERSION,
-    EvidencePack,
+    BuildSourcePack,
     SourceAbiSurface,
     SourceAbiTu,
     SourceEntity,
@@ -33,7 +27,13 @@ from abicheck.evidence import (
     diff_source_abi,
     link_source_abi,
 )
-from abicheck.evidence.source_abi import EVIDENCE_TIER_L4
+from abicheck.buildsource.source_abi import EVIDENCE_TIER_L4
+from abicheck.checker_policy import (
+    API_BREAK_KINDS,
+    BREAKING_KINDS,
+    RISK_KINDS,
+    ChangeKind,
+)
 
 # -- helpers -----------------------------------------------------------------
 
@@ -571,6 +571,38 @@ def test_diff_generated_header_changed() -> None:
     assert [c.kind for c in changes] == [ChangeKind.GENERATED_HEADER_CHANGED]
 
 
+def test_diff_generated_constant_value_change_is_api_break() -> None:
+    # A generated public constexpr still behaves like a baked-in constant for
+    # consumers. Preserve constexpr_value_changed so legacy ABI gates see the
+    # API_BREAK severity, while removals remain covered by generated headers.
+    old = _surface(
+        reachable_declarations=[
+            _entity(
+                "cfg::KMax",
+                "constexpr",
+                visibility="generated",
+                origin="GENERATED",
+                value="64",
+            )
+        ]
+    )
+    new = _surface(
+        reachable_declarations=[
+            _entity(
+                "cfg::KMax",
+                "constexpr",
+                visibility="generated",
+                origin="GENERATED",
+                value="128",
+            )
+        ]
+    )
+    changes = diff_source_abi(old, new)
+    assert [c.kind for c in changes] == [ChangeKind.CONSTEXPR_VALUE_CHANGED]
+    assert changes[0].old_value == "64"
+    assert changes[0].new_value == "128"
+
+
 def test_diff_generated_constant_removed_detected() -> None:
     # A constexpr declared in a *generated* header that is removed in the new
     # version must surface as generated_header_changed. A namespace-scope
@@ -698,11 +730,11 @@ def test_pack_roundtrips_source_abi(tmp_path: object) -> None:
         exported_symbols=[],
         library="libfoo.so",
     )
-    pack = EvidencePack.empty(tmp_path)  # type: ignore[arg-type]
+    pack = BuildSourcePack.empty(tmp_path)  # type: ignore[arg-type]
     pack.source_abi = surface
     pack.write()
 
-    loaded = EvidencePack.load(tmp_path)  # type: ignore[arg-type]
+    loaded = BuildSourcePack.load(tmp_path)  # type: ignore[arg-type]
     assert loaded.source_abi is not None
     assert [e.qualified_name for e in loaded.source_abi.reachable_macros] == ["FOO"]
     # The source surface contributes to the content hash (it is a normalized payload).
@@ -710,11 +742,69 @@ def test_pack_roundtrips_source_abi(tmp_path: object) -> None:
 
 
 def test_pack_removes_stale_source_abi(tmp_path: object) -> None:
-    pack = EvidencePack.empty(tmp_path)  # type: ignore[arg-type]
+    pack = BuildSourcePack.empty(tmp_path)  # type: ignore[arg-type]
     pack.source_abi = link_source_abi([SourceAbiTu(macros=[_entity("FOO", "macro")])])
     pack.write()
     # A later collection with no source ABI must drop the stale file.
     pack.source_abi = None
     pack.write()
-    reloaded = EvidencePack.load(tmp_path)  # type: ignore[arg-type]
+    reloaded = BuildSourcePack.load(tmp_path)  # type: ignore[arg-type]
     assert reloaded.source_abi is None
+
+
+# -- typedef target change (ADR-030 follow-up #3) ----------------------------
+
+
+def test_diff_public_typedef_target_changed() -> None:
+    old = _surface(reachable_types=[
+        _entity("handle_t", "typedef", value="int32_t", type_hash="h-old"),
+    ])
+    new = _surface(reachable_types=[
+        _entity("handle_t", "typedef", value="int64_t", type_hash="h-new"),
+    ])
+    changes = diff_source_abi(old, new)
+    assert [c.kind for c in changes] == [ChangeKind.PUBLIC_TYPEDEF_TARGET_CHANGED]
+    assert changes[0].old_value == "int32_t"
+    assert changes[0].new_value == "int64_t"
+    assert "L4_SOURCE_ABI" in (changes[0].source_location or "")
+
+
+def test_diff_typedef_unchanged_target_is_quiet() -> None:
+    same = [_entity("handle_t", "typedef", value="int32_t", type_hash="h")]
+    assert diff_source_abi(_surface(reachable_types=same),
+                           _surface(reachable_types=list(same))) == []
+
+
+def test_diff_typedef_never_breaking() -> None:
+    # Authority rule (ADR-028 D3): an L4 source-only finding is never BREAKING.
+    from abicheck.checker_policy import BREAKING_KINDS
+    old = _surface(reachable_types=[_entity("h", "typedef", value="a", type_hash="1")])
+    new = _surface(reachable_types=[_entity("h", "typedef", value="b", type_hash="2")])
+    assert all(c.kind not in BREAKING_KINDS for c in diff_source_abi(old, new))
+
+
+def test_diff_generated_typedef_not_double_reported() -> None:
+    # A generated typedef change is reported once, as generated_header_changed.
+    old = _surface(reachable_types=[
+        _entity("cfg_t", "typedef", visibility="generated", origin="GENERATED",
+                value="int", type_hash="1"),
+    ])
+    new = _surface(reachable_types=[
+        _entity("cfg_t", "typedef", visibility="generated", origin="GENERATED",
+                value="long", type_hash="2"),
+    ])
+    kinds = [c.kind for c in diff_source_abi(old, new)]
+    assert kinds == [ChangeKind.GENERATED_HEADER_CHANGED]
+
+
+def test_typedef_self_alias_no_odr_conflict() -> None:
+    # `typedef struct Foo Foo;` — the record Foo and the typedef Foo share the
+    # same (name, header). The typedef must NOT enter the ODR path (would emit a
+    # spurious odr_source_conflict against the record) — Codex review.
+    record = _entity("Foo", "record", type_hash="rec-hash")
+    typedef = _entity("Foo", "typedef", value="struct Foo", type_hash="td-hash")
+    tu = SourceAbiTu(types=[record, typedef])
+    surface = link_source_abi([tu])
+    assert surface.odr_conflicts == []
+    kinds = {e.kind for e in surface.reachable_types if e.qualified_name == "Foo"}
+    assert kinds == {"record", "typedef"}

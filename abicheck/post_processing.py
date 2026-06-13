@@ -48,6 +48,10 @@ class PipelineContext:
     # ADR-024 §D4: when True, FilterNonPublicSurface moves findings that are
     # not on the public-header-scoped ABI surface to ``out_of_surface``.
     scope_to_public_surface: bool = False
+    # G15 (opt-in): when True, DetectVersionedSymbolScheme reclassifies the
+    # version-rename pairs (ICU `u_*_NN`) as compatible so the verdict reflects
+    # the real delta instead of the rename churn. Off by default (authority rule).
+    collapse_versioned_symbols: bool = False
     # ADR-024 §D6 widening overlay: symbol names (mangled or demangled) the
     # user *guarantees* are public even when header provenance can't see them
     # (asm stubs, .def exports, extern "C" shims, MSVC-mangling gaps). Matching
@@ -279,7 +283,9 @@ class FilterNonPublicSurface:
             if force_public and _change_matches_symbols(c, force_public):
                 kept.append(c)
                 continue
-            in_surface, reason = classify_change_surface(c, surf_old, surf_new, unions=unions)
+            in_surface, reason = classify_change_surface(
+                c, surf_old, surf_new, unions=unions
+            )
             if in_surface:
                 kept.append(c)
             else:
@@ -381,6 +387,19 @@ class EnrichAffectedSymbols:
         from .diff_filtering import _enrich_affected_symbols
 
         _enrich_affected_symbols(changes, ctx.old)
+        return changes
+
+
+class AttributeStdlibEmbedding:
+    """Attribute an unattributed owner size/offset change to an embedded ``std::``
+    member by value (the layout-closure case the redundancy filter can't link)."""
+
+    name = "attribute_stdlib_embedding"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .diff_filtering import _attribute_stdlib_embedding
+
+        _attribute_stdlib_embedding(changes, ctx.new)
         return changes
 
 
@@ -489,8 +508,7 @@ class DetectCppPatterns:
             to_keep: list[Change] = []
             for ch in changes:
                 if ch.kind == ChangeKind.FUNC_REMOVED and any(
-                    _matches_suppression_key(ch.symbol, key)
-                    for key in suppressed_keys
+                    _matches_suppression_key(ch.symbol, key) for key in suppressed_keys
                 ):
                     ctx.suppressed.append(ch)
                     continue
@@ -565,11 +583,11 @@ class DetectNamespacePatterns:
             detect_namespace_patterns,
         )
 
-        namespaces = (
-            self._experimental_namespaces or DEFAULT_EXPERIMENTAL_NAMESPACES
-        )
+        namespaces = self._experimental_namespaces or DEFAULT_EXPERIMENTAL_NAMESPACES
         new_findings = detect_namespace_patterns(
-            ctx.old, ctx.new, experimental_namespaces=namespaces,
+            ctx.old,
+            ctx.new,
+            experimental_namespaces=namespaces,
         )
         if not new_findings:
             return changes
@@ -711,6 +729,44 @@ class DemoteUnreachableInternalChurn:
         return changes
 
 
+class DetectVersionedSymbolScheme:
+    """Emit one advisory ``versioned_symbol_scheme_detected`` finding when most
+    removed symbols reappear as added symbols differing only by a version token
+    (field-eval P08: ICU ``u_*_75`` → ``u_*_78``). Additive by default — it
+    explains the churn, the individual func_removed/func_added findings and their
+    verdict are untouched.
+
+    When ``ctx.collapse_versioned_symbols`` is set (opt-in, G15 second half), the
+    matched version-rename pairs are additionally **reclassified as compatible**:
+    moved to ``ctx.suppressed`` and dropped from the kept set, so the verdict
+    reflects the real delta instead of the rename churn. This is deliberately
+    behind a flag (authority rule: it downgrades artifact-level removals); a real
+    SONAME bump or non-versioned removals still drive their own verdict."""
+
+    name = "detect_versioned_symbol_scheme"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .checker_policy import ChangeKind
+        from .versioned_symbol_scheme import analyze_versioned_scheme
+
+        if any(c.kind is ChangeKind.VERSIONED_SYMBOL_SCHEME_DETECTED for c in changes):
+            return changes  # idempotent if the pipeline is re-run
+        advisory, matched = analyze_versioned_scheme(changes)
+        if advisory is None:
+            return changes
+        if ctx.suppression is not None and ctx.suppression.is_suppressed(advisory):
+            ctx.suppressed.append(advisory)
+        else:
+            changes.append(advisory)
+        if ctx.collapse_versioned_symbols and matched:
+            matched_ids = {id(c) for c in matched}
+            ctx.suppressed.extend(matched)
+            kept = [c for c in changes if id(c) not in matched_ids]
+            ctx.kept = kept  # keep verdict source in sync (set mid-pipeline by FilterRedundant)
+            return kept
+        return changes
+
+
 class EscalateFrozenNamespaceViolations:
     """Tag findings whose symbol / caused_by_type lies in a contractually
     frozen namespace (e.g. ``**::detail::r1``).
@@ -742,26 +798,6 @@ class EscalateFrozenNamespaceViolations:
 
     name = "escalate_frozen_namespace_violations"
 
-    @staticmethod
-    def _build_qualified_lookup(old: AbiSnapshot, new: AbiSnapshot) -> dict[str, str]:
-        """Build a mangled→qualified-name map from both snapshots.
-
-        Pre-building this lookup lets :meth:`run` recover the C++ namespace
-        of ``extern "C"`` symbols whose ``Change.symbol`` is just the
-        unqualified export name.  Both snapshots are consulted because
-        FUNC_REMOVED is only in old and FUNC_ADDED only in new.
-        """
-        qualified_lookup: dict[str, str] = {}
-        for snap in (old, new):
-            if snap is None or not _safe_index(snap):
-                continue
-            func_map = getattr(snap, "_func_by_mangled", None) or {}
-            for mangled, fn in func_map.items():
-                fname = getattr(fn, "name", None)
-                if fname and "::" in fname and mangled not in qualified_lookup:
-                    qualified_lookup[mangled] = fname
-        return qualified_lookup
-
     def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
         if not ctx.frozen_namespaces:
             return changes
@@ -769,12 +805,17 @@ class EscalateFrozenNamespaceViolations:
         import fnmatch
 
         from .demangle import demangle
+        from .diff_filtering import (
+            _qualified_functions_by_mangled,
+            _qualified_name_for_change,
+        )
         from .internal_leak import _strip_template_args
 
         patterns = list(ctx.frozen_namespaces)
-        qualified_lookup = self._build_qualified_lookup(ctx.old, ctx.new)
+        old_qualified = _qualified_functions_by_mangled(ctx.old)
+        new_qualified = _qualified_functions_by_mangled(ctx.new)
 
-        def _match(name: str | None) -> str | None:
+        def _match(name: str | None, c: Change) -> str | None:
             if not name:
                 return None
             # Collect every plausible C++-qualified form of *name*:
@@ -788,9 +829,10 @@ class EscalateFrozenNamespaceViolations:
                 dm = demangle(name)
                 if dm:
                     forms.append(dm)
-            qual = qualified_lookup.get(name)
-            if qual:
-                forms.append(qual)
+            if name == c.symbol:
+                qual = _qualified_name_for_change(c, old_qualified, new_qualified)
+                if qual:
+                    forms.append(qual)
 
             for form in forms:
                 # Walk every ancestor prefix so ``**::detail::r1`` matches
@@ -812,17 +854,15 @@ class EscalateFrozenNamespaceViolations:
                 # overlay that synthesised a finding with the field set).
                 return
             pat = (
-                _match(c.symbol)
-                or _match(c.caused_by_type)
-                or _match(c.qualified_name)
+                _match(c.symbol, c)
+                or _match(c.caused_by_type, c)
+                or _match(c.qualified_name, c)
             )
             if pat is None:
                 return
             c.frozen_namespace_violation = pat
             if not c.description.startswith("[frozen-namespace violation"):
-                c.description = (
-                    f"[frozen-namespace violation: {pat}] " + c.description
-                )
+                c.description = f"[frozen-namespace violation: {pat}] " + c.description
 
         for c in changes:
             _tag(c)
@@ -859,6 +899,7 @@ class PostProcessingPipeline:
         frozen_namespaces: list[str] | None = None,
         scope_to_public_surface: bool = False,
         force_public_symbols: set[str] | None = None,
+        collapse_versioned_symbols: bool = False,
     ) -> PipelineContext:
         """Run all steps, returning the final PipelineContext."""
         ctx = PipelineContext(
@@ -868,6 +909,7 @@ class PostProcessingPipeline:
             frozen_namespaces=list(frozen_namespaces or []),
             scope_to_public_surface=scope_to_public_surface,
             force_public_symbols=set(force_public_symbols or set()),
+            collapse_versioned_symbols=collapse_versioned_symbols,
         )
         for step in self.steps:
             changes = step.run(changes, ctx)
@@ -896,6 +938,7 @@ DEFAULT_PIPELINE = PostProcessingPipeline(
         SuppressRenamedPairs(),
         FilterRedundant(),
         EnrichAffectedSymbols(),
+        AttributeStdlibEmbedding(),
         DetectInternalLeaks(),
         # Must run immediately after DetectInternalLeaks: it consumes that step's
         # leak verdict to demote confirmed-unreachable internal-namespace churn.
@@ -903,6 +946,9 @@ DEFAULT_PIPELINE = PostProcessingPipeline(
         DetectCppPatterns(),
         DetectNamespacePatterns(),
         DetectTemplatePatterns(),
+        # Advisory overlay: explains a versioned-symbol-scheme churn (P08). Runs
+        # after rename suppression so it only sees residual removed/added pairs.
+        DetectVersionedSymbolScheme(),
         # Runs last so it can tag both raw findings and the synthetic
         # overlays added by DetectInternalLeaks / DetectCppPatterns.
         EscalateFrozenNamespaceViolations(),

@@ -16,7 +16,7 @@
 
 ADR-003: When no headers are provided but DWARF debug info is present,
 this module builds a full AbiSnapshot from DWARF .debug_info, enabling
-24/30 detectors (vs 6 in symbol-only mode).
+type-aware artifact checks that are unavailable in symbol-only mode.
 
 DWARF provides: function signatures, struct/class layouts, enum definitions,
 variables, typedefs, inheritance, vtable entries, templates.
@@ -25,6 +25,7 @@ DWARF does NOT provide: #define constants, default parameter values.
 Visibility filtering: only types/functions reachable from ELF exported
 symbols are included (DWARF × ELF intersection).
 """
+
 from __future__ import annotations
 
 import collections
@@ -62,6 +63,7 @@ from .model import (
 )
 
 if TYPE_CHECKING:
+    from .buildsource.pack import BuildSourcePack
     from .dwarf_advanced import AdvancedDwarfMetadata
     from .dwarf_metadata import DwarfMetadata
     from .elf_metadata import ElfMetadata
@@ -72,6 +74,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def build_snapshot_from_dwarf(
     elf_path: Path,
@@ -122,6 +125,7 @@ def show_data_sources(
     elf_meta: ElfMetadata | None,
     dwarf_meta: DwarfMetadata | None,
     has_headers: bool,
+    build_source_pack: BuildSourcePack | None = None,
 ) -> str:
     """Generate human-readable data source diagnostic output.
 
@@ -134,8 +138,7 @@ def show_data_sources(
         soname = elf_meta.soname or "none"
         n_syms = len(elf_meta.symbols) if elf_meta.symbols else 0
         lines.append(
-            f"  L0 Binary metadata: ELF (SONAME={soname}, "
-            f"{n_syms} exported symbols)"
+            f"  L0 Binary metadata: ELF (SONAME={soname}, {n_syms} exported symbols)"
         )
     else:
         lines.append("  L0 Binary metadata: not available")
@@ -144,36 +147,93 @@ def show_data_sources(
     if dwarf_meta is not None and dwarf_meta.has_dwarf:
         n_types = len(dwarf_meta.structs)
         n_enums = len(dwarf_meta.enums)
-        lines.append(
-            f"  L1 Debug info:      DWARF ({n_types} types, {n_enums} enums)"
-        )
+        lines.append(f"  L1 Debug info:      DWARF ({n_types} types, {n_enums} enums)")
     else:
         lines.append("  L1 Debug info:      not available (no DWARF)")
 
     # L2: Header AST
     if has_headers:
-        lines.append("  L2 Header AST:      available (castxml)")
+        lines.append("  L2 Header AST:      available (CastXML/header inputs)")
     else:
-        lines.append("  L2 Header AST:      not available (no -H provided)")
+        lines.append("  L2 Header AST:      not collected (no -H provided)")
+
+    # L3-L5: Optional build/source pack layers.
+    if build_source_pack is None:
+        lines.append("  L3 Build context:   not collected (no build-source pack)")
+        lines.append("  L4 Source ABI:      not collected (no build-source pack)")
+        lines.append("  L5 Source graph:    not collected (no build-source pack)")
+    else:
+        lines.append(_evidence_layer_line(build_source_pack, "L3 Build context", "build_evidence"))
+        lines.append(_evidence_layer_line(build_source_pack, "L4 Source ABI", "source_abi"))
+        lines.append(_evidence_layer_line(build_source_pack, "L5 Source graph", "source_graph"))
 
     lines.append("")
 
     # Mode determination
     if has_headers:
-        lines.append("Using: Headers mode (30/30 detectors active)")
+        lines.append("Using: Headers mode (artifact + public header evidence)")
     elif dwarf_meta is not None and dwarf_meta.has_dwarf:
-        lines.append("Using: DWARF-only mode (24/30 detectors active)")
-        lines.append("Missing: #define constants, default parameter values")
+        lines.append("Using: DWARF-only mode (artifact debug evidence)")
+        lines.append("Missing: #define constants, default parameter values, header intent")
     else:
-        lines.append("Using: Symbols-only mode (6/30 detectors active)")
+        lines.append("Using: Symbols-only mode (artifact symbol evidence)")
         lines.append("Missing: type information, function signatures")
 
     return "\n".join(lines)
 
 
+def _evidence_layer_line(build_source_pack: BuildSourcePack, label: str, attr: str) -> str:
+    coverage = {
+        row.layer: row
+        for row in getattr(getattr(build_source_pack, "manifest", None), "coverage", [])
+    }
+    layer_id = {
+        "build_evidence": "L3_build",
+        "source_abi": "L4_source_abi",
+        "source_graph": "L5_source_graph",
+    }[attr]
+    row = coverage.get(layer_id)
+    payload = getattr(build_source_pack, attr, None)
+    payload_summary = _evidence_payload_summary(payload) if payload is not None else None
+    if row is not None:
+        if row.status.value != "present" or payload_summary is None:
+            return f"  {label}: {_coverage_row_summary(row)}"
+        return f"  {label}: {payload_summary}"
+    if payload_summary is not None:
+        return f"  {label}: {payload_summary}"
+    return f"  {label}: not collected"
+
+
+def _coverage_row_summary(row: object) -> str:
+    status = getattr(getattr(row, "status", None), "value", None) or str(getattr(row, "status", "not_collected"))
+    detail = getattr(row, "detail", "")
+    suffix = f" ({detail})" if detail else ""
+    return f"{status}{suffix}"
+
+
+def _evidence_payload_summary(payload: object) -> str | None:
+    counts: list[str] = []
+    for attr, label in (
+        ("compile_units", "compile units"),
+        ("targets", "targets"),
+        ("reachable_declarations", "declarations"),
+        ("reachable_types", "types"),
+        ("reachable_macros", "macros"),
+        ("nodes", "nodes"),
+        ("edges", "edges"),
+    ):
+        items = getattr(payload, attr, None)
+        if items:
+            counts.append(f"{len(items)} {label}")
+    if counts:
+        return "present (" + ", ".join(counts[:3]) + ")"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Internal builder
 # ---------------------------------------------------------------------------
+
 
 class _DwarfSnapshotBuilder:
     """Extract ABI snapshot fields from DWARF .debug_info.
@@ -210,6 +270,7 @@ class _DwarfSnapshotBuilder:
         # the mangled names differ slightly (e.g. const qualifier variance).
         self._demangled_exports: set[str] = set()
         from .demangle import demangle_batch
+
         cpp_names = [s for s in self._exported_names if s.startswith("_Z")]
         if cpp_names:
             demangled_map = demangle_batch(cpp_names)
@@ -255,7 +316,8 @@ class _DwarfSnapshotBuilder:
                     except Exception as exc:  # noqa: BLE001
                         log.warning(
                             "dwarf_snapshot: skipping CU in %s: %s",
-                            self._elf_path, exc,
+                            self._elf_path,
+                            exc,
                         )
 
                 # Second pass: filter types to only those reachable from
@@ -265,15 +327,14 @@ class _DwarfSnapshotBuilder:
         except (ELFError, OSError, ValueError) as exc:
             log.warning(
                 "dwarf_snapshot: failed to parse %s: %s",
-                self._elf_path, exc,
+                self._elf_path,
+                exc,
             )
 
     def _process_cu(self, CU: Any) -> None:
         """Walk all DIEs in one Compilation Unit."""
         top_die = CU.get_top_DIE()
-        stack: collections.deque[tuple[Any, str]] = collections.deque(
-            [(top_die, "")]
-        )
+        stack: collections.deque[tuple[Any, str]] = collections.deque([(top_die, "")])
 
         while stack:
             die, scope = stack.pop()
@@ -281,8 +342,11 @@ class _DwarfSnapshotBuilder:
 
             # Skip function bodies / inlined frames — we handle
             # DW_TAG_subprogram at the top level only
-            if tag in ("DW_TAG_inlined_subroutine", "DW_TAG_lexical_block",
-                        "DW_TAG_GNU_call_site"):
+            if tag in (
+                "DW_TAG_inlined_subroutine",
+                "DW_TAG_lexical_block",
+                "DW_TAG_GNU_call_site",
+            ):
                 continue
 
             die_name = _attr_str(die, "DW_AT_name")
@@ -295,11 +359,12 @@ class _DwarfSnapshotBuilder:
                 continue  # don't descend into function body
             elif tag == "DW_TAG_variable":
                 self._process_variable(die, CU, scope)
-            elif tag in ("DW_TAG_structure_type", "DW_TAG_class_type",
-                         "DW_TAG_union_type"):
-                qualified = (
-                    f"{scope}::{die_name}" if (scope and die_name) else die_name
-                )
+            elif tag in (
+                "DW_TAG_structure_type",
+                "DW_TAG_class_type",
+                "DW_TAG_union_type",
+            ):
+                qualified = f"{scope}::{die_name}" if (scope and die_name) else die_name
                 self._process_record_type(die, CU, scope)
                 if die_name:
                     next_scope = qualified or scope
@@ -332,10 +397,9 @@ class _DwarfSnapshotBuilder:
         # so a public API that becomes ``= delete`` is still observable. Do not
         # let that bypass re-admit transitive stdlib/runtime subprograms into a
         # non-runtime library's public surface.
-        if (
-            not self._is_abi_relevant_export(mangled)
-            or not self._is_abi_relevant_export(qualified_name)
-        ):
+        if not self._is_abi_relevant_export(
+            mangled
+        ) or not self._is_abi_relevant_export(qualified_name):
             return
 
         # DWARF5 DW_AT_deleted: function marked as = delete by the compiler.
@@ -379,7 +443,9 @@ class _DwarfSnapshotBuilder:
         is_virtual = _attr_bool(die, "DW_AT_virtuality") or (
             _attr_int(die, "DW_AT_virtuality") > 0
         )
-        is_pure_virtual = _attr_int(die, "DW_AT_virtuality") == 2  # DW_VIRTUALITY_pure_virtual
+        is_pure_virtual = (
+            _attr_int(die, "DW_AT_virtuality") == 2
+        )  # DW_VIRTUALITY_pure_virtual
         is_extern_c = not mangled.startswith("_Z")
         is_static = not _attr_bool(die, "DW_AT_external")
         # DW_AT_explicit is emitted by g++/clang++ on ctors and conversion ops
@@ -399,23 +465,25 @@ class _DwarfSnapshotBuilder:
         if "DW_AT_vtable_elem_location" in die.attributes:
             vtable_index = _attr_int(die, "DW_AT_vtable_elem_location")
 
-        self.functions.append(Function(
-            name=qualified_name if scope else name,
-            mangled=mangled,
-            return_type=ret_type,
-            params=params,
-            visibility=Visibility.PUBLIC,
-            is_virtual=is_virtual,
-            is_extern_c=is_extern_c,
-            vtable_index=vtable_index,
-            is_static=is_static,
-            is_pure_virtual=is_pure_virtual,
-            access=access,
-            return_pointer_depth=ret_ptr_depth,
-            is_deleted=is_deleted,
-            deleted_from_dwarf=is_deleted,
-            is_explicit=is_explicit,
-        ))
+        self.functions.append(
+            Function(
+                name=qualified_name if scope else name,
+                mangled=mangled,
+                return_type=ret_type,
+                params=params,
+                visibility=Visibility.PUBLIC,
+                is_virtual=is_virtual,
+                is_extern_c=is_extern_c,
+                vtable_index=vtable_index,
+                is_static=is_static,
+                is_pure_virtual=is_pure_virtual,
+                access=access,
+                return_pointer_depth=ret_ptr_depth,
+                is_deleted=is_deleted,
+                deleted_from_dwarf=is_deleted,
+                is_explicit=is_explicit,
+            )
+        )
 
     def _is_abi_relevant_export(self, name: str) -> bool:
         """Return True when *name* belongs to this DSO's own ABI surface."""
@@ -491,13 +559,15 @@ class _DwarfSnapshotBuilder:
 
         qualified_name = f"{scope}::{name}" if scope else name
 
-        self.variables.append(Variable(
-            name=qualified_name if scope else name,
-            mangled=mangled,
-            type=type_name,
-            visibility=Visibility.PUBLIC,
-            is_const=is_const,
-        ))
+        self.variables.append(
+            Variable(
+                name=qualified_name if scope else name,
+                mangled=mangled,
+                type=type_name,
+                visibility=Visibility.PUBLIC,
+                is_const=is_const,
+            )
+        )
 
     # -------------------------------------------------------------------
     # Record type (struct/class/union) extraction
@@ -514,9 +584,7 @@ class _DwarfSnapshotBuilder:
         qualified = f"{scope}::{name}" if scope else name
         self._process_record_type_named(die, CU, qualified)
 
-    def _process_record_type_named(
-        self, die: Any, CU: Any, qualified: str
-    ) -> None:
+    def _process_record_type_named(self, die: Any, CU: Any, qualified: str) -> None:
         """Extract a struct/class/union using a given qualified name."""
         byte_size = _attr_int(die, "DW_AT_byte_size")
         if byte_size == 0 and _attr_bool(die, "DW_AT_declaration"):
@@ -531,13 +599,21 @@ class _DwarfSnapshotBuilder:
 
         tag = die.tag
         is_union = tag == "DW_TAG_union_type"
-        kind = "union" if is_union else ("class" if tag == "DW_TAG_class_type" else "struct")
+        kind = (
+            "union"
+            if is_union
+            else ("class" if tag == "DW_TAG_class_type" else "struct")
+        )
 
         # Parse fields
         fields: list[TypeField] = []
         bases: list[str] = []
         virtual_bases: list[str] = []
         vtable: list[str] = []
+        # Best-effort layout descriptor (layout-closure work). base_offsets maps
+        # base name → bit offset within this object (from the inheritance DIE's
+        # DW_AT_data_member_location); empty when no such offset is present.
+        base_offsets: dict[str, int] = {}
 
         for child in die.iter_children():
             if child.tag == "DW_TAG_member":
@@ -552,6 +628,19 @@ class _DwarfSnapshotBuilder:
                         virtual_bases.append(base_name)
                     else:
                         bases.append(base_name)
+                    # Record the (non-virtual) base subobject offset when present.
+                    # A virtual base's location is dynamic, so only capture the
+                    # static, direct-base offset.
+                    if (
+                        not is_virtual_base
+                        and "DW_AT_data_member_location" in child.attributes
+                    ):
+                        base_offsets[base_name] = (
+                            _decode_member_location(
+                                child.attributes["DW_AT_data_member_location"].value
+                            )
+                            * 8
+                        )
             elif child.tag == "DW_TAG_subprogram":
                 # Collect virtual methods for vtable
                 if _attr_int(child, "DW_AT_virtuality") > 0:
@@ -569,19 +658,40 @@ class _DwarfSnapshotBuilder:
         # Extract source location from DW_AT_decl_file / DW_AT_decl_line
         source_loc = self._resolve_decl_file(die, CU)
 
-        self.types.append(RecordType(
-            name=qualified,
-            kind=kind,
-            size_bits=byte_size * 8 if byte_size > 0 else None,
-            alignment_bits=alignment * 8 if alignment > 0 else None,
-            fields=fields,
-            bases=bases,
-            virtual_bases=virtual_bases,
-            vtable=vtable,
-            is_union=is_union,
-            is_opaque=is_opaque,
-            source_location=source_loc,
-        ))
+        # Best-effort vptr offset: a class with virtual methods (non-empty
+        # vtable) is polymorphic, so the compiler embeds a vtable pointer at
+        # offset 0 (no virtual bases). None (not 0) when non-polymorphic, so the
+        # diff can tell "gained a vptr" (None → 0) from "vptr stayed". Tri-state
+        # by design — left None when we cannot tell.
+        vptr_offset_bits = 0 if vtable else None
+        # is_standard_layout / is_trivially_copyable / data_size_bits are
+        # deliberately *not* derived here. "not polymorphic and no virtual bases"
+        # is NOT a sound standard-layout signal: a class can already be
+        # non-standard-layout for reasons DWARF doesn't expose here (mixed access
+        # control, member-bearing bases). Such a class would be wrongly marked
+        # True, then flip to False when it gains a virtual function — emitting a
+        # spurious STANDARD_LAYOUT_LOST for a trait that was never present (Codex
+        # review #345). Likewise DWARF can't tell a defaulted special member from
+        # a user-provided one. Without a real trait signal these stay None and the
+        # detector stays quiet rather than guessing.
+
+        self.types.append(
+            RecordType(
+                name=qualified,
+                kind=kind,
+                size_bits=byte_size * 8 if byte_size > 0 else None,
+                alignment_bits=alignment * 8 if alignment > 0 else None,
+                fields=fields,
+                bases=bases,
+                virtual_bases=virtual_bases,
+                vtable=vtable,
+                is_union=is_union,
+                is_opaque=is_opaque,
+                source_location=source_loc,
+                vptr_offset_bits=vptr_offset_bits,
+                base_offsets=base_offsets,
+            )
+        )
 
     def _resolve_decl_file(self, die: Any, CU: Any) -> str | None:
         """Resolve DW_AT_decl_file to a source file path.
@@ -606,7 +716,11 @@ class _DwarfSnapshotBuilder:
             idx = file_idx - 1 if ver < 5 else file_idx
             if 0 <= idx < len(file_entries):
                 entry = file_entries[idx]
-                fname = entry.name if isinstance(entry.name, str) else entry.name.decode("utf-8", errors="replace")
+                fname = (
+                    entry.name
+                    if isinstance(entry.name, str)
+                    else entry.name.decode("utf-8", errors="replace")
+                )
                 line = _attr_int(die, "DW_AT_decl_line")
                 return f"{fname}:{line}" if line else fname
         except Exception:  # noqa: BLE001
@@ -719,12 +833,14 @@ class _DwarfSnapshotBuilder:
                 if m_name:
                     members.append(EnumMember(name=m_name, value=m_val))
 
-        self.enums.append(EnumType(
-            name=qualified,
-            members=members,
-            underlying_type=underlying,
-            source_location=self._resolve_decl_file(die, CU),
-        ))
+        self.enums.append(
+            EnumType(
+                name=qualified,
+                members=members,
+                underlying_type=underlying,
+                source_location=self._resolve_decl_file(die, CU),
+            )
+        )
 
     # -------------------------------------------------------------------
     # Typedef extraction
@@ -755,8 +871,11 @@ class _DwarfSnapshotBuilder:
                 target_name = _attr_str(target, "DW_AT_name")
                 target_tag = target.tag
 
-                if target_tag in ("DW_TAG_structure_type", "DW_TAG_class_type",
-                                  "DW_TAG_union_type"):
+                if target_tag in (
+                    "DW_TAG_structure_type",
+                    "DW_TAG_class_type",
+                    "DW_TAG_union_type",
+                ):
                     if not target_name and qualified not in self._seen_type_names:
                         # Anonymous struct/union — register under the qualified
                         # typedef name so same-named typedefs in different
@@ -778,9 +897,7 @@ class _DwarfSnapshotBuilder:
 
         self.typedefs[qualified] = underlying
 
-    def _resolve_underlying_type(
-        self, die: Any, CU: Any, depth: int
-    ) -> str:
+    def _resolve_underlying_type(self, die: Any, CU: Any, depth: int) -> str:
         """Follow typedef chains to the concrete base type."""
         if depth > 20:
             return "?"
@@ -813,6 +930,7 @@ class _DwarfSnapshotBuilder:
         # Tier 3: demangled fallback for C++ (FIX-B)
         if mangled and mangled.startswith("_Z") and self._demangled_exports:
             from .demangle import demangle as _demangle
+
             demangled = _demangle(mangled)
             if demangled and demangled in self._demangled_exports:
                 return True
@@ -869,9 +987,7 @@ class _DwarfSnapshotBuilder:
         except Exception:  # noqa: BLE001
             return ("?", 0)
 
-    def _die_to_type_name(
-        self, die: Any, CU: Any, depth: int
-    ) -> tuple[str, int]:
+    def _die_to_type_name(self, die: Any, CU: Any, depth: int) -> tuple[str, int]:
         """Resolve a type DIE to (name, byte_size) with caching."""
         if depth > 8:
             return ("...", 0)
@@ -884,9 +1000,7 @@ class _DwarfSnapshotBuilder:
         self._type_cache[cache_key] = result
         return result
 
-    def _compute_type_name(
-        self, die: Any, CU: Any, depth: int
-    ) -> tuple[str, int]:
+    def _compute_type_name(self, die: Any, CU: Any, depth: int) -> tuple[str, int]:
         """Compute type name from a DWARF type DIE."""
         tag = die.tag
 
@@ -896,8 +1010,7 @@ class _DwarfSnapshotBuilder:
                 _attr_int(die, "DW_AT_byte_size"),
             )
 
-        if tag in ("DW_TAG_structure_type", "DW_TAG_class_type",
-                    "DW_TAG_union_type"):
+        if tag in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
             name = _attr_str(die, "DW_AT_name") or "<anon>"
             return (name, _attr_int(die, "DW_AT_byte_size"))
 
@@ -920,8 +1033,7 @@ class _DwarfSnapshotBuilder:
             size = _attr_int(die, "DW_AT_byte_size") or 0
             return (f"{inner} &&" if inner else "? &&", size)
 
-        if tag in ("DW_TAG_const_type", "DW_TAG_volatile_type",
-                    "DW_TAG_restrict_type"):
+        if tag in ("DW_TAG_const_type", "DW_TAG_volatile_type", "DW_TAG_restrict_type"):
             qualifier = tag.split("_")[2].lower()
             inner_info = self._resolve_inner_info(die, CU, depth)
             if inner_info is None:
@@ -950,9 +1062,7 @@ class _DwarfSnapshotBuilder:
         name = _attr_str(die, "DW_AT_name")
         return (name or tag or "unknown", _attr_int(die, "DW_AT_byte_size"))
 
-    def _resolve_inner_name(
-        self, die: Any, CU: Any, depth: int
-    ) -> str | None:
+    def _resolve_inner_name(self, die: Any, CU: Any, depth: int) -> str | None:
         """Resolve inner type name (for pointer/reference/array types)."""
         info = self._resolve_inner_info(die, CU, depth)
         return info[0] if info is not None else None
@@ -978,8 +1088,11 @@ class _DwarfSnapshotBuilder:
             return 0
         if type_die.tag == "DW_TAG_pointer_type":
             return 1 + self._count_pointer_depth(type_die, CU, depth + 1)
-        if type_die.tag in ("DW_TAG_const_type", "DW_TAG_volatile_type",
-                            "DW_TAG_typedef"):
+        if type_die.tag in (
+            "DW_TAG_const_type",
+            "DW_TAG_volatile_type",
+            "DW_TAG_typedef",
+        ):
             return self._count_pointer_depth(type_die, CU, depth + 1)
         return 0
 
@@ -996,6 +1109,7 @@ class _DwarfSnapshotBuilder:
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
+
 
 def _strip_type_decorators(type_name: str) -> str:
     """Strip pointer/reference/const/volatile/array suffixes from a type name.
@@ -1020,6 +1134,6 @@ def _strip_type_decorators(type_name: str) -> str:
         changed = False
         for prefix in _qualifiers:
             if name.startswith(prefix):
-                name = name[len(prefix):]
+                name = name[len(prefix) :]
                 changed = True
     return name.strip()

@@ -60,6 +60,41 @@ class TestParseProbeSpec:
         with pytest.raises(ValueError, match="missing required"):
             parse_probe_spec({"name": "x", "configurations": []})
 
+    @pytest.mark.parametrize("compiler", ["/bin/sh", "python3", "sh"])
+    def test_rejects_non_compiler_executables(self, compiler: str) -> None:
+        with pytest.raises(ValueError, match="compiler"):
+            parse_probe_spec({
+                "name": "test",
+                "configurations": [
+                    {"id": "c1", "compiler": compiler, "flags": ["-std=c++20"]},
+                ],
+                "probes": [{"name": "p", "headers": [], "body": ""}],
+            })
+
+    @pytest.mark.parametrize("flag", ["-c", "-wrapper", "-fplugin=evil.so", "-Xclang"])
+    def test_rejects_command_execution_flags(self, flag: str) -> None:
+        with pytest.raises(ValueError, match="flag"):
+            parse_probe_spec({
+                "name": "test",
+                "configurations": [
+                    {"id": "c1", "compiler": "g++", "flags": [flag]},
+                ],
+                "probes": [{"name": "p", "headers": [], "body": ""}],
+            })
+
+    @pytest.mark.parametrize("identifier", ["../escape", "subdir/p", ".", "..", ""])
+    def test_rejects_path_like_generated_file_identifiers(
+        self, identifier: str
+    ) -> None:
+        with pytest.raises(ValueError, match="identifier|must not"):
+            parse_probe_spec({
+                "name": "test",
+                "configurations": [
+                    {"id": identifier, "compiler": "g++", "flags": ["-std=c++20"]},
+                ],
+                "probes": [{"name": "p", "headers": [], "body": ""}],
+            })
+
     def test_defines_and_includes(self) -> None:
         spec = parse_probe_spec({
             "name": "test",
@@ -78,6 +113,43 @@ class TestParseProbeSpec:
         assert "-DBAR" in args
         assert "-I/opt/inc" in args
         assert "-I/usr/local/inc" in args
+
+
+    @pytest.mark.parametrize("bad_cfg_id", ["../x", "x/y", ""])
+    def test_invalid_configuration_id_rejected(self, bad_cfg_id: str) -> None:
+        with pytest.raises(ValueError, match="configuration id"):
+            parse_probe_spec({
+                "name": "test",
+                "configurations": [{"id": bad_cfg_id, "compiler": "g++"}],
+                "probes": [{"name": "p", "body": ""}],
+            })
+
+    @pytest.mark.parametrize("bad_probe_name", ["../p", "p/q", ""])
+    def test_invalid_probe_name_rejected(self, bad_probe_name: str) -> None:
+        with pytest.raises(ValueError, match="probe name"):
+            parse_probe_spec({
+                "name": "test",
+                "configurations": [{"id": "cfg", "compiler": "g++"}],
+                "probes": [{"name": bad_probe_name, "body": ""}],
+            })
+
+    @pytest.mark.parametrize("bad_compiler", ["/bin/sh", "../g++", "-Wl,foo", "", "sh", "bash", "rm"])
+    def test_invalid_compiler_rejected(self, bad_compiler: str) -> None:
+        with pytest.raises(ValueError, match="compiler"):
+            parse_probe_spec({
+                "name": "test",
+                "configurations": [{"id": "cfg", "compiler": bad_compiler}],
+                "probes": [{"name": "p", "body": ""}],
+            })
+
+    @pytest.mark.parametrize("bad_flag", ["-c", "-o", "-x", "--", "-MD", "-MMD", "-MF/tmp/evil.d", "-MT/target", "-MQ/target", "-o/tmp/out"])
+    def test_disallowed_flags_rejected(self, bad_flag: str) -> None:
+        with pytest.raises(ValueError, match="disallowed"):
+            parse_probe_spec({
+                "name": "test",
+                "configurations": [{"id": "cfg", "compiler": "g++", "flags": [bad_flag]}],
+                "probes": [{"name": "p", "body": ""}],
+            })
 
     def test_unknown_keys_ignored(self) -> None:
         spec = parse_probe_spec({
