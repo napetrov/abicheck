@@ -1977,6 +1977,14 @@ def _diff_fingerprint_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change
     # similarity predicate into the matcher so it participates in candidate
     # *selection*: a coincidental same-size symbol can neither be reported as a
     # rename nor greedily consume a partner that a plausible rename should claim.
+    # P11: warm the demangle cache with ONE batched c++filt call up front. The
+    # name-similarity gate (_plausible_rename) demangles every candidate during
+    # the O(removed×added) size pass; without this, each unique mangled name
+    # forks c++filt separately (12k+ forks ≈ 18s on libicui18n). One batch call
+    # populates the shared cache demangle() now consults.
+    from .demangle import demangle_batch
+    demangle_batch([n for n in (*old_fps, *new_fps) if n.startswith("_Z")])
+
     candidates = match_renamed_functions(old_fps, new_fps, name_filter=_plausible_rename)
     for c in candidates:
         conf_pct = int(c.confidence * 100)
