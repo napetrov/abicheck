@@ -285,3 +285,11 @@ run date — non-reproducible across time. The two patterns (`getattr(object,...
 flagged by current mypy (1.19.1) but slipped through whatever version ran on #367/#368. *Fix:* pin
 mypy to an exact version in `[dev]` and CI so the gate is deterministic. (The 2 errors are now fixed
 → baseline back to 0.)
+
+## Correction (Codex P2, batch2.py symbol counter)
+The `funcs` columns in iterations 2/3/6 were produced by `readelf -sW --dyn-syms | grep ' FUNC '`,
+which **double-counts** (`.symtab` + `.dynsym`) and includes **UND imports** — inflating counts
+~3–5×. Real defined-export counts are lower (e.g. **libLLVM.so.18 = 30,913** defined FUNC exports,
+not 153,115). The counter is fixed (dyn table only, FUNC + defined + GLOBAL/WEAK). **Verdicts and
+change-counts are unaffected** — those come from abicheck's own dynsym parsing, not this helper. The
+relative scale story (small C → ICU → LLVM → oneDAL) holds; only the absolute `funcs` headline was off.
