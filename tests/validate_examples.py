@@ -130,15 +130,16 @@ def _find_compiler(is_cpp: bool = False, preferred_family: str | None = None) ->
     return None
 
 
-def _toolchain_family() -> str:
-    """Producer family of the compiler actually selected ("gcc" | "clang" | "").
+def _toolchain_family(is_cpp: bool) -> str:
+    """Producer family ("gcc"|"clang"|"") of the compiler selected for *is_cpp*.
 
-    Derived from the real ``_find_compiler`` result (which honours
-    ``PREFERRED_FAMILY`` but falls back when the requested family is absent), NOT
-    from the requested family — otherwise ``--toolchain clang`` on a clang-less
-    host would mis-scope known_gaps to clang while gcc actually built the cases.
+    Derived from the real ``_find_compiler`` result for the case's source
+    language (which honours ``PREFERRED_FAMILY``/``CC``/``CXX`` but falls back
+    when the requested family is absent), NOT from the requested family — so a
+    C fixture built by gcc under ``CC=gcc CXX=clang++`` scopes its known_gap to
+    gcc, and ``--toolchain clang`` on a clang-less host scopes to gcc.
     """
-    name = Path(_find_compiler(is_cpp=True) or _find_compiler(is_cpp=False) or "").name
+    name = Path(_find_compiler(is_cpp=is_cpp) or "").name
     if "clang" in name:
         return "clang"
     if "gcc" in name or "g++" in name:
@@ -146,8 +147,8 @@ def _toolchain_family() -> str:
     return ""
 
 
-def _gap_applies(entry: dict) -> bool:
-    """Whether *entry*'s known_gap applies under the current toolchain.
+def _gap_applies(entry: dict, is_cpp: bool) -> bool:
+    """Whether *entry*'s known_gap applies under the case's actual compiler.
 
     A ``known_gap_toolchains`` list scopes the gap to specific producers; on any
     other producer a verdict mismatch is a real failure (so a producer-specific
@@ -157,7 +158,7 @@ def _gap_applies(entry: dict) -> bool:
     scope = entry.get("known_gap_toolchains")
     if not scope:
         return True
-    return _toolchain_family() in scope
+    return _toolchain_family(is_cpp) in scope
 
 
 # ---------------------------------------------------------------------------
@@ -892,9 +893,6 @@ def run_case(
 ) -> CaseResult:
     """Build, compare, and evaluate one example case."""
     expected_raw = entry.get("expected")
-    # A producer-scoped known_gap only excuses a mismatch under the producer it
-    # applies to; on other producers the gap is dropped so a regression FAILs.
-    known_gap = entry.get("known_gap") if _gap_applies(entry) else None
 
     skip_result = _check_case_preconditions(name, entry)
     if skip_result is not None:
@@ -904,6 +902,15 @@ def run_case(
     if isinstance(resolved, CaseResult):
         return resolved._replace(variant=variant)
     case_dir, (v1_src, v2_src, v1_hdr, v2_hdr) = resolved
+
+    # A producer-scoped known_gap only excuses a mismatch under the producer that
+    # actually built the case (resolved per source language); on other producers
+    # the gap is dropped so a regression FAILs rather than being xfailed.
+    known_gap = (
+        entry.get("known_gap")
+        if _gap_applies(entry, v1_src.suffix == ".cpp")
+        else None
+    )
 
     tmp = tmp_base / name
     if variant != DEFAULT_ARTIFACT_VARIANT:

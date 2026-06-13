@@ -509,10 +509,15 @@ def _dump_and_compare(
     return result.verdict.value.upper(), result.changes
 
 
-def _toolchain_family() -> str:
-    """Best-effort current C/C++ producer family ("gcc" | "clang" | "")."""
-    name = Path(os.environ.get("CXX") or os.environ.get("CC")
-                or _find_cxx_compiler() or _find_compiler() or "").name
+def _toolchain_family(is_cpp: bool) -> str:
+    """Producer family ("gcc"|"clang"|"") of the compiler used for *is_cpp*.
+
+    Resolved per source language via the same selectors `_compile_shared` uses
+    (CXX/`_find_cxx_compiler` for C++, CC/`_find_compiler` for C), so a mixed
+    `CC=gcc CXX=clang++` run scopes a C fixture's known_gap to gcc, not clang.
+    """
+    comp = _find_cxx_compiler() if is_cpp else _find_compiler()
+    name = Path(comp or "").name
     if "clang" in name:
         return "clang"
     if "gcc" in name or "g++" in name:
@@ -520,12 +525,12 @@ def _toolchain_family() -> str:
     return ""
 
 
-def _gap_applies(case_name: str) -> bool:
-    """Whether *case_name*'s known_gap applies under the current toolchain."""
+def _gap_applies(case_name: str, is_cpp: bool) -> bool:
+    """Whether *case_name*'s known_gap applies under the case's actual compiler."""
     scope = KNOWN_GAP_TOOLCHAINS.get(case_name)
     if not scope:
         return True  # unscoped gap applies everywhere (back-compat)
-    return _toolchain_family() in scope
+    return _toolchain_family(is_cpp) in scope
 
 
 def _assert_verdict(
@@ -533,9 +538,10 @@ def _assert_verdict(
     expected_verdict: str,
     got: str,
     changes: list,
+    is_cpp: bool,
 ) -> None:
     """Assert that the verdict matches, handling known gaps as xfail."""
-    if case_name in KNOWN_GAPS and _gap_applies(case_name):
+    if case_name in KNOWN_GAPS and _gap_applies(case_name, is_cpp):
         if _normalize_verdict(got) != _normalize_verdict(expected_verdict):
             pytest.xfail(KNOWN_GAPS[case_name])
 
@@ -607,7 +613,8 @@ def test_example_pipeline(
         scope_to_public_surface=SCOPE_PUBLIC_HEADERS.get(case_name, False),
     )
 
-    _assert_verdict(case_name, expected_verdict, got, changes)
+    _assert_verdict(case_name, expected_verdict, got, changes,
+                    is_cpp=v1_src.suffix in (".cpp",))
 
 
 # ---------------------------------------------------------------------------
