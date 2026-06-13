@@ -1,1 +1,0 @@
-[{"directory":".","file":"v1.cpp","command":"g++ -ftls-model=global-dynamic -fPIC -c v1.cpp"}]

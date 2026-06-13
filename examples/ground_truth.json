@@ -2113,7 +2113,7 @@
       "api_break": false,
       "bad_practice": false,
       "build_info": true,
-      "description": "Identical source and exported symbols built once with -fexceptions (v1) and once with -fno-exceptions (v2). The per-side compile_commands.json carries the flag; the L3 build-evidence diff normalizes it to the canonical 'exceptions' option and reports exceptions_mode_changed. The two modes are not link-compatible (exceptions cannot safely unwind through -fno-exceptions frames), but per ADR-028 D3 a build-context finding is a risk signal, not a proven binary break. Validated via the CLI dump --build-info + compare path (the Python compare() API does not run the build-evidence diff).",
+      "description": "Identical source and exported symbols built once with -fexceptions (v1) and once with -fno-exceptions (v2). The generated CMake compile_commands.json carries the flag; the L3 build-evidence diff normalizes it to the canonical 'exceptions' option and reports exceptions_mode_changed. The two modes are not link-compatible (exceptions cannot safely unwind through -fno-exceptions frames), but per ADR-028 D3 a build-context finding is a risk signal, not a proven binary break. Validated via the CLI dump --build-info + compare path (the Python compare() API does not run the build-evidence diff).",
       "expected_kinds": [
         "exceptions_mode_changed"
       ]
@@ -2129,7 +2129,7 @@
       "api_break": false,
       "bad_practice": false,
       "build_info": true,
-      "description": "Identical source and symbols built with -frtti (v1) vs -fno-rtti (v2), captured per-side in compile_commands.json. The L3 diff normalizes to the canonical 'rtti' option and reports rtti_mode_changed. -fno-rtti omits type_info for polymorphic types so dynamic_cast/typeid and cross-DSO exception matching can fail when modes are mixed; RISK per ADR-028 D3.",
+      "description": "Identical source and symbols built with -frtti (v1) vs -fno-rtti (v2), captured from the generated CMake compile_commands.json. The L3 diff normalizes to the canonical 'rtti' option and reports rtti_mode_changed. -fno-rtti omits type_info for polymorphic types so dynamic_cast/typeid and cross-DSO exception matching can fail when modes are mixed; RISK per ADR-028 D3.",
       "expected_kinds": [
         "rtti_mode_changed"
       ]

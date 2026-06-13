@@ -4,7 +4,7 @@
 
 > Same source, same symbols; v1 built with thread-safe local-static
 > initialization (`-fthreadsafe-statics`, the default), v2 with
-> `-fno-threadsafe-statics`. The L3 build context reveals the flip →
+> `-fno-threadsafe-statics`. The generated CMake L3 build context reveals the flip →
 > `threadsafe_statics_mode_changed`.
 
 ## What this demonstrates
@@ -18,16 +18,17 @@ A build-mode signal, not a proven binary break (ADR-028 D3); the artifact diff
 proves any concrete break, this localizes the risk.
 
 ## How abicheck detects it
-`v1.compile_commands.json` carries `-fthreadsafe-statics`,
-`v2.compile_commands.json` carries `-fno-threadsafe-statics`; the L3 diff
-normalizes to the canonical `threadsafe_statics` option and reports the flip.
+The CMake fixture builds v1 with `-fthreadsafe-statics` and v2 with
+`-fno-threadsafe-statics`; the generated build-dir `compile_commands.json`
+carries those flags. The L3 diff normalizes to the canonical
+`threadsafe_statics` option and reports the flip.
 
 ## Reproduce manually
 ```bash
-g++ -shared -fPIC -g -fthreadsafe-statics v1.cpp -o libv1.so
-g++ -shared -fPIC -g -fno-threadsafe-statics v2.cpp -o libv2.so
-abicheck dump libv1.so --build-info v1.compile_commands.json -o v1.abi.json
-abicheck dump libv2.so --build-info v2.compile_commands.json -o v2.abi.json
+cmake -S examples -B /tmp/abicheck-examples-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build /tmp/abicheck-examples-build --target case132_threadsafe_statics_flip_v1 case132_threadsafe_statics_flip_v2
+abicheck dump /tmp/abicheck-examples-build/case132_threadsafe_statics_flip/libv1.so --build-info /tmp/abicheck-examples-build/compile_commands.json -o v1.abi.json
+abicheck dump /tmp/abicheck-examples-build/case132_threadsafe_statics_flip/libv2.so --build-info /tmp/abicheck-examples-build/compile_commands.json -o v2.abi.json
 abicheck compare v1.abi.json v2.abi.json   # → threadsafe_statics_mode_changed
 ```
 
