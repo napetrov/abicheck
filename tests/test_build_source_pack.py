@@ -534,6 +534,22 @@ def test_effective_language_honors_forced_language(argv, source, expected):
     assert effective_language(argv, source) == expected
 
 
+@pytest.mark.parametrize("argv, source, expected", [
+    # The token after a value-taking option is data, even when it looks like a
+    # combined GNU -x language option.
+    (["g++", "-c", "foo.cpp", "-MF", "-xc", "-fno-exceptions"], "foo.cpp", "CXX"),
+    (["g++", "-o", "-xc", "-xc++", "-c", "foo.c"], "foo.c", "CXX"),
+    (["g++", "-D", "-xc", "-c", "foo.cpp"], "foo.cpp", "CXX"),
+    # Slash /Tp and /Tc only force language for MSVC/clang-cl commands, not GNU
+    # commands or operands consumed by another MSVC option.
+    (["gcc", "-c", "foo.cpp", "/Tcnot_source.c"], "foo.cpp", "CXX"),
+    (["cl", "/c", "/FI", "/Tcconfig.hpp", "foo.cpp"], "foo.cpp", "CXX"),
+])
+def test_effective_language_ignores_option_operands(argv, source, expected):
+    from abicheck.buildsource.adapters.base import effective_language
+    assert effective_language(argv, source) == expected
+
+
 def test_redundant_objcxx_forced_language_is_no_op_drift(tmp_path):
     # Codex P2: clang++ -x objective-c++ on a .mm TU must stay OBJCXX, not collapse
     # to CXX — otherwise std:OBJCXX->std:CXX reads as false build-flag drift.
@@ -575,6 +591,28 @@ def test_compile_db_forced_language_drives_runtime_mode_key(tmp_path):
     new = _db(["-fno-exceptions"])  # explicit off
     # The forced language must record exceptions:CXX (not exceptions:C).
     assert old.compile_units[0].language == "CXX"
+    changes = diff_build_evidence(old, new)
+    assert any(c.kind is ChangeKind.EXCEPTIONS_MODE_CHANGED for c in changes)
+
+
+def test_compile_db_depfile_operand_cannot_hide_cxx_exceptions_flip(tmp_path):
+    # `-MF -xc` writes a depfile literally named `-xc`; it must not be treated
+    # as `-x c` and downgrade a C++ TU to C.
+    def _db(extra_flags):
+        p = tmp_path / f"cc_{abs(hash(tuple(extra_flags)))}.json"
+        entries = [{
+            "directory": str(tmp_path),
+            "file": "foo.cpp",
+            "arguments": ["g++", "-MMD", "-MF", "-xc", *extra_flags, "-c", "foo.cpp"],
+        }]
+        p.write_text(json.dumps(entries))
+        return CompileDbAdapter(p).collect()
+
+    old = _db([])
+    new = _db(["-fno-exceptions"])
+
+    assert new.compile_units[0].language == "CXX"
+    assert ("exceptions:CXX", "off") in {(o.key, o.value) for o in new.build_options}
     changes = diff_build_evidence(old, new)
     assert any(c.kind is ChangeKind.EXCEPTIONS_MODE_CHANGED for c in changes)
 

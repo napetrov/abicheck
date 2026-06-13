@@ -134,8 +134,13 @@ def effective_language(argv: list[str], source: str) -> str:
     (force C++) / ``/TC`` / ``/Tc<f>`` (force C) do the same. The last forcing
     token wins for a single-source TU. Falls back to :func:`detect_language` on
     the source path when nothing on the command line forces the language.
+
+    The scan is option-parser aware: operands consumed by another value-taking
+    flag (for example ``-MF -xc``) are skipped so filenames that begin with
+    language-option spellings cannot masquerade as real language overrides.
     """
     forced = ""
+    msvc = _is_msvc_command(argv)
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -144,12 +149,15 @@ def effective_language(argv: list[str], source: str) -> str:
             forced = "" if tok == "none" else _X_LANG_TO_NORMALIZED.get(tok, forced)
             i += 2
             continue
+        if arg in SOURCE_OPERAND_FLAGS:
+            i += 2  # skip the flag and the operand it consumes
+            continue
         if arg.startswith("-x") and len(arg) > 2:
             tok = arg[2:].lower()
             forced = "" if tok == "none" else _X_LANG_TO_NORMALIZED.get(tok, forced)
-        elif arg == "/TP" or arg[:3] == "/Tp":
+        elif msvc and (arg == "/TP" or arg[:3] == "/Tp"):
             forced = "CXX"
-        elif arg == "/TC" or arg[:3] == "/Tc":
+        elif msvc and (arg == "/TC" or arg[:3] == "/Tc"):
             forced = "C"
         i += 1
     return forced or detect_language(source)
