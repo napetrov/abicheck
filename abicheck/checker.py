@@ -49,6 +49,9 @@ from .checker_types import (  # noqa: F401
     LibraryMetadata,
 )
 from .detector_registry import registry as _detector_registry
+from .diff_elf_layout import (  # noqa: F401 — triggers detector registration
+    _diff_elf_layout,
+)
 from .diff_filtering import (  # noqa: F401
     _ROOT_TYPE_CHANGE_KINDS,
     _compute_confidence,
@@ -161,6 +164,7 @@ def _diff_advanced_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     _kind_map = {
         "calling_convention_changed": ChangeKind.CALLING_CONVENTION_CHANGED,
         "value_abi_trait_changed": ChangeKind.VALUE_ABI_TRAIT_CHANGED,
+        "struct_return_convention_changed": ChangeKind.STRUCT_RETURN_CONVENTION_CHANGED,
         "struct_packing_changed": ChangeKind.STRUCT_PACKING_CHANGED,
         "toolchain_flag_drift": ChangeKind.TOOLCHAIN_FLAG_DRIFT,
         "vector_abi_changed": ChangeKind.VECTOR_ABI_CHANGED,
@@ -193,6 +197,7 @@ def compare(
     extra_changes: list[Change] | None = None,
     pattern_verdicts: bool = False,
     surface_metrics: bool = False,
+    collapse_versioned_symbols: bool = False,
 ) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict.
 
@@ -233,6 +238,7 @@ def compare(
         frozen_namespaces=frozen_ns,
         scope_to_public_surface=scope_to_public_surface,
         force_public_symbols=force_public_symbols,
+        collapse_versioned_symbols=collapse_versioned_symbols,
     )
     kept = pp_ctx.kept
     redundant = pp_ctx.redundant
@@ -277,6 +283,17 @@ def compare(
 
     _old_elf = getattr(old, "elf", None) or _ElfMetadata()
     _new_elf = getattr(new, "elf", None) or _ElfMetadata()
+
+    # Demote findings confined to symbols the library marks internal/private via
+    # an ELF version node (``GLIBC_PRIVATE`` / ``*_INTERNAL_*``): they are
+    # exported but not public ABI, so a real change to them is a deployment risk,
+    # not a break (validation parity class A — nettle 3.6→3.7). Runs before the
+    # SONAME-bump policy and verdict so a demoted internal change neither drives a
+    # BREAKING verdict nor triggers a spurious bump recommendation.
+    from .diff_versioning import demote_internal_version_node_findings
+
+    demote_internal_version_node_findings(kept + verdict_redundant, _old_elf, _new_elf)
+
     soname_changes = check_soname_bump_policy(
         kept + verdict_redundant, _old_elf, _new_elf
     )

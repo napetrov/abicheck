@@ -1,8 +1,20 @@
 # Change Kind Reference
 
-This page lists all `ChangeKind` values detected by abicheck, their default verdict,
-and what they mean. Use this reference to understand what each detected change implies
-for binary ABI compatibility, source API compatibility, or neither.
+This page documents the most commonly encountered `ChangeKind` values, their
+default verdict, and what they mean. Use this reference to understand what each
+detected change implies for binary ABI compatibility, source API compatibility,
+or neither.
+
+> **Scope:** this is a curated reference, not the exhaustive list — specialised
+> kinds (multi-library bundle skew, SYCL plugin-interface, build-context and
+> source-evidence findings) are documented on their feature pages
+> ([Multi-Binary Releases](../user-guide/multi-binary.md),
+> [Plugin Systems](../user-guide/plugin-systems.md),
+> [Build & Source Packs](../concepts/build-source-data.md)). The authoritative,
+> always-complete list is the `ChangeKind` enum in
+> [`abicheck/checker_policy.py`](https://github.com/napetrov/abicheck/blob/main/abicheck/checker_policy.py),
+> and CI enforces that every kind is classified, produced by a detector, and
+> mentioned in the docs.
 
 **Verdict overview:**
 
@@ -29,6 +41,7 @@ These changes are immediately incompatible with existing compiled binaries.
 | `func_params_changed` | Function parameter types or count changed. The calling convention breaks: arguments are placed in wrong registers/stack slots. |
 | `func_virtual_added` | A non-virtual method became virtual. Changes the vtable layout: any class with this as a base will have a different vtable offset for all methods after this one. |
 | `func_virtual_removed` | A virtual method is no longer virtual. Vtable layout collapses — all vtable offsets shift for derived classes. |
+| `virtual_method_added` | A new virtual method was added to a class that already exists across versions. If the class had no virtuals it gains a hidden vtable pointer (size/offsets shift); if it was already polymorphic the new slot grows/relayouts the vtable. Derived classes and old binaries dispatch through the wrong slots. This is the KDE "do not add a virtual to a non-leaf class" rule, caught even when the snapshot carries no diff-able vtable array (DWARF/symbol-only mode); when the vtable array *does* change, `type_vtable_changed` reports it instead. |
 | `func_static_changed` | A method changed from static to non-static or vice versa. The calling convention changes (implicit `this` pointer added/removed). |
 | `func_cv_changed` | `const` or `volatile` qualifier on `this` changed. This changes the mangled name and the overload set — existing binaries resolve the wrong symbol. |
 | `func_visibility_changed` | Function visibility changed from default to hidden. The symbol disappears from the dynamic symbol table — callers get undefined symbol at link or load time. |
@@ -110,6 +123,7 @@ These changes are immediately incompatible with existing compiled binaries.
 | `struct_field_type_changed` | A struct field changed its type according to DWARF. Layout and semantics change for that field. |
 | `struct_alignment_changed` | `alignof(T)` changed according to DWARF. Critical for SIMD types and cross-platform code. |
 | `calling_convention_changed` | The calling convention for a function changed (from DWARF `DW_AT_calling_convention`). Arguments are passed via different registers or stack layout. |
+| `struct_return_convention_changed` | A public function's aggregate (struct/class/union) **return** convention flipped between in-register and hidden caller-provided pointer (sret) — e.g. via `-freg-struct-return`/`-fpcc-struct-return` or a triviality/size change crossing the register-return threshold (from the DWARF value-ABI return trait). Caller and callee disagree on where the result lives. The return-specific refinement of `value_abi_trait_changed`. |
 | `vector_abi_changed` | The vector-function (SIMD clone) ABI selection drifted between builds (from vector-ABI flags in DWARF `DW_AT_producer`: `-mveclibabi=` GCC, `-fveclib=` clang, `-vecabi=` Intel-style). Vectorized call variants resolve to a different ABI, breaking callers of the vector entry points. Downgraded to compatible under the `plugin_abi` policy. |
 | `struct_packing_changed` | `__attribute__((packed))` was added or removed. Changes every field offset and the total size — complete struct layout break. |
 | `type_visibility_changed` | RTTI typeinfo or vtable visibility changed. Cross-DSO `dynamic_cast` and exception matching can silently fail. |
@@ -123,6 +137,15 @@ Fine-grained layout mechanics that the coarse `struct_size_changed` / `struct_fi
 | `base_class_offset_changed` | A base-class subobject moved to a different offset within the derived object (e.g. an empty-base optimization was lost, or a member/base was inserted ahead of it) without the base list reordering. The `this`-pointer adjustment for that base and every field after it shifts; old binaries read the wrong addresses. |
 | `vptr_introduced` | A previously non-polymorphic class gained its first virtual function, so the compiler prepends a vtable pointer. `sizeof` grows and every data member's offset shifts by a pointer width; existing binaries that embed or derive from the type are laid out incompatibly. |
 | `trivially_copyable_lost` | A type stopped being trivially copyable (e.g. a user-declared copy/move constructor, destructor, or a non-trivial member was added). Non-trivially-copyable types are passed and returned by value differently (via a hidden reference / not in registers), so the calling convention for any function taking or returning it by value changes. |
+
+### Binary-only C++ Layout (no DWARF / L0)
+
+Recovered from `.dynsym` symbol sizes alone by `diff_elf_layout.py`. The Itanium C++ ABI fixes the on-disk size of a class's vtable (`_ZTV`) and typeinfo (`_ZTI`) objects, so these break detections work on libraries shipped fully stripped of debug info and headers — closing the blind spot a pure exported-symbol dump has (a virtual-method or base-class change need not rename any mangled symbol). Each fires only when the *same* `_ZTV`/`_ZTI` symbol is present on both sides with a different size.
+
+| Kind | Description |
+|------|-------------|
+| `vtable_slot_count_changed` | A polymorphic class's vtable (`_ZTV`) object changed size — it now holds a different number of virtual-function slots (a virtual method was added, removed, or reordered). Existing binaries dispatch through fixed vtable offsets, so they call the wrong slot. The binary-only analogue of `func_virtual_added` / `type_vtable_changed`. |
+| `rtti_inheritance_changed` | A polymorphic class's RTTI typeinfo (`_ZTI`) object changed size, which in the Itanium ABI means its base-class shape changed: no-base (`__class_type_info`) ↔ single-base (`__si_class_type_info`) ↔ multiple/virtual-base (`__vmi_class_type_info`), or the base count differs. Base-class changes shift `this`-pointer adjustments, member offsets, and the vtable. The binary-only analogue of `type_base_changed`. |
 
 ### Pointer / Parameter Level Changes
 
@@ -148,6 +171,7 @@ Fine-grained layout mechanics that the coarse `struct_size_changed` / `struct_fi
 | Kind | Description |
 |------|-------------|
 | `symbol_renamed_batch` | Multiple symbols were renamed in a coordinated way (e.g. namespace prefix added or removed, mass refactor). Old binaries reference the old names and get undefined-symbol errors at load time. Emitted as a single roll-up finding so a namespace rename does not flood the report with one entry per symbol. |
+| `versioned_symbol_scheme_detected` | Most removed symbols reappear as added symbols differing only by a numeric version token in the name (e.g. ICU `u_strlen_75` → `u_strlen_78`, or a GNU symbol-version node bump). The large removed/added churn is likely a library-wide versioned-symbol scheme, not independent API removals. **Advisory only** (`COMPATIBLE_WITH_RISK`): it explains the churn and never downgrades the artifact-proven removals. To act on it, opt in with `compare --collapse-versioned-symbols`, which reclassifies the C-style version-rename pairs as compatible so the verdict reflects the real delta (a real SONAME bump and non-versioned removals still drive the verdict). |
 
 ### ELF Symbol Versioning
 
@@ -166,6 +190,17 @@ Fine-grained layout mechanics that the coarse `struct_size_changed` / `struct_fi
 | `symbol_size_changed` | Symbol size (`st_size`) changed in ELF `.dynsym`. In ELF-only analysis mode, this is the primary signal for variable or vtable layout changes. |
 | `symbol_size_changed_internal` | `st_size` changed on an **internal-looking** exported data symbol (reserved/underscore-prefixed, e.g. `_XkeyTable`, `_pcre2_ucd_records_8`, `_UCD_accessors`). Such symbols are often private implementation state rather than intended public ABI, but exported data is still part of the dynamic ABI and size changes can break copy relocations or direct data consumers. This is `BREAKING` by default; use a `--policy-file` override only when the symbol is known private and safe to accept as risk. A size change on a *public-looking* data symbol remains `symbol_size_changed` (`BREAKING`). |
 | `symbol_size_changed_const_object` | Size changed for a public exported const object such as `extern char const name[]`. Even when headers do not expose a fixed bound, old non-PIE consumers can carry copy relocations sized from the old DSO symbol, so this remains a hard binary-compatibility break. |
+
+
+### PE/COFF & Mach-O Platform Metadata (binary-only)
+
+These are recovered from the binary headers / export tables alone — no PDB or DWARF required.
+
+| Kind | Description |
+|------|-------------|
+| `pe_forwarder_changed` | A DLL export forwarder (`OTHERDLL.Symbol`) was repointed to a different target. The implementation behind the exported name changed; dependents get different — possibly missing — behaviour at load time. |
+| `pe_machine_changed` | The PE machine/architecture changed (e.g. `IMAGE_FILE_MACHINE_AMD64` → `IMAGE_FILE_MACHINE_ARM64`). The DLL is a different architecture and cannot be loaded by existing clients. |
+| `macho_cpu_type_changed` | A Mach-O architecture slice that used to ship is gone — e.g. `X86_64` → `ARM64`, or a universal `x86_64+arm64` dylib that dropped its `x86_64` slice. Clients built for the removed architecture can no longer link against or load the dylib. Adding a slice (single-arch → universal) is **not** flagged. |
 
 ---
 
@@ -242,6 +277,12 @@ These changes break the source-level API contract but do not affect already-comp
 | `constant_changed` | A `#define` constant's value changed. Source code that used the constant in a way that depended on its exact value gets different behavior at compile time. |
 | `constant_removed` | A `#define` constant was removed entirely. Source code referencing it fails to compile. |
 
+### Source ABI Replay (L4)
+
+| Kind | Description |
+|------|-------------|
+| `public_typedef_target_changed` | A public typedef/alias now resolves to a different underlying type (e.g. `typedef int32_t handle_t;` became `typedef int64_t handle_t;`). A bare typedef leaves no exported symbol, so source replay (the clang L4 backend, ADR-030) surfaces the change; source relying on the old aliased type may change overload resolution or fail to compile while already-linked binaries are unaffected. |
+
 ### Template and Overload Set Changes
 
 | Kind | Description |
@@ -273,6 +314,9 @@ library from loading in some deployment environments. Manual review is required.
 | `protected_visibility_changed` | An ELF symbol's visibility changed between `STV_DEFAULT` and `STV_PROTECTED`. For data symbols this can break copy relocations; for functions it changes interposition semantics. The symbol remains exported, but consumers using `LD_PRELOAD`-based interposition may stop seeing the override. |
 | `vtable_symbol_identity_changed` | A vtable or `typeinfo` symbol's identity changed (e.g. via a visibility or version-script change) while the class layout is stable. Cross-DSO `dynamic_cast` and exception matching can silently fail because they compare RTTI pointers, not contents. |
 | `overload_set_rerouted` | The overload set under a public name changed in a way where some overloads were removed and others added. Existing call sites that previously resolved to a removed overload now resolve to a different one (often via implicit conversion or a templated catch-all) — compiles, links, runs, but runs **different** code. |
+| `overload_added` | A new overload was added under a public name that previously had exactly one declaration. Old binaries are unaffected (binary compatible), but it is not source-compatible: taking the function's address (`&Foo::bar`) becomes ambiguous and fails to compile, and call sites relying on an implicit conversion may now resolve to the new overload. KDE's C++ binary-compatibility policy lists adding an overload to a non-overloaded function as a change to avoid. Raise to `API_BREAK` under a strict source-compatibility profile. |
+| `func_noexcept_removed` | `noexcept` removed from a function. The function symbol itself is unchanged (Itanium mangling does not encode `noexcept` on the symbol), so existing binaries keep resolving it — not a binary break. But since C++17 `noexcept` is part of the function *type*, so it is encoded in function-pointer and template-argument mangling: a consumer forming `void(*)() noexcept` or passing the function as a non-type template argument no longer compiles, and code relying on the guarantee can hit `std::terminate`. KDE lists this as a change to avoid unless the spec was `noexcept(false)`. Raise to `API_BREAK` under a strict source-compatibility profile. |
+| `type_lost_final` | A class/struct lost the `final` specifier. Deriving from it is now allowed and previously-valid source still compiles, so it is not a source break — but consumers compiled while the class was `final` may have had virtual calls **devirtualized**, and if a later version introduces an overriding subclass those old binaries dispatch statically to the wrong target. KDE lists removing `final` as a change to avoid. Header/castxml-mode only (DWARF/symbol mode carries no `final` info). |
 | `behavioural_default_changed` | A documented default value changed without altering any signature — e.g. the default device selector, the default execution backend, or the default policy. Source compiles and links unchanged; runtime behaviour silently differs. Read from the probe manifest's `defaults:` section. |
 | `relro_weakened` | RELRO protection was weakened (e.g. **full → partial** or **→ none**). The GOT is no longer fully read-only after relocation, widening the GOT-overwrite attack surface. Captured from `PT_GNU_RELRO` + `BIND_NOW`. Not a binary-compatibility break, but a hardening regression. Gate it via the shipped `security` policy (`--policy-file security`). |
 | `pie_disabled` | A position-independent **executable** became non-PIE (`DF_1_PIE` dropped on an `ET_DYN` image), so it loads at a fixed address and ASLR no longer randomizes it. Hardening regression; gate via `--policy-file security`. |
@@ -286,6 +330,10 @@ library from loading in some deployment environments. Manual review is required.
 | `standard_layout_lost` | A type stopped being standard-layout (e.g. it gained a mix of access specifiers, a base with members, or virtual members). `offsetof` and C interoperability are no longer guaranteed and tail-padding reuse rules change. Tri-state guarded (read from `is_standard_layout`). **Recommended action:** review code relying on the C-compatible layout. |
 | `tail_padding_reuse_changed` | The type's **data size** (the bytes its own members occupy, excluding trailing tail padding — `dsize`) changed while `sizeof` stayed the same. A derived class may reuse a base's tail padding, so this can silently shift a derived layout even though the base's `sizeof` is unchanged. Tri-state guarded (read from `data_size_bits`). |
 | `layout_unverifiable` | A public type's layout could not be verified at the available evidence tier — one side carries a layout descriptor but the other has no size/offset evidence (e.g. a symbols-only or partial dump), so a real layout change cannot be ruled out. Informational and non-escalating. **Recommended action:** rebuild with debug info (or supply headers) to confirm. |
+| `exceptions_mode_changed` | C++ exception support was toggled between builds (`-fexceptions` ↔ `-fno-exceptions`), detected from the captured build evidence (L3). The modes are not link-compatible: an exception unwinding through a frame built with `-fno-exceptions` is undefined behaviour, and the flag changes the codegen/EH tables of every public inline that uses `throw`/`try`/`catch`. RISK, never breaking on its own — the artifact diff confirms a concrete break. **Recommended action:** rebuild consumers in the matching mode if the public API exposes exception types or throwing inlines. |
+| `rtti_mode_changed` | C++ RTTI support was toggled between builds (`-frtti` ↔ `-fno-rtti`), from the L3 build evidence. `-fno-rtti` omits typeinfo for polymorphic types, so `dynamic_cast`/`typeid` and cross-DSO exception matching can fail when one side has RTTI and the other does not. RISK; the artifact diff confirms concrete breaks. **Recommended action:** rebuild consumers in the matching mode if the public API exposes polymorphic types or `dynamic_cast`/`typeid` in inlines. |
+| `tls_model_changed` | The thread-local storage model changed between builds (`-ftls-model=`, or `-fextern-tls-init` ↔ `-fno-extern-tls-init`), from the L3 build evidence. The TLS access sequence — and, with `-fextern-tls-init`, whether a wrapper mediates access to a dynamically-initialized `thread_local` from another TU — differs, so consumers built against the old model can use the wrong access pattern for an exported `thread_local`. |
+| `threadsafe_statics_mode_changed` | Thread-safe initialization of function-local statics was toggled (`-fno-threadsafe-statics` ↔ default), from the L3 build evidence. `-fno-threadsafe-statics` omits the `__cxa_guard` acquire/release around a local static's first-use init, so a public inline holding a function-local static, compiled in different modes across TUs, has mismatched guard expectations — a data race or double-init on concurrent first use. |
 
 See the [Security-hardening drift](../user-guide/security-hardening.md) guide for how to scan for these across releases.
 
@@ -303,7 +351,6 @@ These changes are safe: they add new capabilities or carry diagnostic informatio
 | `var_added` | A new public global variable was exported. Existing binaries are unaffected. |
 | `type_added` | A new type was added to the public API. Additive — existing consumers are unchanged. |
 | `type_field_added_compatible` | A field was appended to a standard-layout, non-polymorphic struct. Size increases but no existing field offsets shift. Compatible only for types meeting the standard-layout criteria. |
-| `type_lost_final` | A class/struct lost the `final` specifier. Strictly more permissive — deriving from it is now allowed and previously-valid code still compiles. Header/castxml-mode only. |
 
 ### Enum Additions
 
@@ -322,7 +369,6 @@ These changes are safe: they add new capabilities or carry diagnostic informatio
 | Kind | Description |
 |------|-------------|
 | `func_noexcept_added` | `noexcept` added to a function. The Itanium ABI mangling does not change in practice; existing compiled binaries resolve the same symbol. A source-level concern for function-pointer typing only. |
-| `func_noexcept_removed` | `noexcept` removed from a function. Existing binaries continue to resolve the symbol. A source-level exception-specification concern only. |
 
 ### Function Visibility and Inline Attribute Changes
 
@@ -364,7 +410,7 @@ These changes are safe: they add new capabilities or carry diagnostic informatio
 | Kind | Description |
 |------|-------------|
 | `dwarf_info_missing` | The new binary was stripped of debug info (`-g`). abicheck cannot perform DWARF-based comparison — this is a coverage gap warning, not a proven ABI break. |
-| `evidence_coverage_asymmetric` | The base snapshot was analyzed with evidence layers the target lacks (e.g. base scanned with binary + debug + headers + build + sources, target only with binary + headers). The comparison is scoped to the layers both sides share; changes only the missing layers could prove are not reported. Re-scan the target with the same inputs to restore full coverage. |
+| `layer_coverage_asymmetric` | The base snapshot was analyzed with evidence layers the target lacks (e.g. base scanned with binary + debug + headers + build + sources, target only with binary + headers). The comparison is scoped to the layers both sides share; changes only the missing layers could prove are not reported. Re-scan the target with the same inputs to restore full coverage. |
 | `toolchain_flag_drift` | Toolchain flags drifted between builds (e.g., `-fshort-enums`, `-fpack-struct`). Informational — may indicate a real break that other checks (size, alignment) would catch. |
 
 ### ABI Surface Diagnostics

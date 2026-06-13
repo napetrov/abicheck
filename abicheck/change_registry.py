@@ -132,12 +132,30 @@ REGISTRY = ChangeKindRegistry([
        impact="Callers push arguments with the old layout; callee reads wrong data from stack/registers."),
     _E("func_noexcept_added", _C,
        impact="In C++17 noexcept is part of the function type; old callers compiled against non-noexcept signature get a different mangled name."),
-    _E("func_noexcept_removed", _C,
-       impact="Old callers may rely on noexcept guarantee for optimizations; removing it can cause unexpected std::terminate."),
+    _E("func_noexcept_removed", _R,
+       impact="`noexcept` removed from a function. Old binaries keep resolving "
+              "the symbol, so this is not a binary break — but since C++17 "
+              "`noexcept` is part of the function *type*, so it is encoded in "
+              "function-pointer and template-argument mangling: consumers that "
+              "form a `void(*)() noexcept` pointer or pass the function as a "
+              "non-type template argument no longer compile, and code relying on "
+              "the guarantee can hit `std::terminate`. KDE's C++ binary-"
+              "compatibility policy treats removing `noexcept` as a change to "
+              "avoid unless it was `noexcept(false)`. Verdict is policy-"
+              "adjustable; raise to API_BREAK under a strict source profile."),
     _E("func_virtual_added", _B,
        impact="Vtable layout changes; old binaries call wrong virtual function slot, leading to crashes or wrong behavior."),
     _E("func_virtual_removed", _B,
        impact="Vtable entry removed; old binaries that dispatch through the vtable call the wrong slot."),
+    _E("virtual_method_added", _B,
+       impact="A new virtual method was added to a class that already exists across "
+              "versions. If the class had no virtuals it gains a hidden vtable pointer "
+              "(its size and field offsets shift); if it was already polymorphic the new "
+              "slot grows/relayouts the vtable. Either way derived classes compiled "
+              "against the old layout dispatch through the wrong slots and old binaries "
+              "embedding the type read the wrong offsets. This is the KDE "
+              "\"do not add virtuals to a non-leaf class\" rule, caught even when the "
+              "snapshot carries no diff-able vtable array (DWARF/symbol-only mode)."),
     _E("var_removed", _B,
        impact="Old binaries reference a global variable that no longer exists; link or load failure."),
     _E("var_added", _C, is_addition=True,
@@ -236,6 +254,20 @@ REGISTRY = ChangeKindRegistry([
     # ── Mach-O specific ───────────────────────────────────────────────────
     _E("compat_version_changed", _B,
        impact="Mach-O compatibility version changed; dylibs linked against old version may fail to load."),
+    _E("macho_cpu_type_changed", _B,
+       impact="A Mach-O architecture slice that used to ship is gone (e.g. a universal "
+              "x86_64+arm64 dylib dropped its x86_64 slice, or x86_64 → arm64). Existing "
+              "clients built for the removed architecture can no longer link against or load "
+              "the dylib. Adding slices (single-arch → universal) is not flagged."),
+
+    # ── PE/COFF specific (binary-only, no PDB needed) ─────────────────────
+    _E("pe_forwarder_changed", _B,
+       impact="A DLL export forwarder was repointed to a different target (DLL!Symbol). The "
+              "effective implementation behind the exported name changed; dependent binaries get "
+              "different — and possibly missing — behaviour at load time."),
+    _E("pe_machine_changed", _B,
+       impact="PE machine/architecture changed (e.g. AMD64 → ARM64); the DLL is a different "
+              "architecture and cannot be loaded by existing clients."),
 
     # ── ELF security / bad practice ────────────────────────────────────────
     _E("executable_stack", _C,
@@ -293,12 +325,25 @@ REGISTRY = ChangeKindRegistry([
 
     # ── DWARF layout (Sprint 3) ───────────────────────────────────────────
     _E("dwarf_info_missing", _C),
-    _E("evidence_coverage_asymmetric", _R,
+    _E("layer_coverage_asymmetric", _R,
        impact="The base snapshot was analyzed with evidence layers the target "
               "lacks (e.g. debug info, build context, or source ABI). The "
               "comparison is scoped to the layers both sides share, so changes "
               "only the missing layers could prove are not reported. Re-scan "
               "the target with the same inputs to restore full coverage."),
+    _E("versioned_symbol_scheme_detected", _R,
+       impact="Most removed symbols reappear as added symbols differing only by a "
+              "version token in the name (e.g. ICU 'u_strlen_75' -> 'u_strlen_78', "
+              "or a GNU symbol-version node bump). The large removed/added churn is "
+              "likely a library-wide versioned-symbol scheme, not independent API "
+              "removals — review against the library's versioning convention; a "
+              "suppression preset can scope these renames to compatible."),
+    _E("evidence_required_missing", _A,
+       impact="A policy require_evidence layer (build context, source ABI, or "
+              "source graph) was declared mandatory but is absent from this "
+              "compare, so the run is failed rather than passing on a silently "
+              "degraded scan (ADR-033 D7). Supply the missing evidence pack or "
+              "relax the policy."),
     _E("struct_size_changed", _B,
        impact="sizeof(T) changed in debug info; confirms layout break visible at binary level."),
     _E("struct_field_offset_changed", _B,
@@ -327,6 +372,17 @@ REGISTRY = ChangeKindRegistry([
        policy_overrides={"plugin_abi": _C}),
     _E("vector_abi_changed", _B,
        impact="Vector-function (SIMD clone) ABI selection changed (-mveclibabi/-fveclib/-vecabi); vectorized call variants resolve to a different ABI, so callers of the vector entry points pass/return data in the wrong registers.",
+       policy_overrides={"plugin_abi": _C}),
+    _E("struct_return_convention_changed", _B,
+       impact="The aggregate (struct/class/union) return convention changed for a "
+              "public function — e.g. a small struct that was returned in registers "
+              "is now returned via a hidden caller-provided pointer (sret), or vice "
+              "versa (-freg-struct-return ↔ -fpcc-struct-return, or a "
+              "triviality/size change that crosses the register-return threshold). "
+              "Callers and callee disagree on where the result lives, so the return "
+              "value is read from the wrong location — silent corruption or a crash. "
+              "Proven from DWARF/ABI facts, so BREAKING; the flag-only signal stays "
+              "as the generic abi_relevant_build_flag_changed (RISK).",
        policy_overrides={"plugin_abi": _C}),
 
     # ── Sprint 2 — gap detectors ──────────────────────────────────────────
@@ -704,11 +760,16 @@ REGISTRY = ChangeKindRegistry([
               "fails — a source/API break. Invisible to binary analysis: "
               "`final` is not recorded in DWARF or the object file, so this is "
               "detected only in header (castxml) mode."),
-    _E("type_lost_final", _C,
-       impact="A class/struct lost the `final` specifier. This is strictly "
-              "more permissive — code that compiled before still compiles, and "
-              "deriving from the type is now allowed. Reported as a compatible "
-              "change for surface-tracking completeness."),
+    _E("type_lost_final", _R,
+       impact="A class/struct lost the `final` specifier. Deriving from it is "
+              "now allowed and previously-valid source still compiles, so this "
+              "is not a source break. The risk is on already-compiled consumers: "
+              "code built while the class was `final` may have had its virtual "
+              "calls *devirtualized*, and if a later version introduces a "
+              "subclass that overrides, those old binaries keep dispatching "
+              "statically to the wrong target. KDE's C++ binary-compatibility "
+              "policy lists removing `final` as a change to avoid; surfaced as a "
+              "deployment risk for review rather than a hard break."),
 
     # ── Namespace-shape patterns (PR follow-up to #238) ─────────────────
     # Generic detectors for template / header-only libraries (the patterns
@@ -778,6 +839,17 @@ REGISTRY = ChangeKindRegistry([
               "changing the called function. Compiles, links, runs — but "
               "runs different code."),
 
+    _E("overload_added", _R,
+       impact="A new overload was added under a public name that previously had "
+              "exactly one declaration. Old binaries are unaffected (binary "
+              "compatible), but the change is not source-compatible: taking the "
+              "function's address (`&Foo::bar`) becomes ambiguous and fails to "
+              "compile, and existing call sites that relied on an implicit "
+              "conversion may now resolve to the new overload, silently changing "
+              "which function runs. KDE's C++ binary-compatibility policy lists "
+              "adding an overload to a non-overloaded function as a change to "
+              "avoid. Verdict is policy-adjustable — raise to API_BREAK under a "
+              "strict source-compatibility profile."),
     _E("mandatory_template_param_added", _A,
        impact="A function or class template parameter that was defaulted "
               "(or deduced) became mandatory. Consumer source that wrote "
@@ -917,7 +989,7 @@ REGISTRY = ChangeKindRegistry([
               "header. Informational; emitted only with --surface-metrics."),
 
     # ── Build-context evidence (ADR-028 L3 / ADR-029 D9) ────────────────────
-    # Produced by the build-evidence diff over two EvidencePacks. Per ADR-028
+    # Produced by the build-evidence diff over two BuildSourcePacks. Per ADR-028
     # D3 these are never BREAKING on their own: a build change that actually
     # breaks the ABI is caught by the artifact diff (L0/L1/L2) as a separate,
     # artifact-backed finding; these explain and localize it.
@@ -951,6 +1023,43 @@ REGISTRY = ChangeKindRegistry([
               "actually removes or alters exports, the artifact diff (L0) emits "
               "the corresponding BREAKING findings separately; this kind explains "
               "and localizes them and does not escalate on its own."),
+
+    # ── Runtime-model / build-mode flips (L3 gap-analysis follow-up) ─────────
+    # Produced by the build-evidence diff when a runtime-model flag flips. Never
+    # BREAKING on their own (ADR-028 D3); they flag the risk and localize the
+    # cause for the artifact diff to confirm.
+    _E("exceptions_mode_changed", _R,
+       impact="C++ exception support was toggled between builds (-fexceptions ↔ "
+              "-fno-exceptions). The two modes are not link-compatible: an "
+              "exception thrown in -fexceptions code that unwinds through a frame "
+              "compiled with -fno-exceptions is undefined behaviour (it calls "
+              "std::terminate at best), and -fno-exceptions changes the codegen "
+              "and emitted cleanup/EH tables of every public inline that uses "
+              "throw/try/catch. If the public API exposes exception types or "
+              "throwing inlines, rebuild all consumers in the matching mode."),
+    _E("rtti_mode_changed", _R,
+       impact="C++ RTTI support was toggled between builds (-frtti ↔ -fno-rtti). "
+              "-fno-rtti omits typeinfo for polymorphic types, so dynamic_cast / "
+              "typeid against those types, and cross-DSO exception matching that "
+              "relies on RTTI identity, can fail to link or silently misbehave "
+              "when one side was built with RTTI and the other without. If the "
+              "public API exposes polymorphic types or dynamic_cast/typeid in "
+              "inlines, rebuild consumers in the matching mode."),
+    _E("tls_model_changed", _R,
+       impact="The thread-local storage model changed between builds "
+              "(-ftls-model=, or -fextern-tls-init ↔ -fno-extern-tls-init). The "
+              "TLS access sequence (and, with -fextern-tls-init, whether a wrapper "
+              "function mediates access to a dynamically-initialized thread_local "
+              "from another TU) differs, so consumers built against the old model "
+              "can use the wrong access pattern for an exported thread_local."),
+    _E("threadsafe_statics_mode_changed", _R,
+       impact="Thread-safe initialization of function-local statics was toggled "
+              "(-fno-threadsafe-statics ↔ default). With -fno-threadsafe-statics "
+              "the compiler omits the __cxa_guard acquire/release calls around a "
+              "local static's first-use initialization, so a public inline holding "
+              "a function-local static, compiled in different modes across TUs, has "
+              "mismatched guard expectations — a data race or double-init on "
+              "concurrent first use."),
 
     # ── Source ABI replay evidence (ADR-028 L4 / ADR-030 D6) ────────────────
     # Produced by the source-replay diff over two linked source ABI surfaces.
@@ -999,6 +1108,13 @@ REGISTRY = ChangeKindRegistry([
               "the library's exports. With artifact backing this escalates to the "
               "authoritative removed-export finding; on its own it is a "
               "surface/export consistency risk to investigate."),
+    _E("source_binary_provenance_mismatch", _R,
+       impact="A large fraction of the source tree's public declarations fail to "
+              "map to any exported binary symbol, which strongly suggests the "
+              "source checkout does not correspond to the shipped binary (e.g. a "
+              "wrong tag/commit). All L4/L5 source findings for this pair are then "
+              "untrustworthy; re-check the source out at the binary's build tag. "
+              "Per ADR-028 D3 this is a context risk, never a proven binary break."),
     _E("odr_source_conflict", _R,
        impact="The same type name resolves to different definitions across "
               "translation units (One Definition Rule conflict). Linking or "
@@ -1010,6 +1126,14 @@ REGISTRY = ChangeKindRegistry([
               "API surface, so a change can alter declarations or macro contracts "
               "seen by consumers. Policy may escalate to an API break; by default "
               "a risk to review."),
+    _E("public_typedef_target_changed", _A,
+       impact="A public typedef/alias now resolves to a different underlying type "
+              "(e.g. `typedef int32_t handle_t;` became `typedef int64_t "
+              "handle_t;`). Source that relied on the old aliased type — overload "
+              "resolution, template specialization, or the type's size in a "
+              "consumer-owned struct — can change meaning or fail to compile. "
+              "Surfaced by source replay because a bare typedef leaves no exported "
+              "symbol of its own; a source/API break until consumers recompile."),
 
     # ── Source graph evidence (ADR-028 L5 / ADR-031 D6) ─────────────────────
     _E("public_reachability_changed", _R,
@@ -1107,4 +1231,26 @@ REGISTRY = ChangeKindRegistry([
               "dump with no debug info), so a real layout change cannot be ruled out. "
               "Informational and non-escalating; rebuild with debug info (or supply "
               "headers) to confirm."),
+
+    # ── Binary-only (no-DWARF / L0) C++ layout descriptors ───────────────────
+    # Recovered from .dynsym symbol sizes alone by diff_elf_layout.py. The
+    # Itanium C++ ABI fixes the on-disk size of a class's vtable (`_ZTV`) and
+    # typeinfo (`_ZTI`) objects, so these break detections work on libraries
+    # shipped without any DWARF debug info or public headers.
+    _E("vtable_slot_count_changed", _B,
+       impact="A polymorphic class's vtable changed size — its `_ZTV` object now holds "
+              "a different number of virtual-function slots (a virtual method was added, "
+              "removed, or reordered). Existing binaries dispatch through fixed vtable "
+              "offsets, so they call the wrong slot or run off the end of the table. "
+              "Recovered from the ELF symbol size without DWARF — the binary-only analogue "
+              "of FUNC_VIRTUAL_ADDED / TYPE_VTABLE_CHANGED."),
+    _E("rtti_inheritance_changed", _B,
+       impact="A polymorphic class's RTTI typeinfo (`_ZTI`) object changed size, which in "
+              "the Itanium C++ ABI means its base-class shape changed: no-base "
+              "(`__class_type_info`, 2 words) ↔ single-base (`__si_class_type_info`, "
+              "3 words) ↔ multiple/virtual-base (`__vmi_class_type_info`, larger), or the "
+              "number of bases differs. Base-class changes shift `this`-pointer "
+              "adjustments, member offsets, and the vtable, so derived classes and "
+              "by-value users are miscompiled. Recovered from the ELF symbol size without "
+              "DWARF — the binary-only analogue of TYPE_BASE_CHANGED."),
 ])

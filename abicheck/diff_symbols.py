@@ -29,7 +29,13 @@ from .binary_fingerprint import (
 )
 from .checker_policy import ChangeKind
 from .checker_types import Change
+from .demangle import demangle, demangle_batch
 from .detector_registry import registry
+from .diff_cxx_rules import (
+    old_virtual_signatures,
+    owner_class_of,
+    virtual_method_addition,
+)
 from .diff_helpers import bool_transition, diff_by_key
 from .elf_metadata import SymbolType
 from .elf_symbol_filter import (
@@ -727,6 +733,18 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     old_map = _public_functions(old)
     new_map = _public_functions(new)
 
+    # Lookups for the virtual-method-addition check below: type records, the
+    # old surface's scope-qualified owner classes (disambiguates same-leaf
+    # classes across namespaces), and per-class virtual signatures (to skip
+    # inherited overrides). See ``virtual_method_addition``.
+    old_types = {t.name: t for t in old.types}
+    new_types = {t.name: t for t in new.types}
+    old_owner_classes = {
+        owner for f in old_map.values()
+        if (owner := owner_class_of(f)) is not None
+    }
+    old_virtual_sigs = old_virtual_signatures(old.function_map.values())
+
     # Build a lookup of ALL functions in new snapshot (including hidden).
     new_all = new.function_map
 
@@ -749,7 +767,9 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
     for mangled, f_new in new_map.items():
         if mangled not in old_map and f_new.name not in matched_by_name:
-            changes.append(Change(
+            virtual_break = virtual_method_addition(
+                f_new, old_owner_classes, old_types, new_types, old_virtual_sigs)
+            changes.append(virtual_break if virtual_break is not None else Change(
                 kind=ChangeKind.FUNC_ADDED,
                 symbol=mangled,
                 description=f"New public function: {f_new.name}",
@@ -1458,8 +1478,11 @@ def _skip_source_name(symbol: str, i: int) -> int:
     j = i
     while j < len(symbol) and symbol[j].isdigit():
         j += 1
-    end = j + int(symbol[i:j])
-    return end if end <= len(symbol) else -1
+    remaining, length = len(symbol) - j, 0
+    for c in symbol[i:j]:
+        if (length := (length * 10) + (ord(c) - ord("0"))) > remaining:
+            return -1
+    return j + length
 
 
 def _skip_substitution(symbol: str, i: int) -> int:
@@ -1547,7 +1570,6 @@ def _unqualified_name(symbol: str) -> str:
     is a distinct ABI symbol from ``foo<long>``, so they must not collapse to a
     shared leaf (that would mis-report a specialization swap as a rename).
     """
-    from .demangle import demangle
 
     return _unqualified_name_of(demangle(symbol) or symbol)
 
@@ -1713,7 +1735,6 @@ def _param_signature(symbol: str) -> str:
     namespace relocation keeps the parameters; a parameter change is a distinct
     ABI symbol, so comparing this lets the gate reject ``foo(int)`` -> ``foo(long)``.
     """
-    from .demangle import demangle
 
     return _param_signature_of(demangle(symbol) or symbol)
 
@@ -1781,7 +1802,6 @@ def _rename_name_parse(name: str) -> tuple[str | None, str, str, str]:
     same symbol on each pair (the dominant cost of rename detection on large
     ELF-only libraries). Bounded so it cannot grow without limit.
     """
-    from .demangle import demangle
 
     d = demangle(name) or name
     return (
@@ -1955,6 +1975,8 @@ def _diff_fingerprint_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change
     # similarity predicate into the matcher so it participates in candidate
     # *selection*: a coincidental same-size symbol can neither be reported as a
     # rename nor greedily consume a partner that a plausible rename should claim.
+    # P11: one batched c++filt warm so the rename gate's demangle() hits cache, not per-symbol forks.
+    demangle_batch([n for n in (*old_fps, *new_fps) if n.startswith("_Z")])
     candidates = match_renamed_functions(old_fps, new_fps, name_filter=_plausible_rename)
     for c in candidates:
         conf_pct = int(c.confidence * 100)

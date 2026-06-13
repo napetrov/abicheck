@@ -106,11 +106,15 @@ Available cross-compilation flags:
 - `--sysroot` — alternative system root directory
 - `--nostdinc` — do not search standard system include paths
 
-#### Build-context capture (`compile_commands.json`)
+#### Build-context capture (`compile_commands.json`) — evidence layer L3
 
-Modern build systems (CMake, Meson, Ninja) generate a `compile_commands.json`
-file that captures the exact compiler flags for every source file. abicheck
-can ingest this file directly, eliminating manual flag specification:
+This is **evidence layer L3** in abicheck's [five-source evidence
+model](../concepts/evidence-and-detectability.md): on top of the binary (L0),
+debug info (L1), and headers (L2), it feeds abicheck the flags the library was
+*actually* built with. Modern build systems (CMake, Meson, Ninja) generate a
+`compile_commands.json` file that captures the exact compiler flags for every
+source file. abicheck can ingest this file directly, eliminating manual flag
+specification:
 
 ```bash
 # Generate compile_commands.json during build
@@ -139,6 +143,64 @@ explicit flags take precedence.
 abicheck dump libfoo.so -H include/ -p build/ \
     --gcc-options "-DEXTRA_DEFINE=1"
 ```
+
+#### Evidence packs — build & source context (L3 / L4)
+
+The build context above (L3) and **source evidence** (L4) can also be bundled
+into a reusable *build/source pack* — a post-build, opt-in artifact that abicheck
+reads alongside your binaries. A pack never rebuilds your project or runs
+arbitrary commands; it reads existing build outputs and build-system query
+interfaces only. See [Source & Build Evidence
+Packs](../concepts/build-source-data.md) for the full model.
+
+```bash
+# 1. Collect a pack from an existing build tree (no rebuild).
+abicheck collect \
+    --compile-db build/compile_commands.json \
+    --build-dir build --cmake --source-abi \
+    --output libfoo.bs/
+
+# 2. Embed the build + source facts inline in the snapshot. The resulting
+#    .abi.json is self-contained.
+abicheck dump build/libfoo.so -H include/ \
+    --build-info libfoo.bs/ --sources libfoo.bs/ -o libfoo.abi.json
+
+# 3. Compare two snapshots — the embedded facts diff automatically, with no
+#    pack directories to carry around.
+abicheck compare old.abi.json new.abi.json
+```
+
+!!! tip "Build/source data travels inside the snapshot"
+    `dump --build-info`/`--sources` **embed** the normalized build + source
+    facts in the `.abi.json`, so `compare old.json new.json` carries them with
+    no out-of-band directories (single-artifact UX). For advanced use, the
+    `--old-build-info`/`--new-build-info` and `--old-sources`/`--new-sources`
+    flags supply or override those facts per side from a pack directory; raw
+    provenance is never embedded — only the normalized facts that feed the
+    comparison.
+
+| Flag | Command | Description |
+|------|---------|-------------|
+| `--build-info <dir>` | `dump` | Embed a pack's L3 build-info facts inline in the snapshot |
+| `--sources <dir>` | `dump` | Embed a pack's L4/L5 source facts (source ABI replay + graph) inline in the snapshot |
+| `--old-build-info <dir>` / `--new-build-info <dir>` | `compare` | Out-of-band L3 build-info pack per side (overrides embedded) |
+| `--old-sources <dir>` / `--new-sources <dir>` | `compare` | Out-of-band L4/L5 source pack per side (overrides embedded) |
+| `--collect-mode <mode>` | `compare` | Inline collection mode. Only `off` (the default) is functional in this release: it uses embedded facts and any explicitly-provided pack directories. Other modes are accepted and reported in the coverage table, but inline collection for them is not implemented yet — run `abicheck collect` separately instead. |
+
+To additionally capture **L4 source ABI replay** (macro/`constexpr` values,
+default-argument values, uninstantiated templates), add `--source-abi` to
+`collect`. L4 requires `clang` (or castxml for the declaration subset);
+if it is missing, abicheck **degrades gracefully** — L4 is marked partial and
+the artifact-backed tiers (L0–L2) remain fully authoritative. Build/source
+evidence (L3/L4) *explains, localizes, and scopes* findings or raises its own
+source-level findings, but it **never silently deletes an artifact-proven
+break** (the *authority rule*, ADR-028 D3).
+
+!!! tip "Diagnosing which layers you have"
+    Run `abicheck dump libfoo.so --show-data-sources` to print which evidence
+    layers (L0 binary metadata, L1 debug info, L2 header AST) abicheck found for
+    a binary, then exit — useful for confirming a stripped build really is
+    missing its debug info before you trust a symbols-only verdict.
 
 #### Debug artifact resolution
 
@@ -185,6 +247,27 @@ Add `-v` / `--verbose` to any native command to enable debug logging:
 abicheck dump libfoo.so -H foo.h -v
 abicheck compare old.json new.json -v
 ```
+
+#### Surface and source-graph reports
+
+Three companion commands report on the public surface and the L5 source graph
+rather than producing a compare verdict:
+
+```bash
+# Structural metrics + idiom/anti-pattern report for one library's public surface
+abicheck surface-report libfoo.so -H include/ --idioms --anti-patterns
+
+# Diff two L5 source-graph summaries (from `collect --source-graph`)
+abicheck compare-graph old-pack/ new-pack/
+
+# Localize a compare finding through the L5 source graph (which TU/include chain)
+abicheck explain-finding --report report.json --finding-id <id> --sources new-pack/
+```
+
+See [API Surface Intelligence](../concepts/api-surface-intelligence.md) for what
+the surface metrics and idiom recognizers mean, and
+[Build & Source Packs](../concepts/build-source-data.md) for producing the packs
+that `compare-graph` / `explain-finding` consume.
 
 ### Report filtering and display options
 
