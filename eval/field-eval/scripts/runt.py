@@ -7,6 +7,7 @@ from __future__ import annotations
 import sys, time, json, resource, subprocess, os
 
 LEDGER = "/tmp/scan/timing.jsonl"
+os.makedirs(os.path.dirname(LEDGER), exist_ok=True)  # open(a) won't create parents
 
 def main():
     label = sys.argv[1]
