@@ -130,6 +130,32 @@ def _find_compiler(is_cpp: bool = False, preferred_family: str | None = None) ->
     return None
 
 
+def _toolchain_family() -> str:
+    """Current C/C++ producer family ("gcc" | "clang" | "")."""
+    if PREFERRED_FAMILY in ("gcc", "clang"):
+        return PREFERRED_FAMILY
+    name = Path(_find_compiler(is_cpp=True) or _find_compiler(is_cpp=False) or "").name
+    if "clang" in name:
+        return "clang"
+    if "gcc" in name or "g++" in name:
+        return "gcc"
+    return ""
+
+
+def _gap_applies(entry: dict) -> bool:
+    """Whether *entry*'s known_gap applies under the current toolchain.
+
+    A ``known_gap_toolchains`` list scopes the gap to specific producers; on any
+    other producer a verdict mismatch is a real failure (so a producer-specific
+    gap like case64/case103 does not mask a regression on the other producer).
+    Absent ⇒ applies everywhere (back-compat).
+    """
+    scope = entry.get("known_gap_toolchains")
+    if not scope:
+        return True
+    return _toolchain_family() in scope
+
+
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
@@ -862,7 +888,9 @@ def run_case(
 ) -> CaseResult:
     """Build, compare, and evaluate one example case."""
     expected_raw = entry.get("expected")
-    known_gap = entry.get("known_gap")
+    # A producer-scoped known_gap only excuses a mismatch under the producer it
+    # applies to; on other producers the gap is dropped so a regression FAILs.
+    known_gap = entry.get("known_gap") if _gap_applies(entry) else None
 
     skip_result = _check_case_preconditions(name, entry)
     if skip_result is not None:

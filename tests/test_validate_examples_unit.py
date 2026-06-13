@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import tests.validate_examples as ve  # noqa: E402
 from tests.validate_examples import (  # noqa: E402
     ARTIFACT_VARIANTS,
     DEFAULT_ARTIFACT_VARIANT,
@@ -22,6 +23,7 @@ from tests.validate_examples import (  # noqa: E402
     _build_info_path,
     _embedded_present_layers,
     _evaluate_verdict,
+    _gap_applies,
     _json_payload,
     _normalize_verdict,
     _result_to_json,
@@ -80,6 +82,37 @@ class TestNormalizeVerdict:
 
 
 # ── ground_truth.json structural integrity ────────────────────────────────
+
+
+class TestKnownGapToolchainScope:
+    """Producer-scoped known_gap must only excuse a mismatch under that producer.
+
+    Guards the clang-lane gating integrity flagged in review: case64's GCC-only
+    gap must NOT mask a clang regression, and case103's clang-only gap must NOT
+    mask a gcc regression.
+    """
+
+    def test_unscoped_gap_applies_everywhere(self):
+        for fam in ("gcc", "clang", ""):
+            with patch.object(ve, "PREFERRED_FAMILY", fam):
+                assert _gap_applies({"known_gap": "x"}) is True
+
+    def test_gcc_scoped_gap_only_under_gcc(self):
+        with patch.object(ve, "PREFERRED_FAMILY", "gcc"):
+            assert _gap_applies({"known_gap_toolchains": ["gcc"]}) is True
+        with patch.object(ve, "PREFERRED_FAMILY", "clang"):
+            assert _gap_applies({"known_gap_toolchains": ["gcc"]}) is False
+
+    def test_clang_scoped_gap_only_under_clang(self):
+        with patch.object(ve, "PREFERRED_FAMILY", "clang"):
+            assert _gap_applies({"known_gap_toolchains": ["clang"]}) is True
+        with patch.object(ve, "PREFERRED_FAMILY", "gcc"):
+            assert _gap_applies({"known_gap_toolchains": ["clang"]}) is False
+
+    def test_real_cases_are_scoped(self):
+        gt = json.loads(_GROUND_TRUTH.read_text())["verdicts"]
+        assert gt["case64_calling_convention_changed"]["known_gap_toolchains"] == ["gcc"]
+        assert gt["case103_toolchain_flag_drift"]["known_gap_toolchains"] == ["clang"]
 
 
 class TestGroundTruthIntegrity:

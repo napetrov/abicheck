@@ -88,6 +88,16 @@ KNOWN_GAPS: dict[str, str] = {
     for k, v in _gt_data["verdicts"].items()
     if "known_gap" in v
 }
+# known_gap_toolchains: case_name → toolchain families the gap applies to.
+# When set, the gap only xfails under those producers; on any other producer a
+# verdict mismatch is a real FAIL (so e.g. case64's GCC-only gap does not mask a
+# clang regression on the calling-convention break — the reason the clang lane
+# exists). Absent ⇒ applies to all producers (back-compat).
+KNOWN_GAP_TOOLCHAINS: dict[str, list[str]] = {
+    k: list(v["known_gap_toolchains"])
+    for k, v in _gt_data["verdicts"].items()
+    if v.get("known_gap_toolchains")
+}
 # requires_feature: case_name → compiler feature that must be available, else
 # the case is skipped (the fixture cannot even compile on toolchains lacking
 # it — e.g. C23 _BitInt needs GCC 14+, so GCC 13 on ubuntu-latest skips it).
@@ -499,6 +509,25 @@ def _dump_and_compare(
     return result.verdict.value.upper(), result.changes
 
 
+def _toolchain_family() -> str:
+    """Best-effort current C/C++ producer family ("gcc" | "clang" | "")."""
+    name = Path(os.environ.get("CXX") or os.environ.get("CC")
+                or _find_cxx_compiler() or _find_compiler() or "").name
+    if "clang" in name:
+        return "clang"
+    if "gcc" in name or "g++" in name:
+        return "gcc"
+    return ""
+
+
+def _gap_applies(case_name: str) -> bool:
+    """Whether *case_name*'s known_gap applies under the current toolchain."""
+    scope = KNOWN_GAP_TOOLCHAINS.get(case_name)
+    if not scope:
+        return True  # unscoped gap applies everywhere (back-compat)
+    return _toolchain_family() in scope
+
+
 def _assert_verdict(
     case_name: str,
     expected_verdict: str,
@@ -506,7 +535,7 @@ def _assert_verdict(
     changes: list,
 ) -> None:
     """Assert that the verdict matches, handling known gaps as xfail."""
-    if case_name in KNOWN_GAPS:
+    if case_name in KNOWN_GAPS and _gap_applies(case_name):
         if _normalize_verdict(got) != _normalize_verdict(expected_verdict):
             pytest.xfail(KNOWN_GAPS[case_name])
 
