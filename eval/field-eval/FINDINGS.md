@@ -113,3 +113,36 @@ gcc 13.3 / clang 18.1, castxml ABSENT.
 - meson setup (freetype, 42 TU): 0.85s | autotools configure (libffi): 6.5s | bear -- make (libffi, 20 TU): 9.75s
 - L3 (meson auto-discover): 0.32s | L3+L4+L5 (freetype 42 TU): 31.9s (~0.76s/TU)
 - compare on huge surfaces: icu 30.1s, openssl 2.5s, openblas 4.4s
+
+## Iteration 3 — LLVM scale stress test
+
+`libllvm17` 17.0.6 (libLLVM-17.so, 150MB, **146,339 funcs**) vs `libllvm18` 18.1.8
+(libLLVM.so.18.1, 154MB, **153,115 funcs**).
+
+| step | time | peak RSS | output |
+|---|---|---|---|
+| dump v17 | 17.0s | 329MB | 39MB snapshot |
+| dump v18 | 15.7s | 337MB | 40MB snapshot |
+| compare | 22.0s | 301MB | 50,443 changes, **BREAKING** |
+
+Result: 2,338 breaking, 44,771 risk, 3,334 additions. Top kinds:
+`symbol_moved_version_node`×**36,991**, `vtable_symbol_identity_changed`×7,763,
+`func_added`×2,580, `func_removed_elf_only`×1,808.
+
+### Findings
+- **POSITIVE** abicheck handles LLVM-scale (150MB / 146k symbols) in **~55s end-to-end**
+  with **~330MB RAM** — memory-efficient, no blowup. The L0 path scales fine to the biggest
+  real-world C++ shared library.
+- **P11 refined [PERF]** Compare cost is driven by the **fuzzy rename matcher**, NOT raw symbol
+  count: LLVM (146k funcs, 93 renames) = 22s, but ICU (20k funcs, **2134** renames) = 30s. The
+  rename heuristic is ~O(removed×added); naming schemes that maximize add+remove churn (ICU's
+  `_NN` version suffix) are the worst case. *Fix idea:* cap/bucket rename candidates, or skip
+  rename detection above a churn threshold.
+- **P08 reinforced** LLVM repeats the OpenSSL pattern: a versioned-symbol scheme (`LLVM_17`→
+  `LLVM_18`) yields **36,991 `symbol_moved_version_node`** risk findings on a routine major
+  upgrade — overwhelmingly convention noise. A "lib-versioned symbol nodes" normalization/preset
+  would cut 70%+ of the LLVM report.
+- **P13 [PERF/scope]** L4 source replay is **infeasible for LLVM-sized projects**: clone
+  (~GB) + cmake configure (minutes) + clang replay of thousands of TUs @ ~0.8s/TU = hours. The
+  source/build layer is realistically scoped to small/medium libraries or changed-TU subsets,
+  not monorepos. (Not tested live — bounded out as impractical for a loop turn.)

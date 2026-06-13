@@ -13,3 +13,6 @@
 {"label": "L345-meson:freetype", "cmd": "abicheck dump --sources src/ft --collect-mode source-target -o snap/ft.L345.json", "wall_s": 31.947, "rc": 0, "peak_rss_mb": 392.0}
 {"label": "L3-autotools-nobear:ffi", "cmd": "abicheck dump --sources src/libffi-3.4.6 --collect-mode build -o snap/ffi.nobear.json", "wall_s": 0.273, "rc": 0, "peak_rss_mb": 32.8}
 {"label": "L3-autotools-bear:ffi", "cmd": "abicheck dump --sources src/libffi-3.4.6 --collect-mode build -o snap/ffi.bear.json", "wall_s": 0.303, "rc": 0, "peak_rss_mb": 33.5}
+{"label": "dump:llvm-17", "cmd": "abicheck dump pkgs/ex_libllvm17_17.0.6/lib/libLLVM-17.so -o snap/llvm17.json", "wall_s": 17.055, "rc": 0, "peak_rss_mb": 329.3}
+{"label": "dump:llvm-18", "cmd": "abicheck dump pkgs/ex_libllvm18_18.1.8/lib/libLLVM.so.18.1 -o snap/llvm18.json", "wall_s": 15.745, "rc": 0, "peak_rss_mb": 337.3}
+{"label": "compare:llvm-17v18", "cmd": "abicheck compare snap/llvm17.json snap/llvm18.json --format json -o /tmp/scan/llvm_cmp.json", "wall_s": 22.009, "rc": 4, "peak_rss_mb": 300.8}
