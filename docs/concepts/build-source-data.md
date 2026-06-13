@@ -169,6 +169,34 @@ embedded `build_source` facts together per layer (each layer should come from
 exactly one input), so the result is a single `.abi.json` carrying all of
 L0–L5.
 
+### Choosing how much to collect — `dump --collect-mode`
+
+`dump --collect-mode` (the ADR-033 D2 CI evidence mode) selects *which* layers
+are collected from `--sources` / `--build-info`, trading cost for depth:
+
+```bash
+abicheck dump --sources ./src/ --collect-mode build         -o s.json  # L3 only
+abicheck dump --sources ./src/ --collect-mode source-target -o s.json  # L3+L4+L5 (default)
+abicheck dump --sources ./src/ --collect-mode off           -o s.json  # embed nothing
+```
+
+| Mode | Layers collected | Replay scope |
+|------|------------------|--------------|
+| `off` | none | — |
+| `build` | L3 build context only | — |
+| `graph-build` | L3 + L5 graph (no source replay) | — |
+| `source-changed` | L3 + L4 + L5 | changed TUs |
+| `source-target` *(default)* | L3 + L4 + L5 | target |
+| `graph-summary` | L3 + L4 + L5 | changed |
+| `graph-full` | L3 + L4 + L5 | full |
+
+`build` is the cheap PR default (build-flag/toolchain drift, no source parse);
+`graph-build` additionally folds the **L5 structural graph** (target → source →
+header → build-option nodes) from those L3 facts *without* the L4 source replay,
+so the graph + build options are available even on large monorepos where a full
+L4 parse would take hours; the `source-*` / `graph-*` modes add the L4 source
+replay and L5 graph at the matching replay scope.
+
 ### Build-tool query configuration (`.abicheck.yml`)
 
 A source checkout often *contains* the build system. abicheck can use existing
@@ -445,6 +473,7 @@ Comparing two linked source surfaces emits these change kinds (ADR-030 D6):
 | `inline_body_changed` | risk | A public inline body changed with no exported-symbol change (mixed-build/ODR risk) |
 | `template_body_changed` | risk | An uninstantiated public template implementation changed (the ADR-026 `case122` residual) |
 | `source_decl_binary_symbol_mismatch` | risk | A public declaration no longer maps to an exported symbol |
+| `source_binary_provenance_mismatch` | risk | Most of the source tree's public declarations fail to map to any exported symbol — the source checkout likely does not correspond to the binary (wrong tag/commit) |
 | `odr_source_conflict` | risk | The same type name resolves to different definitions across TUs |
 | `generated_header_changed` | risk | A generated public configuration header changed (policy may escalate) |
 
@@ -495,6 +524,42 @@ The same rows are emitted as a structured `layer_coverage` array in the
 `evidence_coverage` in 1.x), so machine consumers can key off layer status
 and confidence.
 
+### Evidence metrics (timing & finding split)
+
+Alongside the coverage table, a pack-aware compare prints an **evidence-metrics
+summary** (ADR-033 D6/D9) so CI can tune which evidence mode to run by cost and
+signal:
+
+```text
+Evidence metrics:
+  collection time            0.0142s
+  findings                   artifact-backed=3, source-only=0, build-context-drift=1
+```
+
+The same numbers are emitted as a structured `evidence_metrics` object in the
+`--format json` report (schema `report_schema_version` 2.1+), keyed by the D9
+metric names:
+
+```json
+"evidence_metrics": {
+  "extractor.duration_seconds": 0.0142,
+  "coverage.build_context.present": true,
+  "coverage.source_abi.mode": "not_collected",
+  "coverage.graph.mode": "not_collected",
+  "findings.artifact_backed.count": 3,
+  "findings.source_only.count": 0,
+  "findings.build_context_drift.count": 1,
+  "findings.evidence_required_missing.count": 0,
+  "findings.demoted_by_surface.count": 0,
+  "findings.suppressed_with_reason.count": 0
+}
+```
+
+`artifact-backed` findings are proven by the binary/debug/header tiers (L0–L2);
+`source-only` and `build-context-drift` come from the optional L3–L5 layers and
+never override an artifact-backed verdict. Both blocks are additive and present
+only when build-info/source facts were involved in the compare.
+
 ### What is being checked — and what is not, and why
 
 Right below the coverage table, every pack-aware compare prints a **capability
@@ -525,6 +590,72 @@ that was **not** parsed with the build's ABI-relevant flags. To avoid this,
 dump the snapshot with the build's compile database — `abicheck dump … -p build/`
 records `parsed_with_build_context` on the snapshot, and a later `compare`
 honors it and suppresses the drift finding.
+
+## Inputs, expectations & cost — a field guide
+
+Source/build data is opt-in and its value (and price) depends entirely on **what
+you can feed it**. This guide maps each realistic input to what you get, what it
+*cannot* see, and the rough cost. (Times are order-of-magnitude from a field
+evaluation across ~30 conda-forge libraries up to LLVM/oneDAL on a 4-core box;
+your numbers scale with translation-unit count and per-TU header weight.)
+
+### What each input buys you
+
+| You have | Layers | Detects | Key limitation | Typical cost |
+|---|---|---|---|---|
+| Just the `.so`/`.dll`/`.dylib` | L0 | added/removed/renamed symbols, SONAME, linkage, symbol-versioning, binary-only vtable/RTTI size deltas | no types/layout — shipped release binaries are usually DWARF-stripped, so you run `elf_only` (LOW confidence) | dump 0.3–0.6 s small, ~17 s for a 150 MB/150k-symbol lib |
+| + debug info (DWARF/PDB/BTF/CTF) | +L1 | struct layout, member/enum/typedef changes, calling convention, signatures | only as good as the debug info shipped; release packages rarely include it (install the `-dbg`/`debuginfo` package) | adds a few seconds + a larger snapshot |
+| + public headers (`-H`) | +L2 | API decls absent from the symbol table; **public-surface scoping** to cut internal noise | needs **castxml**; castxml ≤0.6.3 cannot parse a modern libstdc++ (`<string>` etc.), so L2 is reliable for C, fragile for C++; `-H` should be given the build's `-I` dirs (generated headers) | sub-second per header set |
+| + build dir / compile DB (`--build-info` / `--build-query`) | +L3 | toolchain & build-flag drift (visibility, `-std`, ABI flags), target/source/option graph | a plain `compile_commands.json` carries compile units but not targets/toolchains (use the CMake File API for those); command-string DBs under-report normalized options | **flat ~0.3–0.5 s** regardless of project size — it only parses the DB |
+| + source checkout (`--sources`) | +L4+L5 | macro / default-arg / inline / template / constexpr **body** changes; full source→symbol graph | **needs clang** and the **generated headers to exist** (configure-only fails on tablegen `*.inc`); the default clang extractor emits body fingerprints, not full decl tables (a pure-C public API yields little) | **dominated by clang re-parsing every TU**: ~0.3 s/TU (simple C) → ~2 s/TU (C++); LLVM-scale = tens of minutes to hours |
+
+### Source-phase by build system
+
+`--sources` needs a `compile_commands.json`. How you get one differs:
+
+| Build system | Compile DB | abicheck flow |
+|---|---|---|
+| **CMake** | `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` at configure | auto-discovered if it lands in `build/` (or pass `--build-info`) |
+| **Meson** | always emitted by `meson setup` (no build needed) | auto-discovered in `build/`/`builddir` — the smoothest path |
+| **Autotools** | none, ever | run `bear -- make` (a real build), or wire `--build-query` |
+| **Bazel / custom** | via `bazel aquery` or a wrapper | pre-capture and pass `--build-info`; heavyweight toolchains (e.g. oneDAL: Bazel + oneMKL/DPC++) are impractical to configure in a generic CI box — use the artifact tiers there |
+
+abicheck never runs your build by default. To let it run the configure/query step
+itself, pass the command on the CLI (no config file needed):
+
+```bash
+abicheck dump libfoo.so --sources ./src \
+  --build-query 'cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON' \
+  --build-compile-db build/compile_commands.json --allow-build-query
+```
+
+(or set `build.query` / `build.compile_db` in `.abicheck.yml`). It is gated by
+`--allow-build-query` and still never runs `make all` / `cmake --build`.
+
+### Time & resource model
+
+- **L0/L1 (artifact)** — fast and memory-frugal even at extreme scale: a 150 MB,
+  ~150k-symbol library dumps in ~17 s using ~330 MB RAM; the snapshot is tens of MB.
+- **L3 (build data)** — effectively free (~0.3–0.5 s), independent of project size.
+- **L4+L5 (source replay)** — the expensive tier; cost ≈ *TUs × per-TU parse*.
+  It does **not** scale to monorepos as a full pass. Control it with:
+  - `--collect-mode source-changed` — replay only the TUs a PR touches (the CI default);
+  - `--collect-mode graph-build` — L3 + the L5 structural graph (build options +
+    target/source/header nodes) with **no** L4 parse — feasible on LLVM in seconds;
+  - the content-addressed per-TU cache (`abicheck collect --build-cache-dir`) — unchanged TUs are skipped on re-runs.
+- **`compare`** — cost is driven less by raw symbol count than by the **fuzzy
+  rename matcher** (≈ O(removed × added)). Naming schemes that churn the whole
+  surface (ICU's `_NN` version suffix) are the worst case; the
+  `versioned_symbol_scheme_detected` advisory flags that situation.
+
+### Recommended defaults
+
+- **PR gate:** dump the two binaries (L0/L1) + `--collect-mode build` for cheap
+  build-flag drift. Add `source-changed` only if you need source-level API checks.
+- **Release:** the full `--sources` pass on the changed library, with `-H` for
+  public-surface scoping.
+- **Monorepo / huge project:** stay on the artifact tiers + `graph-build`; never
+  run a full L4 pass over thousands of TUs.
 
 ## Schema & storage
 

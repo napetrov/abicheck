@@ -67,6 +67,7 @@ EVIDENCE_TIER_BY_KIND: dict[str, str] = {
     "func_added": "L0",
     "var_added": "L0",
     "var_removed": "L0",
+    "versioned_symbol_scheme_detected": "L0",  # bulk removed↔added churn in the export table
     "func_visibility_changed": "L0",
     "func_language_linkage_changed": "L0",
     "soname_missing": "L0",
@@ -77,6 +78,16 @@ EVIDENCE_TIER_BY_KIND: dict[str, str] = {
     "symbol_size_changed": "L0",
     "symbol_binding_strengthened": "L0",
     "needed_removed": "L0",
+    "needed_added": "L0",
+    "runpath_changed": "L0",
+    "relro_weakened": "L0",
+    "stack_canary_removed": "L0",
+    "executable_stack_removed": "L0",
+    "symbol_version_node_removed": "L0",
+    # Binary-only C++ layout: the _ZTV / _ZTI object sizes encode vtable slot
+    # count and inheritance shape, readable from .dynsym without DWARF/headers.
+    "vtable_slot_count_changed": "L0",
+    "rtti_inheritance_changed": "L0",
     "glibcxx_dual_abi_flip_detected": "L0",
     "abi_tag_changed": "L0",
     "inline_namespace_moved": "L0",
@@ -98,6 +109,10 @@ EVIDENCE_TIER_BY_KIND: dict[str, str] = {
     "type_field_offset_changed": "L1",
     "type_field_added": "L1",
     "type_base_changed": "L1",
+    # Fine-grained class-layout descriptor: a base subobject moving (e.g. an
+    # empty-base optimization lost) is read from DWARF DW_TAG_inheritance
+    # offsets, or from the castxml record layout when headers are supplied.
+    "base_class_offset_changed": "L1",
     "type_kind_changed": "L1",
     "type_vtable_changed": "L1",
     "type_removed": "L1",
@@ -125,6 +140,7 @@ EVIDENCE_TIER_BY_KIND: dict[str, str] = {
     "char8t_migration": "L1",
     "bit_int_width_changed": "L1",
     "value_abi_trait_changed": "L1",
+    "struct_return_convention_changed": "L1",
     "integer_model_changed": "L1",
     "type_became_opaque": "L1",
     "func_virtual_added": "L1",
@@ -152,9 +168,13 @@ EVIDENCE_TIER_BY_KIND: dict[str, str] = {
     # ── L3: build-system context (compile DB) uniquely required ──
     # The dedicated L3 build-evidence kinds (abi_relevant_build_flag_changed,
     # toolchain_version_changed, link_export_policy_changed, …) are produced by
-    # the BuildSourcePack build diff (ADR-029); the example catalog has no case that
-    # *only* L3 can see yet — the one flag-drift case (103) is already visible at
-    # L1 via DWARF-recorded flags — so no kind maps here today.
+    # the BuildSourcePack build diff (ADR-029). The runtime-model flips below are
+    # only proven from the captured build options (a flag flip with no necessary
+    # binary footprint), so they are genuinely L3.
+    "exceptions_mode_changed": "L3",
+    "rtti_mode_changed": "L3",
+    "tls_model_changed": "L3",
+    "threadsafe_statics_mode_changed": "L3",
 }
 
 # Cases with no ``expected_kinds`` (NO_CHANGE baselines, scoped-internal cases,

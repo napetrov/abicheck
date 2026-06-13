@@ -44,6 +44,7 @@ import hashlib
 import json
 import os
 from collections.abc import Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .build_evidence import BuildEvidence, CompileUnit, Target
@@ -67,10 +68,11 @@ REPLAY_SCOPES = ("off", "headers-only", "changed", "target", "full")
 CI_MODE_TO_SCOPE: dict[str, str] = {
     "off": "off",
     "build": "off",
+    "graph-build": "off",  # L5 graph folds from L3 only — no source replay
     "source-changed": "changed",
     "source-target": "target",
     "graph-summary": "changed",
-    "graph-full": "target",
+    "graph-full": "full",
 }
 
 
@@ -81,6 +83,82 @@ def scope_for_ci_mode(mode: str) -> str:
     surprise full parse).
     """
     return CI_MODE_TO_SCOPE.get(mode, "off")
+
+
+#: Which data layers each ADR-033 CI evidence mode collects. ``build`` is L3
+#: only (build context, no source replay/graph); ``off`` collects nothing; the
+#: source/graph modes collect all three (the replay scope above bounds the cost).
+CI_MODE_TO_LAYERS: dict[str, tuple[str, ...]] = {
+    "off": (),
+    "build": ("L3",),
+    # graph-build: L3 build facts + the L5 structural graph (target/source/header/
+    # build_option nodes), skipping the costly L4 source replay. Feasible on
+    # monorepos where full L4 is hours (field-eval P18 — LLVM graph in ~4s vs hours).
+    "graph-build": ("L3", "L5"),
+    "source-changed": ("L3", "L4", "L5"),
+    "source-target": ("L3", "L4", "L5"),
+    "graph-summary": ("L3", "L4", "L5"),
+    "graph-full": ("L3", "L4", "L5"),
+}
+
+
+def collection_for_ci_mode(mode: str) -> tuple[str, tuple[str, ...]]:
+    """Return ``(replay_scope, layers)`` for an ADR-033 CI evidence mode.
+
+    Drives inline collection at ``dump`` time (ADR-028..033 amendment: the CI
+    mode selects the inputs/scopes internally). ``layers`` is empty for ``off``
+    so the caller skips embedding entirely; unknown modes fall back to that.
+    """
+    return scope_for_ci_mode(mode), CI_MODE_TO_LAYERS.get(mode, ())
+
+
+# -- PR-diff localizer (ADR-033 D3) ------------------------------------------
+
+#: Filenames / suffixes that mark a build-system file. A change here is build
+#: context, so it triggers at least Phase-1 ``build`` collection (ADR-033 D3.3).
+_BUILD_FILE_NAMES = frozenset({
+    "cmakelists.txt", "makefile", "gnumakefile", "build", "build.bazel",
+    "workspace", "workspace.bazel", "meson.build", "meson_options.txt",
+    "configure", "configure.ac", "configure.in", "sconstruct", "sconscript",
+    "cargo.toml", "setup.py", "pyproject.toml",
+})
+_BUILD_FILE_SUFFIXES = (
+    ".cmake", ".mk", ".mak", ".bazel", ".bzl", ".ninja", ".pri", ".pro",
+)
+#: Source / header suffixes that warrant a source ABI replay (L4) on change.
+_SOURCE_FILE_SUFFIXES = (
+    ".c", ".cc", ".cpp", ".cxx", ".c++", ".h", ".hh", ".hpp", ".hxx", ".h++",
+    ".inl", ".ipp", ".tcc", ".cu", ".cuh", ".m", ".mm",
+)
+
+
+def _is_build_file(path: str) -> bool:
+    p = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return p in _BUILD_FILE_NAMES or p.endswith(_BUILD_FILE_SUFFIXES)
+
+
+def _is_source_file(path: str) -> bool:
+    return path.replace("\\", "/").lower().endswith(_SOURCE_FILE_SUFFIXES)
+
+
+def recommend_collect_mode(changed_paths: Iterable[str]) -> str:
+    """Recommend an ADR-033 CI evidence mode from a PR's changed paths (D3).
+
+    The PR-diff localizer: a build-system change alone triggers at least Phase-1
+    ``build`` (build-context drift); a source/header change pulls in the L4
+    source replay via ``source-changed`` (a superset that also engages build
+    context). No build- or source-relevant change ⇒ ``off`` (artifact compare
+    remains the authority, ADR-028 D3). This never *replaces* the artifact gate —
+    it only scopes which optional evidence to collect.
+    """
+    paths = list(changed_paths)
+    has_source = any(_is_source_file(p) for p in paths)
+    has_build = any(_is_build_file(p) for p in paths)
+    if has_source:
+        return "source-changed"
+    if has_build:
+        return "build"
+    return "off"
 
 
 # -- scope selection (ADR-030 D7) --------------------------------------------
@@ -521,11 +599,31 @@ class SourceAbiCache:
 
     def __init__(self, cache_dir: Path | str) -> None:
         self.cache_dir = Path(cache_dir)
+        # ADR-033 D9 — hit/miss instrumentation for the cache_hit_rate metric.
+        self.hits = 0
+        self.misses = 0
+
+    @property
+    def hit_rate(self) -> float | None:
+        """Fraction of cacheable lookups served from cache, or ``None`` if none."""
+        total = self.hits + self.misses
+        return self.hits / total if total else None
 
     def _path(self, key: str) -> Path:
         return self.cache_dir / f"{key}.json"
 
     def get(self, key: str | None) -> SourceAbiTu | None:
+        tu = self._get(key)
+        # A None key is "uncacheable" (not a lookup); only count real lookups so
+        # the hit rate reflects cacheable TUs.
+        if key:
+            if tu is not None:
+                self.hits += 1
+            else:
+                self.misses += 1
+        return tu
+
+    def _get(self, key: str | None) -> SourceAbiTu | None:
         if not key:
             return None
         path = self._path(key)
@@ -629,9 +727,16 @@ def run_source_replay(
         target_id=target_id,
         include_map=include_map,
     )
-    tus: list[SourceAbiTu] = []
-    diagnostics: list[str] = []
-    for cu in units:
+    # P06: the per-TU extractor (clang/castxml subprocess) is the L4 bottleneck and
+    # is embarrassingly parallel. We fan ONLY extractor.extract() out across a
+    # thread pool; cache get/put stay single-threaded and results are reassembled
+    # in unit order, so the linked surface and diagnostics are byte-for-byte
+    # identical to the serial run regardless of worker count.
+    # Phase 1 (serial): cache lookups, split hits from misses keeping order.
+    keys: list[str | None] = []
+    results: list[SourceAbiTu | None] = [None] * len(units)
+    misses: list[int] = []
+    for i, cu in enumerate(units):
         key = (
             compute_tu_cache_key(
                 extractor_name=getattr(extractor, "name", "source"),
@@ -642,18 +747,48 @@ def run_source_replay(
             if cache is not None
             else None
         )
-        tu = cache.get(key) if cache is not None else None
-        if tu is None:
-            try:
-                tu = extractor.extract(
-                    cu, public_header_roots=roots, target_id=target_id
-                )
-            except SourceExtractionError as exc:
-                diagnostics.append(f"{cu.source or cu.id}: {exc}")
-                continue
-            if cache is not None:
-                cache.put(key, tu)
-        tus.append(tu)
+        keys.append(key)
+        cached = cache.get(key) if cache is not None else None
+        if cached is not None:
+            results[i] = cached
+        else:
+            misses.append(i)
+
+    # Phase 2 (parallel): extract the cache misses. Stateless per TU.
+    diags: dict[int, str] = {}
+
+    def _extract(i: int) -> tuple[int, SourceAbiTu | None, str | None]:
+        cu = units[i]
+        try:
+            return i, extractor.extract(
+                cu, public_header_roots=roots, target_id=target_id), None
+        except SourceExtractionError as exc:
+            return i, None, f"{cu.source or cu.id}: {exc}"
+
+    jobs = _l4_jobs(len(misses))
+    if jobs > 1 and len(misses) > 1:
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            extracted = list(pool.map(_extract, misses))
+    else:
+        extracted = [_extract(i) for i in misses]
+    for i, tu, err in extracted:
+        if err is None:
+            results[i] = tu
+        else:
+            diags[i] = err
+
+    # Phase 3 (serial): cache puts + assemble in unit order (deterministic).
+    miss_set = set(misses)
+    tus: list[SourceAbiTu] = []
+    diagnostics: list[str] = []
+    for i in range(len(units)):
+        tu = results[i]
+        if tu is not None:
+            if cache is not None and i in miss_set and keys[i] is not None:
+                cache.put(keys[i], tu)
+            tus.append(tu)
+        elif i in diags:
+            diagnostics.append(diags[i])
 
     surface = link_source_abi(
         tus,
@@ -668,6 +803,22 @@ def run_source_replay(
     surface.coverage["compile_units_parsed"] = len(tus)
     surface.coverage["extractor_failures"] = len(diagnostics)
     return surface, diagnostics
+
+
+def _l4_jobs(n_units: int) -> int:
+    """Worker count for parallel L4 extraction (P06).
+
+    ``ABICHECK_L4_JOBS`` overrides (set ``1`` to force serial — used by tests to
+    prove determinism). Otherwise auto: one worker per cache-miss TU, capped at
+    the CPU count and 8 (clang is heavy; more workers mostly add contention).
+    """
+    env = os.environ.get("ABICHECK_L4_JOBS")
+    if env:
+        try:
+            return max(1, int(env))
+        except ValueError:
+            return 1
+    return max(1, min(n_units, os.cpu_count() or 1, 8))
 
 
 def _extractor_version(extractor: SourceAbiExtractor) -> str:
