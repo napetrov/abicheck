@@ -101,7 +101,11 @@ def _public_type_embeds_stdlib_by_value(snap: AbiSnapshot) -> bool:
     from .surface import compute_public_surface
 
     surface = compute_public_surface(snap)
-    public_types = surface.public_types if surface.resolvable else None
+    public_types = (
+        _public_by_value_type_closure(snap)
+        if surface.resolvable
+        else None
+    )
 
     for rec in snap.types:
         # Skip non-ABI-surface owner records (std::/__gnu_cxx:: internals): their
@@ -124,6 +128,62 @@ def _public_type_embeds_stdlib_by_value(snap: AbiSnapshot) -> bool:
             if is_non_abi_surface_type(tname.replace("const ", "").strip()):
                 return True
     return False
+
+
+def _public_by_value_type_closure(snap: AbiSnapshot) -> set[str]:
+    """Record types reachable from public ABI roots through by-value edges."""
+    from .model import Visibility
+    from .surface import _type_identifiers
+
+    record_by_name = {rec.name: rec for rec in snap.types}
+    for rec in snap.types:
+        if "::" in rec.name:
+            record_by_name.setdefault(rec.name.rsplit("::", 1)[1], rec)
+
+    def _add_type(queue: list[str], type_name: str | None) -> None:
+        if _is_indirect_type(type_name):
+            return
+        queue.extend(_type_identifiers(type_name))
+
+    queue: list[str] = []
+    for fn in snap.functions:
+        if fn.visibility != Visibility.PUBLIC:
+            continue
+        _add_type(queue, fn.return_type)
+        for param in fn.params:
+            _add_type(queue, getattr(param, "type", None))
+    for var in snap.variables:
+        if var.visibility == Visibility.PUBLIC:
+            _add_type(queue, var.type)
+
+    public_by_value: set[str] = set()
+    seen: set[str] = set()
+    while queue:
+        name = queue.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        target = snap.typedefs.get(name)
+        if target:
+            _add_type(queue, target)
+        rec = record_by_name.get(name)
+        if rec is None:
+            continue
+        public_by_value.add(rec.name)
+        for fld in rec.fields:
+            _add_type(queue, fld.type)
+        for base in (*rec.bases, *rec.virtual_bases):
+            _add_type(queue, base)
+    return public_by_value
+
+
+def _is_indirect_type(type_name: str | None) -> bool:
+    if not type_name:
+        return False
+    normalized = type_name.strip()
+    while normalized.endswith((" const", " volatile")):
+        normalized = normalized.rsplit(" ", 1)[0].strip()
+    return normalized.endswith("*") or normalized.endswith("&")
 
 
 def _layout_evidence_present(snap: AbiSnapshot) -> bool:

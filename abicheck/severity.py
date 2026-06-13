@@ -215,6 +215,26 @@ def effective_verdict_for_change(
     the override is ignored for that one finding.
     """
     kind = change.kind
+    eff = getattr(change, "effective_verdict", None)
+    if isinstance(eff, Verdict):
+        sets = _resolve_kind_sets(policy, kind_sets)
+        breaking, api_break, compatible, risk = sets
+        if kind in breaking:
+            base_v = Verdict.BREAKING
+        elif kind in api_break:
+            base_v = Verdict.API_BREAK
+        elif kind in risk:
+            base_v = Verdict.COMPATIBLE_WITH_RISK
+        elif kind in compatible:
+            base_v = Verdict.COMPATIBLE
+        else:
+            base_v = Verdict.BREAKING
+        if (
+            _has_frozen_namespace_violation(change)
+            and _VERDICT_ORDER.index(eff) < _VERDICT_ORDER.index(base_v)
+        ):
+            return base_v
+        return eff
     overrides = getattr(policy_file, "overrides", None) if policy_file is not None else None
     if overrides and kind in overrides:
         base_policy = getattr(policy_file, "base_policy", policy)

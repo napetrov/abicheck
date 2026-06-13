@@ -28,6 +28,7 @@ from abicheck.model import (
     stdlib_namespaces_excluded,
 )
 from abicheck.policy_file import PolicyFile
+from abicheck.severity import effective_verdict_for_change
 
 
 def _snap(
@@ -131,6 +132,7 @@ class TestDetectorFindings:
 
         assert finding.effective_verdict is Verdict.BREAKING
         assert pf.compute_verdict([finding]) is Verdict.BREAKING
+        assert effective_verdict_for_change(finding, policy_file=pf) is Verdict.BREAKING
 
     def test_private_embedding_does_not_escalate_when_surface_is_resolved(self) -> None:
         private_owner = _embed_stdlib_record()
@@ -148,6 +150,46 @@ class TestDetectorFindings:
         new = _snap(
             "2", stdlib=StdlibFamily.LIBCXX,
             types=[private_owner, public_owner],
+        )
+        old.functions.append(public_fn)
+        new.functions.append(public_fn)
+
+        result = compare(old, new)
+        finding = next(
+            c
+            for c in result.changes
+            if c.kind == ChangeKind.STDLIB_IMPLEMENTATION_CHANGED
+        )
+        assert "embeds a std::" not in finding.description
+        assert finding.effective_verdict is None
+        assert result.verdict is Verdict.COMPATIBLE_WITH_RISK
+
+    def test_pointer_reachable_embedding_does_not_escalate(self) -> None:
+        impl = RecordType(
+            name="Impl",
+            kind="class",
+            size_bits=192,
+            fields=[TypeField(name="data", type="std::vector<int>", offset_bits=0)],
+        )
+        public_owner = RecordType(
+            name="PublicApi",
+            kind="class",
+            size_bits=64,
+            fields=[TypeField(name="impl", type="Impl *", offset_bits=0)],
+        )
+        public_fn = Function(
+            name="api",
+            mangled="_Z3apiv",
+            return_type="PublicApi",
+            visibility=Visibility.PUBLIC,
+        )
+        old = _snap(
+            "1", stdlib=StdlibFamily.LIBSTDCXX,
+            types=[impl, public_owner],
+        )
+        new = _snap(
+            "2", stdlib=StdlibFamily.LIBCXX,
+            types=[impl, public_owner],
         )
         old.functions.append(public_fn)
         new.functions.append(public_fn)
