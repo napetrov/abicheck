@@ -146,3 +146,41 @@ Result: 2,338 breaking, 44,771 risk, 3,334 additions. Top kinds:
   (~GB) + cmake configure (minutes) + clang replay of thousands of TUs @ ~0.8s/TU = hours. The
   source/build layer is realistically scoped to small/medium libraries or changed-TU subsets,
   not monorepos. (Not tested live — bounded out as impractical for a loop turn.)
+
+## Iteration 4 — castxml L2/L4 validation (does the right backend fix the empty surface?)
+
+Installed castxml 0.6.3 (apt) to test whether L2 header AST + L4 decl/type yield materializes.
+
+### Findings
+- **POSITIVE (C libs)** With castxml present + the build's include dir, `-H` L2 works:
+  `zlib.h` (+`-I build/` for generated `zconf.h`) → **21 types / 328 functions** captured —
+  a real upgrade from `elf_only` to header-aware type info. So P04's hard-error was purely the
+  missing tool; the feature works for C.
+- **P14 [DISCOVERY/high]** The `-H` castxml path does **not inherit include paths from the
+  compile DB**. snappy's public `snappy.h` `#include`s the *build-generated*
+  `snappy-stubs-public.h`; L2 fails `fatal error: file not found` until you manually add
+  `-I <builddir>`. Public headers routinely include generated headers — abicheck should feed
+  the compile-DB include dirs into the castxml invocation automatically. *Fix idea:* derive
+  `-I` from the matched compile unit's flags.
+- **P15 [USABILITY/high — biggest C++ blocker]** castxml 0.6.3 **cannot parse libstdc++ 13**:
+  snappy (after fixing includes) dies in `/usr/include/c++/13/bits/basic_string.h` template
+  instantiation. Any C++ library that includes `<string>`/`<vector>`/etc. (≈ all of them) fails
+  L2/L4 via castxml on a modern GCC stdlib. The clang L4 extractor avoids this but yields empty
+  decl tables (P05). Net: **getting real C++ source-ABI facts is currently impractical** with a
+  current toolchain — the castxml backend needs a matching/older libstdc++ or a clang-based
+  decl extractor. This is the #1 thing blocking L2/L4 value on real C++ code.
+- **P16 [USABILITY/low]** `--lang c` on `zlib.h` mis-fires "header appears to contain C++ syntax"
+  and hard-fails (zlib.h is C with `extern "C"` guards). The heuristic should warn, not abort;
+  default `--lang c++` parsed it fine.
+
+### Timings (iteration 4)
+- castxml L2 (zlib, success): 0.43s | castxml C++ failures: ~0.6s (fail fast)
+
+---
+
+## Open backlog for later iterations
+- Install meson `builddir` discovery edge (P12), ninja/bazel adapters (pre-captured aquery).
+- gcc-vs-clang `DW_AT_producer` toolchain capture via DWARF-bearing conda libs (libuv/openblas/bzip2).
+- `collect`, `compare-release`, `surface-report`, `stack-check`, `appcompat` command coverage.
+- Parallel-TU L4 timing experiment (validate P06 fix headroom).
+- More C++ libs once a castxml/libstdc++-compatible combo or clang decl extractor is sorted (P15).
