@@ -1477,8 +1477,19 @@ def _skip_source_name(symbol: str, i: int) -> int:
     j = i
     while j < len(symbol) and symbol[j].isdigit():
         j += 1
-    end = j + int(symbol[i:j])
-    return end if end <= len(symbol) else -1
+
+    # ``symbol`` can come from untrusted snapshots / ELF symbol tables.  Avoid
+    # ``int(symbol[i:j])`` here: Python intentionally raises for extremely long
+    # decimal strings, and even shorter but huge lengths are malformed once they
+    # exceed the bytes remaining in this symbol.  Parse only until we know
+    # whether the length fits in the remaining input.
+    remaining = len(symbol) - j
+    length = 0
+    for c in symbol[i:j]:
+        length = (length * 10) + (ord(c) - ord("0"))
+        if length > remaining:
+            return -1
+    return j + length
 
 
 def _skip_substitution(symbol: str, i: int) -> int:
