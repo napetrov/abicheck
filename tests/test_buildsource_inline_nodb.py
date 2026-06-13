@@ -89,3 +89,23 @@ def test_collection_for_ci_mode_graph_build():
     scope, layers = collection_for_ci_mode("graph-build")
     assert scope == "off"          # no replay
     assert layers == ("L3", "L5")  # build facts + graph, no L4
+
+
+def test_meson_builddir_is_autodiscovered(tmp_path):
+    # P12: a compile DB under the Meson-convention `builddir/` must be found
+    # without an explicit --build-info (previously only `build`/`_build` matched).
+    src = tmp_path / "foo.c"
+    src.write_text("int foo(void){return 0;}\n", encoding="utf-8")
+    bd = tmp_path / "builddir"
+    bd.mkdir()
+    (bd / "compile_commands.json").write_text(
+        json.dumps([{"directory": str(bd), "file": str(src),
+                     "command": f"cc -c {src}"}]),
+        encoding="utf-8",
+    )
+    snap = AbiSnapshot(library="l", version="1")
+
+    embed_build_source(snap, None, tmp_path, collect_mode="build")
+
+    assert snap.build_source is not None
+    assert snap.build_source.build_evidence.compile_units  # discovered under builddir/

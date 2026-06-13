@@ -204,11 +204,16 @@ llvm-project @ llvmorg-18.1.8, source-level (the full L3/L4/L5 `--sources` flow)
 *not* hours. The hours-long part is exclusively L4 source-ABI replay.
 
 ### Problems found
-- **P17 [DISCOVERY/high] confirmed at scale** Command-string compile DBs (CMake+Ninja default,
-  what LLVM and zstd produce) yield almost no build options: **6 from 2,719 TUs** for LLVM, 0 for
-  zstd. The adapter normalizes flags well from `arguments[]`-form DBs (meson, snappy) but barely
-  parses the `command` string form. Since CMake+Ninja is the most common real setup, build-option
-  capture is effectively broken for most projects. *Fix:* shlex-split and normalize `command`.
+- **P17 [DISCOVERY] — RETRACTED (not a bug; verified by reading the code + a direct test).**
+  Original claim: command-string compile DBs (CMake+Ninja default) under-extract build options
+  (6 from 2,719 LLVM TUs, 0 for zstd). **Wrong attribution.** `CompileEntry.from_raw`
+  (`build_context.py`) already `shlex`-splits the `command` string, and a direct test of a
+  command-string entry with `-std=c++17 -fno-exceptions -fno-rtti --target=...` yields
+  `std:CXX`, `target`, `exceptions:off`, `rtti:off` — full extraction. The low real-world counts
+  reflect (a) those projects pass few *ABI-relevant* flags (zstd is C with default `-std`, no
+  exception/rtti flags) and (b) a deliberate filter — non-ABI defines like `-DNDEBUG` are excluded
+  by design. No fix warranted; left as a methodology note (don't infer a parser bug from a low
+  count without checking the input flags).
 - **P18 [USABILITY/med]** The CLI couples L5→L4 (`--collect-mode` source-*/graph-* all run L4),
   but the L3-derived source graph (compile_unit/source/**build_option** nodes + edges) needs **no
   source parsing** and builds in 3.6s on LLVM. There's no CLI mode for "L3 + L5 graph, skip L4",
