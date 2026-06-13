@@ -1362,7 +1362,13 @@ def _exit_with_severity_or_verdict(
     if severity_explicitly_set:
         assert sev_config is not None
         eff_sets = result._effective_kind_sets()
-        exit_code = compute_exit_code(result.changes, sev_config, kind_sets=eff_sets)
+        exit_code = compute_exit_code(
+            result.changes,
+            sev_config,
+            policy=result.policy,
+            kind_sets=eff_sets,
+            policy_file=result.policy_file,
+        )
         if exit_code != 0:
             sys.exit(exit_code)
     else:

@@ -33,7 +33,6 @@ from .checker import (
 )
 from .checker_policy import (
     ChangeKind,
-    effective_category,
     impact_for,
 )
 from .checker_policy import (
@@ -766,17 +765,18 @@ def to_json(
             "breaking": sum(
                 1
                 for c in changes
-                if effective_category(c, *eff_sets) == Verdict.BREAKING
+                if result._effective_verdict_for_change(c) == Verdict.BREAKING
             ),
             "source_breaks": sum(
                 1
                 for c in changes
-                if effective_category(c, *eff_sets) == Verdict.API_BREAK
+                if result._effective_verdict_for_change(c) == Verdict.API_BREAK
             ),
             "risk_changes": sum(
                 1
                 for c in changes
-                if effective_category(c, *eff_sets) == Verdict.COMPATIBLE_WITH_RISK
+                if result._effective_verdict_for_change(c)
+                == Verdict.COMPATIBLE_WITH_RISK
             ),
             "total_changes": len(changes),
         }
@@ -787,11 +787,16 @@ def to_json(
             changes,
             severity_config,
             all_changes=list(result.changes),
+            policy=result.policy,
             kind_sets=eff_sets,
+            policy_file=result.policy_file,
         )
 
     d["changes"] = [
-        _change_to_dict(c, policy=effective_policy, kind_sets=eff_sets) for c in changes
+        _change_to_dict(
+            c, policy=effective_policy, kind_sets=eff_sets, policy_file=result.policy_file,
+        )
+        for c in changes
     ]
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
@@ -854,13 +859,17 @@ def _change_to_dict(
         frozenset[ChangeKind],
     ]
     | None = None,
+    policy_file: object | None = None,
 ) -> dict[str, object]:
     """Convert a Change to a JSON-serializable dict with impact and metadata."""
     kind = getattr(c, "kind", None)
     if kind and kind_sets:
-        # Route through effective_category so a per-finding A4 override (a
-        # demoted opaque/PIMPL layout change) reads compatible here too.
-        severity = _effective_severity_label(c, kind_sets)
+        from .severity import effective_verdict_for_change
+
+        verdict = effective_verdict_for_change(
+            c, policy=policy, kind_sets=kind_sets, policy_file=policy_file,
+        )
+        severity = _VERDICT_TO_SEVERITY_LABEL.get(verdict, "unknown")
     elif kind:
         severity = _kind_to_severity(kind, policy)
     else:
@@ -977,12 +986,16 @@ def _build_severity_summary_md(
     changes: list[Change],
     severity_config: SeverityConfig,
     *,
+    policy: str | None = None,
     kind_sets: KindSets | None = None,
+    policy_file: object | None = None,
 ) -> list[str]:
     """Build a severity configuration summary table for markdown output."""
     from .severity import SeverityLevel, categorize_changes
 
-    categorized = categorize_changes(changes, kind_sets=kind_sets)
+    categorized = categorize_changes(
+        changes, policy=policy, kind_sets=kind_sets, policy_file=policy_file,
+    )
     lines = [
         "## Severity Configuration",
         "",
@@ -1024,7 +1037,9 @@ def _build_severity_json(
     severity_config: SeverityConfig,
     *,
     all_changes: list[Change] | None = None,
+    policy: str | None = None,
     kind_sets: KindSets | None = None,
+    policy_file: object | None = None,
 ) -> dict[str, object]:
     """Build severity information for JSON output.
 
@@ -1036,7 +1051,9 @@ def _build_severity_json(
     """
     from .severity import SeverityLevel, categorize_changes, compute_exit_code
 
-    categorized = categorize_changes(changes, kind_sets=kind_sets)
+    categorized = categorize_changes(
+        changes, policy=policy, kind_sets=kind_sets, policy_file=policy_file,
+    )
 
     config_dict: dict[str, str] = {}
     for attr in ("abi_breaking", "potential_breaking", "quality_issues", "addition"):
@@ -1065,7 +1082,13 @@ def _build_severity_json(
     # Exit code uses the full unfiltered change set so --show-only
     # does not affect it.
     exit_changes = all_changes if all_changes is not None else changes
-    exit_code = compute_exit_code(exit_changes, severity_config, kind_sets=kind_sets)
+    exit_code = compute_exit_code(
+        exit_changes,
+        severity_config,
+        policy=policy,
+        kind_sets=kind_sets,
+        policy_file=policy_file,
+    )
 
     return {
         "config": config_dict,
@@ -1262,18 +1285,22 @@ def _classify_changes_by_kind(
     effective kind sets (respects PolicyFile overrides) and per-finding A4
     ``effective_verdict`` overrides (ADR-027), so a demoted opaque/PIMPL layout
     change lands in the compatible bucket of the text report too."""
-    sets = result._effective_kind_sets()
-    breaking = [c for c in changes if effective_category(c, *sets) == Verdict.BREAKING]
+    breaking = [
+        c for c in changes
+        if result._effective_verdict_for_change(c) == Verdict.BREAKING
+    ]
     source_breaks = [
-        c for c in changes if effective_category(c, *sets) == Verdict.API_BREAK
+        c for c in changes
+        if result._effective_verdict_for_change(c) == Verdict.API_BREAK
     ]
     risk = [
         c
         for c in changes
-        if effective_category(c, *sets) == Verdict.COMPATIBLE_WITH_RISK
+        if result._effective_verdict_for_change(c) == Verdict.COMPATIBLE_WITH_RISK
     ]
     compatible = [
-        c for c in changes if effective_category(c, *sets) == Verdict.COMPATIBLE
+        c for c in changes
+        if result._effective_verdict_for_change(c) == Verdict.COMPATIBLE
     ]
     return breaking, source_breaks, risk, compatible
 
@@ -1376,7 +1403,9 @@ def to_markdown(
         lines += _build_severity_summary_md(
             changes,
             severity_config,
+            policy=result.policy,
             kind_sets=result._effective_kind_sets(),
+            policy_file=result.policy_file,
         )
 
     if show_only:
