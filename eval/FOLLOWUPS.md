@@ -166,32 +166,40 @@ work is the live C++ validation campaign tracked under §C/§E.
 
 ---
 
-## D. eval-suite infrastructure (NEW)
+## D. eval-suite infrastructure (NEW) — **shipped**
 
-### D1. Add the build/source (L3/L4/L5) tier to the runner
-- **Context.** The new benchmark suite (`eval/runner.py`) runs only the binary
-  (L0/L1) tier (22/22 verdicts match). The source tier (old `bsdrive.py`
-  prototype) was not folded in.
-- **Pointers.** `eval/runner.py` (`run`, `scan_one`), `eval/manifest.yaml`
-  (`source:` repo/tags already present for zlib/zstd/snappy); the retired prototype
-  logic is in git history (`eval/field-eval/scripts/bsdrive.py`).
-- **Approach.** Add `runner.py --tier source`: for manifest entries with a
-  `source:` block, clone at the tag, configure (or `--build-query`), run
-  `dump --sources --collect-mode source-target`, record L3/L4/L5 coverage +
-  timings into `results/`. Gate on `clang`/`cmake` presence; skip gracefully.
-- **Acceptance.** `eval/REPORT.md` gains a source-tier table; reproducible.
-- **Effort·Risk.** M · medium (needs toolchain; gate on availability).
+### D1. Add the build/source (L3/L4/L5) tier to the runner — **shipped**
+- **Context.** The benchmark suite (`eval/runner.py`) ran only the binary
+  (L0/L1) tier. The source tier was not folded in.
+- **Shipped.** `eval/runner.py --tier {binary,source,both}` (default `binary`).
+  The source tier iterates manifest entries with a `source:` block:
+  `_scan_source_side` shallow-clones the repo at the tag (`_git_clone_tag`),
+  configures it (`_cmake_configure` → `compile_commands.json`, honoring
+  per-entry `cmake_subdir`/`cmake_args`), runs `dump --sources <tree>
+  --build-info <build> --collect-mode source-target`, and `_source_coverage`
+  counts the embedded `build_source` L3 (compile units/targets/options) / L4
+  (declarations/types/macros) / L5 (nodes/edges) facts; the two sides are then
+  `compare`d. Gated on git+cmake (skips gracefully with a row per entry when
+  absent), notes when clang is missing (partial L4). `render_report` gained a
+  Source-tier table; `REPORT.md` now carries both tiers. Manifest doc + zstd
+  `cmake_subdir: build/cmake` added.
+- **Acceptance (met).** `eval/REPORT.md` gains a reproducible source-tier table
+  (`python eval/runner.py --tier source`); pure helpers unit-tested in
+  `tests/test_eval_runner.py`.
 
-### D2. Wire the suite into CI as a scheduled lane
+### D2. Wire the suite into CI as a scheduled lane — **shipped**
 - **Context.** The suite is a real-world verdict **regression guard** (`expect`
-  in `manifest.yaml`); today it's manual.
-- **Pointers.** `.github/workflows/` (mirror the `mutation.yml`/`performance.yml`
-  scheduled-lane pattern); `eval/runner.py` exit on `verdict_matches_expected`
-  drift.
-- **Approach.** Weekly / label-triggered job: `pip install pyyaml`, run the binary
-  tier, fail on any `expect` drift, upload `results/`. Network-gated (anaconda.org).
-- **Acceptance.** Green scheduled lane; red on an injected verdict drift.
-- **Effort·Risk.** S–M · low.
+  in `manifest.yaml`); it was manual.
+- **Shipped.** `.github/workflows/eval-suite.yml` (mirrors the
+  `performance.yml`/`mutation.yml` pattern): `workflow_dispatch` +
+  weekly `schedule` (Mon 05:31 UTC) + `eval`-label PR trigger. The **binary-tier
+  job gates** — `python eval/runner.py --tier binary --fail-on-drift` exits
+  non-zero on any verdict drift / scan error (`runner.drift_rows`). The
+  **source-tier job is non-gating** (`continue-on-error`): installs git+cmake+clang,
+  runs `--tier source`, writes coverage to the job summary, uploads `results/`.
+  Network-gated (anaconda.org + GitHub clones), so it never runs on every push.
+- **Acceptance (met).** Green scheduled lane; red on an injected verdict drift
+  (the `--fail-on-drift` gate, unit-tested via `drift_rows`).
 
 ---
 
@@ -278,8 +286,11 @@ The entire eval was **Linux/ELF**. These are untested paths, not known bugs.
    clang AST-JSON backend (default) emits decls/types and feeds
    `reachable_declarations`/`reachable_types`; the `-p` bridge carries the build's
    include paths/flags into the parse. Both pinned by fast-lane regression tests.
-2. **D1 + D2 (eval source tier + CI)** — turns this research into a standing guard,
-   and is now the way to confirm A1/A2 *live* on snappy/ICU.
+2. ~~**D1 + D2 (eval source tier + CI)**~~ — **shipped**: `runner.py --tier
+   source|both` records L3/L4/L5 coverage; `eval-suite.yml` runs the binary tier
+   as a gating weekly/label lane (`--fail-on-drift`) and the source tier as a
+   non-gating coverage lane. This is now the way to confirm A1/A2 *live* on
+   snappy/ICU (the source-tier job).
 3. ~~**B1, B2, A3**~~ — **shipped** (cheap, high-friction-removal UX/discovery fixes:
    `--show-data-sources` preview-only messaging, broadened build-flag vocabulary,
    `--lang c` → C++ auto-retry).
