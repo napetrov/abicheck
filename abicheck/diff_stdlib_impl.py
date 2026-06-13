@@ -35,17 +35,14 @@ conservative:
   nor any mangled symbol reveals the stdlib family (it stays ``UNKNOWN``), it
   emits nothing — it does not guess and it does not escalate. The absence of
   evidence is a reason to stay silent, not to raise an alarm.
-* It defaults to **RISK, never BREAKING.** When a public type embeds a stdlib
-  type *by value* and its layout actually differs, that owner type is itself a
-  non-``std::`` type (e.g. ``class A``) and is therefore never filtered, so the
-  type diff emits its ``TYPE_SIZE_CHANGED``/offset BREAKING finding through the
-  ordinary path; this kind explains and localizes the root cause. We do **not**
-  globally un-filter standalone ``std::`` records in the cross-implementation
-  case — across implementations they differ wholesale and would flood BREAKING
-  noise for toolchain-owned internals (see
-  :func:`abicheck.model.stdlib_namespaces_excluded`). Fine-grained, per-owner
-  attribution of the specific embedded ``std::`` field is deferred to the
-  layout-closure work.
+* It defaults to **RISK** for implementation drift alone, but fail-closes to
+  **BREAKING** when public layout evidence shows a public type embedding a
+  stdlib type *by value*. The owner type may keep the same size/offsets while
+  the embedded ``std::`` representation changes; because standalone ``std::``
+  records stay globally filtered to avoid toolchain-owned noise (see
+  :func:`abicheck.model.stdlib_namespaces_excluded`), this detector carries the
+  breaking classification for that concrete cross-implementation embedding
+  hazard.
 """
 
 from __future__ import annotations
@@ -54,7 +51,7 @@ import re
 from typing import TYPE_CHECKING
 
 from .build_mode import StdlibFamily, build_mode_from_signals
-from .checker_policy import ChangeKind
+from .checker_policy import ChangeKind, Verdict
 from .checker_types import Change
 from .detector_registry import registry
 
@@ -101,11 +98,21 @@ def _public_type_embeds_stdlib_by_value(snap: AbiSnapshot) -> bool:
     kept all the matching records out of the surface (Codex review #345).
     """
     from .model import is_non_abi_surface_type
+    from .surface import compute_public_surface
+
+    surface = compute_public_surface(snap)
+    public_types = (
+        _public_by_value_type_closure(snap)
+        if surface.resolvable
+        else None
+    )
 
     for rec in snap.types:
         # Skip non-ABI-surface owner records (std::/__gnu_cxx:: internals): their
         # std:: fields are not a *public* type embedding the stdlib by value.
         if is_non_abi_surface_type(rec.name):
+            continue
+        if public_types is not None and rec.name not in public_types:
             continue
         for fld in rec.fields:
             tname = (fld.type or "").strip()
@@ -121,6 +128,62 @@ def _public_type_embeds_stdlib_by_value(snap: AbiSnapshot) -> bool:
             if is_non_abi_surface_type(tname.replace("const ", "").strip()):
                 return True
     return False
+
+
+def _public_by_value_type_closure(snap: AbiSnapshot) -> set[str]:
+    """Record types reachable from public ABI roots through by-value edges."""
+    from .model import RecordType, Visibility
+    from .surface import _type_identifiers
+
+    record_by_name: dict[str, RecordType] = {rec.name: rec for rec in snap.types}
+    for rec in snap.types:
+        if "::" in rec.name:
+            record_by_name.setdefault(rec.name.rsplit("::", 1)[1], rec)
+
+    def _add_type(queue: list[str], type_name: str | None) -> None:
+        if _is_indirect_type(type_name):
+            return
+        queue.extend(_type_identifiers(type_name))
+
+    queue: list[str] = []
+    for fn in snap.functions:
+        if fn.visibility != Visibility.PUBLIC:
+            continue
+        _add_type(queue, fn.return_type)
+        for param in fn.params:
+            _add_type(queue, getattr(param, "type", None))
+    for var in snap.variables:
+        if var.visibility == Visibility.PUBLIC:
+            _add_type(queue, var.type)
+
+    public_by_value: set[str] = set()
+    seen: set[str] = set()
+    while queue:
+        name = queue.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        target = snap.typedefs.get(name)
+        if target:
+            _add_type(queue, target)
+        record: RecordType | None = record_by_name.get(name)
+        if record is None:
+            continue
+        public_by_value.add(record.name)
+        for fld in record.fields:
+            _add_type(queue, fld.type)
+        for base in (*record.bases, *record.virtual_bases):
+            _add_type(queue, base)
+    return public_by_value
+
+
+def _is_indirect_type(type_name: str | None) -> bool:
+    if not type_name:
+        return False
+    normalized = type_name.strip()
+    while normalized.endswith((" const", " volatile")):
+        normalized = normalized.rsplit(" ", 1)[0].strip()
+    return normalized.endswith("*") or normalized.endswith("&")
 
 
 def _layout_evidence_present(snap: AbiSnapshot) -> bool:
@@ -331,11 +394,13 @@ def _diff_stdlib_implementation(old: AbiSnapshot, new: AbiSnapshot) -> list[Chan
             "std:: container/string by value is laid out differently, and inline "
             "std:: code can ODR-conflict."
         )
+        effective_verdict = None
         if embeds and have_layout:
             desc += (
-                " A public type embeds a std:: type by value; the type diff "
-                "reports the concrete layout change separately."
+                " A public type embeds a std:: type by value; this is a "
+                "concrete ABI break across standard-library implementations."
             )
+            effective_verdict = Verdict.BREAKING
         elif embeds and not have_layout:
             # Calm, non-escalating note that we could not fully verify layout.
             desc += (
@@ -351,6 +416,7 @@ def _diff_stdlib_implementation(old: AbiSnapshot, new: AbiSnapshot) -> list[Chan
                 description=desc,
                 old_value=old_bm.stdlib.value,
                 new_value=new_bm.stdlib.value,
+                effective_verdict=effective_verdict,
             )
         )
 
