@@ -35,17 +35,14 @@ conservative:
   nor any mangled symbol reveals the stdlib family (it stays ``UNKNOWN``), it
   emits nothing — it does not guess and it does not escalate. The absence of
   evidence is a reason to stay silent, not to raise an alarm.
-* It defaults to **RISK, never BREAKING.** When a public type embeds a stdlib
-  type *by value* and its layout actually differs, that owner type is itself a
-  non-``std::`` type (e.g. ``class A``) and is therefore never filtered, so the
-  type diff emits its ``TYPE_SIZE_CHANGED``/offset BREAKING finding through the
-  ordinary path; this kind explains and localizes the root cause. We do **not**
-  globally un-filter standalone ``std::`` records in the cross-implementation
-  case — across implementations they differ wholesale and would flood BREAKING
-  noise for toolchain-owned internals (see
-  :func:`abicheck.model.stdlib_namespaces_excluded`). Fine-grained, per-owner
-  attribution of the specific embedded ``std::`` field is deferred to the
-  layout-closure work.
+* It defaults to **RISK** for implementation drift alone, but fail-closes to
+  **BREAKING** when public layout evidence shows a public type embedding a
+  stdlib type *by value*. The owner type may keep the same size/offsets while
+  the embedded ``std::`` representation changes; because standalone ``std::``
+  records stay globally filtered to avoid toolchain-owned noise (see
+  :func:`abicheck.model.stdlib_namespaces_excluded`), this detector carries the
+  breaking classification for that concrete cross-implementation embedding
+  hazard.
 """
 
 from __future__ import annotations
@@ -54,7 +51,7 @@ import re
 from typing import TYPE_CHECKING
 
 from .build_mode import StdlibFamily, build_mode_from_signals
-from .checker_policy import ChangeKind
+from .checker_policy import ChangeKind, Verdict
 from .checker_types import Change
 from .detector_registry import registry
 
@@ -297,11 +294,13 @@ def _diff_stdlib_implementation(old: AbiSnapshot, new: AbiSnapshot) -> list[Chan
             "std:: container/string by value is laid out differently, and inline "
             "std:: code can ODR-conflict."
         )
+        effective_verdict = None
         if embeds and have_layout:
             desc += (
-                " A public type embeds a std:: type by value; the type diff "
-                "reports the concrete layout change separately."
+                " A public type embeds a std:: type by value; this is a "
+                "concrete ABI break across standard-library implementations."
             )
+            effective_verdict = Verdict.BREAKING
         elif embeds and not have_layout:
             # Calm, non-escalating note that we could not fully verify layout.
             desc += (
@@ -317,6 +316,7 @@ def _diff_stdlib_implementation(old: AbiSnapshot, new: AbiSnapshot) -> list[Chan
                 description=desc,
                 old_value=old_bm.stdlib.value,
                 new_value=new_bm.stdlib.value,
+                effective_verdict=effective_verdict,
             )
         )
 

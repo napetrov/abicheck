@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from abicheck.build_mode import BuildMode, StdlibFamily
 from abicheck.checker import compare
-from abicheck.checker_policy import RISK_KINDS, ChangeKind
+from abicheck.checker_policy import RISK_KINDS, ChangeKind, Verdict
 from abicheck.model import (
     AbiSnapshot,
     Function,
@@ -95,14 +95,51 @@ class TestGlobalFilterPreserved:
 # Detector findings via compare()
 # ---------------------------------------------------------------------------
 class TestDetectorFindings:
-    def test_stdlib_implementation_change_is_risk(self) -> None:
-        old = _snap("1", stdlib=StdlibFamily.LIBSTDCXX, types=[_embed_stdlib_record()])
-        new = _snap("2", stdlib=StdlibFamily.LIBCXX, types=[_embed_stdlib_record()])
+    def test_stdlib_implementation_change_without_embedding_is_risk(self) -> None:
+        old = _snap("1", stdlib=StdlibFamily.LIBSTDCXX)
+        new = _snap("2", stdlib=StdlibFamily.LIBCXX)
         result = compare(old, new)
         kinds = {c.kind for c in result.changes}
         assert ChangeKind.STDLIB_IMPLEMENTATION_CHANGED in kinds
-        # RISK, not BREAKING — never escalate on its own.
         assert ChangeKind.STDLIB_IMPLEMENTATION_CHANGED in RISK_KINDS
+        assert result.verdict is Verdict.COMPATIBLE_WITH_RISK
+
+    def test_stdlib_implementation_change_with_public_embedding_is_breaking(self) -> None:
+        old = _snap("1", stdlib=StdlibFamily.LIBSTDCXX, types=[_embed_stdlib_record()])
+        new = _snap("2", stdlib=StdlibFamily.LIBCXX, types=[_embed_stdlib_record()])
+        result = compare(old, new)
+        finding = next(
+            c
+            for c in result.changes
+            if c.kind == ChangeKind.STDLIB_IMPLEMENTATION_CHANGED
+        )
+        assert finding.effective_verdict is Verdict.BREAKING
+        assert result.verdict is Verdict.BREAKING
+
+    def test_same_size_owner_with_filtered_stdlib_layout_change_is_breaking(self) -> None:
+        owner = _embed_stdlib_record(size_bits=192)
+        old_std = RecordType(
+            name="std::string",
+            kind="class",
+            size_bits=192,
+            fields=[TypeField(name="_M_dataplus", type="char *", offset_bits=0)],
+        )
+        new_std = RecordType(
+            name="std::string",
+            kind="class",
+            size_bits=192,
+            fields=[TypeField(name="__data", type="char *", offset_bits=0)],
+        )
+        old = _snap("1", stdlib=StdlibFamily.LIBSTDCXX, types=[owner, old_std])
+        new = _snap("2", stdlib=StdlibFamily.LIBCXX, types=[owner, new_std])
+
+        result = compare(old, new)
+
+        assert stdlib_namespaces_excluded(old, new) is True
+        assert [c.kind for c in result.changes] == [
+            ChangeKind.STDLIB_IMPLEMENTATION_CHANGED
+        ]
+        assert result.verdict is Verdict.BREAKING
 
     def test_libcpp_abi_version_change_emitted(self) -> None:
         old = _snap("1", stdlib=StdlibFamily.LIBCXX, libcpp_abi=1)
