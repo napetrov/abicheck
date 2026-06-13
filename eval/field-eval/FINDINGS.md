@@ -233,7 +233,7 @@ llvm-project @ llvmorg-18.1.8, source-level (the full L3/L4/L5 `--sources` flow)
 | | |
 |---|---|
 | SONAME | libonedal_core.so.**3** → .so.**4** (deliberate major bump) |
-| sizes | 110MB → 105MB, 64k funcs |
+| sizes | 110MB → 105MB; function count omitted pending regenerated dynsym-only measurement |
 | dump | 8.7s / 5.4s | compare | 9.1s |
 | verdict | **BREAKING**: 8,104 breaking, 6,368 func_removed, vtable_slot_count_changed×1, **soname_changed×1** |
 
@@ -294,6 +294,7 @@ Earlier `funcs` columns in iterations 2/3/6 were produced by `readelf -sW --dyn-
 which **double-counts** (`.symtab` + `.dynsym`) and includes **UND imports** — inflating counts
 ~3–5×. Real defined-export counts are lower (e.g. **libLLVM.so.18 = 30,913** defined FUNC exports,
 not 153,115). The counter is fixed (dyn table only, FUNC + defined + GLOBAL/WEAK), and iteration-2
-data/table rows were regenerated. **Verdicts and change-counts are unaffected by the helper counter**
+data/table rows were regenerated; iteration-3 and iteration-6 headline counts were removed or
+marked corrected until their rows are regenerated. **Verdicts and change-counts are unaffected by the helper counter**
 — those come from abicheck's own dynsym parsing, not this helper. The relative scale story (small C →
 ICU → LLVM → oneDAL) holds; only the absolute `funcs` headline was off.
