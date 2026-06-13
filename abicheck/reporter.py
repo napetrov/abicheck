@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from .checker_policy import HasKind
@@ -867,7 +867,7 @@ def _change_to_dict(
         from .severity import effective_verdict_for_change
 
         verdict = effective_verdict_for_change(
-            c, policy=policy, kind_sets=kind_sets, policy_file=policy_file,
+            cast("HasKind", c), policy=policy, kind_sets=kind_sets, policy_file=policy_file,
         )
         severity = _VERDICT_TO_SEVERITY_LABEL.get(verdict, "unknown")
     elif kind:

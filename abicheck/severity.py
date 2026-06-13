@@ -219,7 +219,7 @@ def effective_verdict_for_change(
         base_policy = getattr(policy_file, "base_policy", policy)
         base_sets = _resolve_kind_sets(base_policy, None)
         base_v = effective_category(change, *base_sets)
-        override_v = overrides[kind]
+        override_v: Verdict = overrides[kind]
         if (
             _has_frozen_namespace_violation(change)
             and _VERDICT_ORDER.index(override_v) < _VERDICT_ORDER.index(base_v)
