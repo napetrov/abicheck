@@ -186,9 +186,9 @@ def source_from_argv(argv: list[str]) -> str:
     from the start is safe (and handles ``cd dir && cc …`` recipes).
 
     Source recognition is dialect-aware: an MSVC/clang-cl command (``/c`` present
-    or a ``cl``/``clang-cl`` driver) treats every ``/``-prefixed token as an
-    option — including combined value-taking forms like ``/FIsrc/config.hpp`` —
-    so only bare, ``C:\\``-rooted, or ``/Tp``/``/Tc``-named tokens are sources.
+    or a ``cl``/``clang-cl`` driver) treats known ``/``-prefixed compiler flags
+    as options — including combined value-taking forms like ``/FIsrc/config.hpp``
+    — while still allowing POSIX absolute paths such as ``/work/src/foo.cc``.
     A GNU command treats ``/abs/path.cc`` as a Unix absolute source path.
     """
     msvc = _is_msvc_command(argv)
@@ -216,6 +216,21 @@ def source_from_argv(argv: list[str]) -> str:
 #: Driver basenames that mark a command as MSVC-dialect (``/`` introduces an
 #: option, not a path). ``clang-cl`` mimics ``cl`` exactly.
 _MSVC_DRIVERS: frozenset[str] = frozenset({"cl", "cl.exe", "clang-cl", "clang-cl.exe"})
+
+_MSVC_COMBINED_OPTION_PREFIXES: tuple[str, ...] = (
+    "/d",
+    "/i",
+    "/fi",
+    "/fu",
+    "/fo",
+    "/fe",
+    "/fd",
+    "/fp",
+    "/yu",
+    "/yc",
+    "/std:",
+    "/external:",
+)
 
 
 def _is_msvc_command(argv: list[str]) -> bool:
@@ -253,17 +268,33 @@ def _is_msvc_command(argv: list[str]) -> bool:
 def _is_source_token(arg: str, msvc: bool) -> bool:
     """True if *arg* is a translation-unit source path, not a compiler option.
 
-    ``-``-prefixed tokens are always options. In an MSVC/clang-cl command every
-    ``/``-prefixed token is an option (``/c``, ``/FIsrc/config.hpp``,
-    ``/Fofoo.obj``) regardless of an embedded ``/``. In a GNU command a
-    ``/``-prefixed token with a source extension is a Unix absolute source path
-    (e.g. ``/work/src/foo.cc``) and is kept.
+    ``-``-prefixed tokens are always options. In an MSVC/clang-cl command known
+    ``/``-prefixed compiler flags (``/c``, ``/FIsrc/config.hpp``,
+    ``/Fofoo.obj``) are options, but POSIX-hosted clang-cl invocations may still
+    pass Unix absolute source paths (e.g. ``/work/src/foo.cc``), which are kept.
     """
     if not arg or arg.startswith("-"):
         return False
-    if arg.startswith("/") and msvc:
+    if arg.startswith("/") and msvc and _is_msvc_option_token(arg):
         return False  # MSVC/clang-cl option (handled before us for /Tp,/Tc)
     return bool(detect_language(arg))
+
+
+def _is_msvc_option_token(arg: str) -> bool:
+    lower = arg.lower()
+    if lower in {"/c", "/tp", "/tc", "/nologo", "/showincludes", "/wx", "/gr", "/gs"}:
+        return True
+    if any(lower.startswith(prefix) for prefix in _MSVC_COMBINED_OPTION_PREFIXES):
+        return True
+    if lower.startswith("/w"):
+        suffix = lower[2:]
+        return suffix.isdigit() or suffix in {"all", "x"} or (
+            len(suffix) > 1 and suffix[0] in {"d", "e", "o"} and suffix[1:].isdigit()
+        )
+    if lower.startswith("/o"):
+        suffix = lower[2:]
+        return bool(suffix) and all(ch in "012bdfgitxys-" for ch in suffix)
+    return False
 
 
 def compile_unit_id(source: str, argv: list[str], output: str = "") -> str:

@@ -561,6 +561,22 @@ def test_driver_mode_operand_does_not_make_unix_paths_msvc() -> None:
     ]) == "/tmp/foo.c"
 
 
+def test_clang_driver_mode_keeps_absolute_posix_source() -> None:
+    from abicheck.buildsource.adapters.base import source_from_argv
+
+    assert source_from_argv([
+        "clang", "--driver-mode=cl", "-c", "/work/src/foo.cc", "/Fofoo.obj",
+    ]) == "/work/src/foo.cc"
+
+
+def test_clang_driver_mode_skips_combined_msvc_source_like_options() -> None:
+    from abicheck.buildsource.adapters.base import source_from_argv
+
+    assert source_from_argv([
+        "clang", "--driver-mode=cl", "-c", "/FI/work/src/config.hpp", "foo.cc",
+    ]) == "foo.cc"
+
+
 def test_redundant_objcxx_forced_language_is_no_op_drift(tmp_path):
     # Codex P2: clang++ -x objective-c++ on a .mm TU must stay OBJCXX, not collapse
     # to CXX — otherwise std:OBJCXX->std:CXX reads as false build-flag drift.
