@@ -3,7 +3,13 @@ name: Examples Validation (nightly cross-platform)
 # Scheduled / on-demand only — never gates a PR. Extends the blocking Ubuntu
 # examples lane (examples-validation.yml) across the producers and ABIs the
 # recommendations call out: AArch64 (calling-convention / alignment / return-ABI
-# differences invisible on x86_64), macOS arm64 Mach-O, and Windows MinGW PE.
+# differences invisible on x86_64) and macOS arm64 Mach-O.
+#
+# Windows/MinGW PE is intentionally NOT here: the example autodiscovery harness
+# requires castxml (not reliably installable on the Windows runner), so it could
+# only skip-all. Native PE-on-Windows coverage already lives in ci.yml's BLOCKING
+# `cross-platform-e2e` lane (MinGW gcc + ABICHECK_MIN_EXECUTED=5, castxml-free),
+# which runs on every PR — a nightly duplicate would add no real coverage.
 on:
   schedule:
     - cron: "23 4 * * *"
@@ -80,36 +86,5 @@ jobs:
         if: always()
         with:
           name: examples-nightly-macos
-          path: results/
-          retention-days: 14
-
-  windows-mingw:
-    name: Examples (Windows MinGW PE)
-    runs-on: windows-latest
-    # Informational: castxml is not reliably installable on the MinGW Windows
-    # runner, so header (L2) cases skip; this keeps the GNU-on-Windows PE path
-    # exercised on the native PE/Mach-O example cross-section.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.14"
-          cache: "pip"
-      - run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-      - name: Native PE/Mach-O example compare tests (MinGW gcc on PATH)
-        shell: bash
-        # No `|| true`: the job-level continue-on-error keeps the lane
-        # non-blocking, but the step must still go red on a regression so a
-        # Windows/MinGW failure is visible, not buried in the JUnit artifact.
-        run: |
-          PYTHONPATH=. python -m pytest tests/test_example_autodiscovery.py -v --tb=short \
-            -m integration --junit-xml=results/examples-mingw.xml
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: examples-nightly-mingw
           path: results/
           retention-days: 14
