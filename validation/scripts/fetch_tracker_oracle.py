@@ -336,7 +336,7 @@ def fetch_timeline(library: str, timeout: float = 30.0) -> str:
     """Fetch the raw timeline HTML for a library (the only network touchpoint)."""
     url = timeline_url(library)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (fixed https host)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (fixed https host)  # nosec B310
         return resp.read().decode("utf-8", errors="replace")
 
 

@@ -35,17 +35,14 @@ conservative:
   nor any mangled symbol reveals the stdlib family (it stays ``UNKNOWN``), it
   emits nothing — it does not guess and it does not escalate. The absence of
   evidence is a reason to stay silent, not to raise an alarm.
-* It defaults to **RISK, never BREAKING.** When a public type embeds a stdlib
-  type *by value* and its layout actually differs, that owner type is itself a
-  non-``std::`` type (e.g. ``class A``) and is therefore never filtered, so the
-  type diff emits its ``TYPE_SIZE_CHANGED``/offset BREAKING finding through the
-  ordinary path; this kind explains and localizes the root cause. We do **not**
-  globally un-filter standalone ``std::`` records in the cross-implementation
-  case — across implementations they differ wholesale and would flood BREAKING
-  noise for toolchain-owned internals (see
-  :func:`abicheck.model.stdlib_namespaces_excluded`). Fine-grained, per-owner
-  attribution of the specific embedded ``std::`` field is deferred to the
-  layout-closure work.
+* It defaults to **RISK** for implementation drift alone, but fail-closes to
+  **BREAKING** when public layout evidence shows a public type embedding a
+  stdlib type *by value*. The owner type may keep the same size/offsets while
+  the embedded ``std::`` representation changes; because standalone ``std::``
+  records stay globally filtered to avoid toolchain-owned noise (see
+  :func:`abicheck.model.stdlib_namespaces_excluded`), this detector carries the
+  breaking classification for that concrete cross-implementation embedding
+  hazard.
 """
 
 from __future__ import annotations
@@ -54,7 +51,7 @@ import re
 from typing import TYPE_CHECKING
 
 from .build_mode import StdlibFamily, build_mode_from_signals
-from .checker_policy import ChangeKind
+from .checker_policy import ChangeKind, Verdict
 from .checker_types import Change
 from .detector_registry import registry
 
@@ -101,11 +98,21 @@ def _public_type_embeds_stdlib_by_value(snap: AbiSnapshot) -> bool:
     kept all the matching records out of the surface (Codex review #345).
     """
     from .model import is_non_abi_surface_type
+    from .surface import compute_public_surface
+
+    surface = compute_public_surface(snap)
+    public_types = (
+        _public_by_value_type_closure(snap)
+        if surface.resolvable
+        else None
+    )
 
     for rec in snap.types:
         # Skip non-ABI-surface owner records (std::/__gnu_cxx:: internals): their
         # std:: fields are not a *public* type embedding the stdlib by value.
         if is_non_abi_surface_type(rec.name):
+            continue
+        if public_types is not None and rec.name not in public_types:
             continue
         for fld in rec.fields:
             tname = (fld.type or "").strip()
@@ -121,6 +128,62 @@ def _public_type_embeds_stdlib_by_value(snap: AbiSnapshot) -> bool:
             if is_non_abi_surface_type(tname.replace("const ", "").strip()):
                 return True
     return False
+
+
+def _public_by_value_type_closure(snap: AbiSnapshot) -> set[str]:
+    """Record types reachable from public ABI roots through by-value edges."""
+    from .model import RecordType, Visibility
+    from .surface import _type_identifiers
+
+    record_by_name: dict[str, RecordType] = {rec.name: rec for rec in snap.types}
+    for rec in snap.types:
+        if "::" in rec.name:
+            record_by_name.setdefault(rec.name.rsplit("::", 1)[1], rec)
+
+    def _add_type(queue: list[str], type_name: str | None) -> None:
+        if _is_indirect_type(type_name):
+            return
+        queue.extend(_type_identifiers(type_name))
+
+    queue: list[str] = []
+    for fn in snap.functions:
+        if fn.visibility != Visibility.PUBLIC:
+            continue
+        _add_type(queue, fn.return_type)
+        for param in fn.params:
+            _add_type(queue, getattr(param, "type", None))
+    for var in snap.variables:
+        if var.visibility == Visibility.PUBLIC:
+            _add_type(queue, var.type)
+
+    public_by_value: set[str] = set()
+    seen: set[str] = set()
+    while queue:
+        name = queue.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        target = snap.typedefs.get(name)
+        if target:
+            _add_type(queue, target)
+        record: RecordType | None = record_by_name.get(name)
+        if record is None:
+            continue
+        public_by_value.add(record.name)
+        for fld in record.fields:
+            _add_type(queue, fld.type)
+        for base in (*record.bases, *record.virtual_bases):
+            _add_type(queue, base)
+    return public_by_value
+
+
+def _is_indirect_type(type_name: str | None) -> bool:
+    if not type_name:
+        return False
+    normalized = type_name.strip()
+    while normalized.endswith((" const", " volatile")):
+        normalized = normalized.rsplit(" ", 1)[0].strip()
+    return normalized.endswith("*") or normalized.endswith("&")
 
 
 def _layout_evidence_present(snap: AbiSnapshot) -> bool:
@@ -148,6 +211,101 @@ def _capture_is_complete(bm: BuildMode) -> bool:
     return True
 
 
+def _collect_mangled_symbols(snap: AbiSnapshot) -> list[str]:
+    """Return all mangled symbol names from a snapshot's functions and variables."""
+    mangled = [f.mangled for f in snap.functions if getattr(f, "mangled", None)]
+    mangled += [v.mangled for v in snap.variables if getattr(v, "mangled", None)]
+    return mangled
+
+
+def _resolve_bm_from_signals(
+    captured: BuildMode | None,
+    mangled: list[str],
+) -> BuildMode:
+    """Return a :class:`BuildMode` enriched from mangled-symbol signals.
+
+    When ``captured`` is ``None``, derives a fresh :class:`BuildMode` via
+    :func:`build_mode_from_signals`. When ``captured`` is present (but partial),
+    makes a copy and folds in the prefix-anchored stdlib signal, preserving all
+    other captured fields (compiler, language std, etc.).
+    """
+    import dataclasses
+
+    if captured is None:
+        return build_mode_from_signals(mangled_symbols=mangled)
+    bm = dataclasses.replace(captured)
+    # Fold in the prefix-anchored signal detection that build_mode_from_signals
+    # provides (``_ZNSt3__1`` prefixes, ``B5cxx11`` tags) before the broader
+    # fallbacks below.
+    sig = build_mode_from_signals(mangled_symbols=mangled)
+    if sig.stdlib is not StdlibFamily.UNKNOWN:
+        bm.stdlib = sig.stdlib
+        if bm.libcpp_abi_version is None:
+            bm.libcpp_abi_version = sig.libcpp_abi_version
+    return bm
+
+
+def _detect_msvc_stl(bm: BuildMode, mangled: list[str]) -> None:
+    """Set ``bm.stdlib`` to ``MSVC_STL`` when COFF-decorated symbols reveal it.
+
+    MSVC STL: COFF-decorated C++ symbols (``?...@@``) are non-Itanium, so
+    the shared ``_Z``-only detector skips them entirely. MSVC encodes the
+    ``std`` namespace as the *component* ``@std@@`` — the leading ``@`` is
+    the name-separator, so a user namespace like ``mystd@@`` (no leading
+    ``@`` before ``std``) does NOT match (Codex review #345). Mutates ``bm``
+    in place; callers are responsible for passing a working copy.
+    """
+    if bm.stdlib is StdlibFamily.UNKNOWN and any(
+        s.startswith("?") and "@std@@" in s for s in mangled
+    ):
+        bm.stdlib = StdlibFamily.MSVC_STL
+
+
+def _enrich_from_demangled(bm: BuildMode, mangled: list[str]) -> None:
+    """Enrich ``bm`` by demangling Itanium symbols and reading namespace tokens.
+
+    Stdlib evidence carried *inside* ordinary user-API manglings (e.g.
+    ``void api(std::vector<int>)``) isn't recognized by the shared
+    prefix-anchored detector. A substring match on the mangled name can't
+    separate the Itanium ``St`` std substitution from a user identifier
+    that merely contains those bytes (a user type mangled ``6St3__1`` is
+    NOT libc++), so we *demangle* and read the parsed namespace:
+
+    * libc++    → a versioned namespace ``std::__1`` / ``std::__2`` /
+      Android ``std::__ndk1`` (the ABI version comes from the digit);
+    * libstdc++ → a real ``std::`` token without that versioned namespace;
+    * a user type → no ``std::`` token at all.
+
+    Uses the *batched* demangler already used across the diff core so that,
+    without the in-process ``cxxfilt`` module, a large C++ library is not
+    demangled one ``c++filt`` subprocess per symbol; degrades to staying
+    quiet when no demangler is available (Codex reviews on #345). Mutates
+    ``bm`` in place; callers are responsible for passing a working copy.
+    """
+    from .demangle import demangle_batch
+
+    cpp = [s for s in mangled if s.startswith("_Z")]
+    demangled = demangle_batch(cpp)
+    for sym in cpp:
+        d = demangled.get(sym)
+        if not d:
+            continue
+        m = _LIBCXX_DEMANGLED_NS.search(d)
+        if m:
+            bm.stdlib = StdlibFamily.LIBCXX
+            # Numeric ABI version (std::__1 / __2); Android ``__ndkN`` has no
+            # standard libcpp_abi_version, so leave it unset there.
+            if m.group(1) is None and bm.libcpp_abi_version is None:
+                bm.libcpp_abi_version = int(m.group(2))
+            break
+        # Only infer libstdc++ from a bare std:: token when the family is not
+        # already known — never let it override a resolved libc++ capture
+        # whose version we were merely completing.
+        if bm.stdlib is StdlibFamily.UNKNOWN and _STD_NAMESPACE_TOKEN.search(d):
+            bm.stdlib = StdlibFamily.LIBSTDCXX
+            break
+
+
 def _effective_build_mode(snap: AbiSnapshot) -> BuildMode | None:
     """Return the snapshot's :class:`BuildMode`, deriving it on the fly when the
     captured field is absent.
@@ -170,45 +328,19 @@ def _effective_build_mode(snap: AbiSnapshot) -> BuildMode | None:
     in the exported manglings). Enrichment works on a copy so a shared captured
     ``BuildMode`` is never mutated in place.
     """
-    import dataclasses
-
     captured = snap.build_mode
     # A fully-resolved capture wins outright — symbols can't improve on it. A
     # libc++ capture missing its ABI version is still partial (the version is
     # recoverable from the symbols), so it does NOT count as resolved here.
     if captured is not None and _capture_is_complete(captured):
         return captured
-    mangled = [f.mangled for f in snap.functions if getattr(f, "mangled", None)]
-    mangled += [v.mangled for v in snap.variables if getattr(v, "mangled", None)]
+    mangled = _collect_mangled_symbols(snap)
     if not mangled:
         # Nothing to reason from: hand back the partial capture (still UNKNOWN)
         # or None. Either way the detector treats UNKNOWN as "no evidence".
         return captured
-    # No capture, or a capture whose stdlib is still UNKNOWN: recover the family
-    # from the mangled symbols. Preserve any other captured fields (compiler,
-    # language std) by enriching a copy of the partial capture.
-    if captured is None:
-        bm = build_mode_from_signals(mangled_symbols=mangled)
-    else:
-        bm = dataclasses.replace(captured)
-        # Fold in the prefix-anchored signal detection that build_mode_from_signals
-        # provides (``_ZNSt3__1`` prefixes, ``B5cxx11`` tags) before the broader
-        # fallbacks below.
-        sig = build_mode_from_signals(mangled_symbols=mangled)
-        if sig.stdlib is not StdlibFamily.UNKNOWN:
-            bm.stdlib = sig.stdlib
-            if bm.libcpp_abi_version is None:
-                bm.libcpp_abi_version = sig.libcpp_abi_version
-    if bm.stdlib is StdlibFamily.UNKNOWN and any(
-        # MSVC STL: COFF-decorated C++ symbols (``?...@@``) are non-Itanium, so
-        # the shared ``_Z``-only detector skips them entirely. MSVC encodes the
-        # ``std`` namespace as the *component* ``@std@@`` — the leading ``@`` is
-        # the name-separator, so a user namespace like ``mystd@@`` (no leading
-        # ``@`` before ``std``) does NOT match (Codex review #345).
-        s.startswith("?") and "@std@@" in s
-        for s in mangled
-    ):
-        bm.stdlib = StdlibFamily.MSVC_STL
+    bm = _resolve_bm_from_signals(captured, mangled)
+    _detect_msvc_stl(bm, mangled)
     # Run the demangle pass when the family is unknown, OR when it is libc++ but
     # the ABI version is still missing (a partial capture we can complete from the
     # ``std::__N`` namespace digit) — Codex review #345.
@@ -216,42 +348,7 @@ def _effective_build_mode(snap: AbiSnapshot) -> BuildMode | None:
         bm.stdlib is StdlibFamily.LIBCXX and bm.libcpp_abi_version is None
     )
     if bm.stdlib is StdlibFamily.UNKNOWN or _libcxx_needs_version:
-        # Stdlib evidence carried *inside* ordinary user-API manglings (e.g.
-        # ``void api(std::vector<int>)``) isn't recognized by the shared
-        # prefix-anchored detector. A substring match on the mangled name can't
-        # separate the Itanium ``St`` std substitution from a user identifier
-        # that merely contains those bytes (a user type mangled ``6St3__1`` is
-        # NOT libc++), so we *demangle* and read the parsed namespace:
-        #   * libc++   → a versioned namespace ``std::__1`` / ``std::__2`` /
-        #     Android ``std::__ndk1`` (the ABI version comes from the digit);
-        #   * libstdc++ → a real ``std::`` token without that versioned namespace;
-        #   * a user type → no ``std::`` token at all.
-        # Uses the *batched* demangler already used across the diff core so that,
-        # without the in-process ``cxxfilt`` module, a large C++ library is not
-        # demangled one ``c++filt`` subprocess per symbol; degrades to staying
-        # quiet when no demangler is available (Codex reviews on #345).
-        from .demangle import demangle_batch
-
-        cpp = [s for s in mangled if s.startswith("_Z")]
-        demangled = demangle_batch(cpp)
-        for sym in cpp:
-            d = demangled.get(sym)
-            if not d:
-                continue
-            m = _LIBCXX_DEMANGLED_NS.search(d)
-            if m:
-                bm.stdlib = StdlibFamily.LIBCXX
-                # Numeric ABI version (std::__1 / __2); Android ``__ndkN`` has no
-                # standard libcpp_abi_version, so leave it unset there.
-                if m.group(1) is None and bm.libcpp_abi_version is None:
-                    bm.libcpp_abi_version = int(m.group(2))
-                break
-            # Only infer libstdc++ from a bare std:: token when the family is not
-            # already known — never let it override a resolved libc++ capture
-            # whose version we were merely completing.
-            if bm.stdlib is StdlibFamily.UNKNOWN and _STD_NAMESPACE_TOKEN.search(d):
-                bm.stdlib = StdlibFamily.LIBSTDCXX
-                break
+        _enrich_from_demangled(bm, mangled)
     return bm
 
 
@@ -297,11 +394,13 @@ def _diff_stdlib_implementation(old: AbiSnapshot, new: AbiSnapshot) -> list[Chan
             "std:: container/string by value is laid out differently, and inline "
             "std:: code can ODR-conflict."
         )
+        effective_verdict = None
         if embeds and have_layout:
             desc += (
-                " A public type embeds a std:: type by value; the type diff "
-                "reports the concrete layout change separately."
+                " A public type embeds a std:: type by value; this is a "
+                "concrete ABI break across standard-library implementations."
             )
+            effective_verdict = Verdict.BREAKING
         elif embeds and not have_layout:
             # Calm, non-escalating note that we could not fully verify layout.
             desc += (
@@ -317,6 +416,7 @@ def _diff_stdlib_implementation(old: AbiSnapshot, new: AbiSnapshot) -> list[Chan
                 description=desc,
                 old_value=old_bm.stdlib.value,
                 new_value=new_bm.stdlib.value,
+                effective_verdict=effective_verdict,
             )
         )
 

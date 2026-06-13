@@ -73,6 +73,7 @@ nav:
   # Lookup tables — precise, exhaustive, no narrative.
   - Reference:
     - Change Kinds: reference/change-kinds.md
+    - Detector Spec Matrix: reference/detector-spec.md
     - Exit Codes: reference/exit-codes.md
     - Platforms: reference/platforms.md
     - Tool Comparison: reference/tool-comparison.md
@@ -144,6 +145,8 @@ nav:
       - "G14: abi3 import-contract": development/plans/g14-stable-abi-subset.md
       - "G15: Inline-namespace version stamp": development/plans/g15-inline-namespace-version.md
       - "G16: Header-scope toolchain robustness": development/plans/g16-header-scope-toolchain-robustness.md
+      - "G17: Real-world validation corpus": development/plans/g17-real-world-corpus.md
+      - "G18: Bazel build-evidence": development/plans/g18-bazel-build-evidence.md
     - ADR:
       - Overview: development/adr/index.md
       - "001: Technology Stack": development/adr/001-technology-stack.md

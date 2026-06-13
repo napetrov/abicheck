@@ -44,9 +44,6 @@ from .buildsource.merge_support import (
     _combine_packs,
     _detect_merge_layer_conflicts,
     _filter_pack_layers,
-    _layer_value,
-    _record_merge_conflicts,
-    _resolve_conflict_winners,
 )
 from .buildsource.model import (
     CoverageStatus,
@@ -59,13 +56,18 @@ from .buildsource.pack import BuildSourcePack
 from .buildsource.redaction import DEFAULT_REDACTION
 from .buildsource.source_replay import REPLAY_SCOPES
 from .cli import main
+from .cli_buildsource_helpers import (
+    _exported_symbols_from_snapshot,
+    _merge_attach_combined,
+    _merge_fold_packs,
+    _merge_handle_conflicts,
+    _merge_load_snapshots,
+    _merge_pick_base,
+    _merge_print_summary,
+)
 
 if TYPE_CHECKING:
     from .buildsource.source_abi import SourceAbiSurface
-    from .buildsource.source_extractors import (
-        CastxmlSourceExtractor,
-        ClangSourceExtractor,
-    )
     from .buildsource.source_graph import SourceGraphSummary
     from .checker_types import Change, DiffResult
     from .model import AbiSnapshot
@@ -103,11 +105,13 @@ if TYPE_CHECKING:
               help="Collect L4 source ABI replay (parses sources/headers). REQUIRES clang "
                    "(or castxml/an Android dump); without the tool this fails gracefully and "
                    "source-only checks stay disabled.")
-@click.option("--source-abi-extractor", "source_abi_extractor", default="clang", show_default=True,
-              type=click.Choice(["clang", "castxml", "android"], case_sensitive=False),
-              help="L4 backend: clang (inline/template/constexpr bodies + default args), "
+@click.option("--source-abi-extractor", "source_abi_extractor", default="auto", show_default=True,
+              type=click.Choice(["auto", "clang", "castxml", "android"], case_sensitive=False),
+              help="L4 backend: auto (pick the most capable available — clang, else castxml), "
+                   "clang (inline/template/constexpr bodies + default args), "
                    "castxml (declarations/types/const values only), or android (reuse a "
-                   "pre-captured header-abi .lsdump/.sdump).")
+                   "pre-captured header-abi .lsdump/.sdump). A requested clang that is not on "
+                   "PATH falls back to castxml rather than disabling source-only checks.")
 @click.option("--source-abi-scope", "source_abi_scope", default="target", show_default=True,
               type=click.Choice(list(REPLAY_SCOPES), case_sensitive=False),
               help="Which translation units to replay (ADR-030 D7): off | headers-only | "
@@ -906,16 +910,6 @@ def _exported_symbols_from_binary(binary: Path | None) -> list[str]:
     syms |= {v.mangled for v in snap.variables if getattr(v, "mangled", "")}
     return sorted(syms)
 
-def _exported_symbols_from_snapshot(snap: AbiSnapshot) -> tuple[str, ...]:
-    """Exported (mangled) symbol names already parsed into *snap* — no re-dump.
-
-    Used to plumb L0 exports into inline source replay (A1) for the
-    ``dump <binary> --sources`` flow. Empty for a source-only snapshot.
-    """
-    syms = {fn.mangled for fn in snap.functions if fn.mangled}
-    syms |= {v.mangled for v in snap.variables if getattr(v, "mangled", "")}
-    return tuple(sorted(syms))
-
 def _collect_source_abi(
     merged: BuildEvidence,
     extractors: list[ExtractorRecord],
@@ -954,15 +948,32 @@ def _collect_source_abi(
             exported=exported, library=library, roots=roots,
         )
 
-    impl: ClangSourceExtractor | CastxmlSourceExtractor
-    if extractor == "clang":
-        from .buildsource.source_extractors import ClangSourceExtractor
-        impl = ClangSourceExtractor(clang_bin=clang_bin)
-        tool_name = clang_bin
-    else:
-        from .buildsource.source_extractors import CastxmlSourceExtractor
-        impl = CastxmlSourceExtractor()
-        tool_name = "castxml"
+    from .buildsource.source_extractors import select_source_backend
+
+    # Evaluate the available front-ends and pick a path (ADR-030 D3): "auto"
+    # picks the most capable available backend; an explicitly-requested clang
+    # that is absent falls back to castxml instead of disabling source checks.
+    choice, impl = select_source_backend(extractor, clang_bin=clang_bin)
+    if impl is None or choice.selected is None:
+        detail = "; ".join(f"{n}: {why}" for n, why in choice.skipped) or choice.reason
+        extractors.append(ExtractorRecord(
+            name=f"source_abi:{extractor}", status="failed",
+            detail=f"no usable source-ABI backend ({detail}); source-only checks disabled",
+        ))
+        return (
+            SourceAbiSurface(library=library, target_id=target_id),
+            "unavailable: no source-ABI front-end on PATH (clang/castxml) — "
+            "source-only checks disabled. Install clang or castxml.",
+        )
+
+    extractor = choice.selected
+    tool_name = clang_bin if choice.selected == "clang" else "castxml"
+    # Surface the decision and the chosen backend's capability gaps so a
+    # construct it cannot observe (e.g. concept tightening or constructor
+    # mangling under castxml) is logged rather than silently invisible.
+    merged.diagnostics.append(f"source_abi: {choice.reason}")
+    if choice.capability_gaps:
+        merged.diagnostics.append(f"source_abi: {choice.gap_note()}")
 
     if not merged.compile_units:
         extractors.append(ExtractorRecord(
@@ -1256,70 +1267,16 @@ def merge_cmd(inputs: tuple[Path, ...], output: Path, on_conflict: str, verbose:
     layer should come from exactly one input) and embedded in the output, so
     `compare old new` carries L3/L4/L5 with no out-of-band directories.
     """
-    from .serialization import load_snapshot, snapshot_to_json
+    from .serialization import snapshot_to_json
 
-    if len(inputs) < 2:
-        raise click.UsageError("merge needs at least two input snapshots.")
+    snaps = _merge_load_snapshots(inputs)
+    base_path, base = _merge_pick_base(snaps)
 
-    snaps = []
-    for path in inputs:
-        try:
-            snaps.append((path, load_snapshot(path)))
-        except Exception as exc:  # malformed/corrupted .abi.json → clean error
-            raise click.ClickException(
-                f"could not read snapshot {path.name}: {exc}"
-            ) from exc
-
-    # Base = the input that carries binary metadata (L0); else the first input.
-    base_path, base = next(
-        (
-            (p, s) for p, s in snaps
-            if s.elf is not None or s.pe is not None or s.macho is not None
-        ),
-        snaps[0],
-    )
-
-    # A2: detect when two inputs both supply the same managed layer with DIFFERING
-    # normalized facts. `_combine_packs` silently first-wins per layer, so without
-    # this a parallel-baseline prep mistake (e.g. two different source trees) is
-    # dropped on the floor. Compared on a per-layer payload digest, not the
-    # pack-wide content_hash (which would false-positive on an unrelated layer).
+    # A2: detect layer conflicts before folding (see _detect_merge_layer_conflicts).
     conflicts = _detect_merge_layer_conflicts(snaps)
+    combined, contributors = _merge_fold_packs(snaps)
 
-    # Fold every input's embedded pack together, left to right.
-    combined: BuildSourcePack | None = None
-    contributors = 0
-    for _p, s in snaps:
-        if s.build_source is None:
-            continue
-        contributors += 1
-        combined = _combine_packs(combined, s.build_source)
-
-    if conflicts:
-        # Which input's facts actually survived per layer (_combine_packs is
-        # first-wins for L3 but last-wins for L4/L5), so the message is accurate.
-        winners = (
-            _resolve_conflict_winners(combined, conflicts)
-            if combined is not None else {}
-        )
-        for layer, entries in sorted(conflicts.items()):
-            srcs = ", ".join(f"{name}" for name, _digest in entries)
-            kept = f"kept {winners[layer]}" if layer in winners else "kept one input"
-            click.echo(
-                f"merge conflict: layer {layer} supplied with differing facts by "
-                f"multiple inputs ({srcs}); {kept}.",
-                err=True,
-            )
-        if on_conflict == "error":
-            raise click.ClickException(
-                "merge aborted: conflicting layer facts and --on-conflict=error. "
-                "Each layer (L3/L4/L5) should come from exactly one input."
-            )
-        # warn mode: persist the conflict into the combined pack's extractor
-        # ledger (a serialized field, unlike a nonexistent manifest.diagnostics),
-        # so the recorded baseline carries the divergence forward.
-        if combined is not None:
-            _record_merge_conflicts(combined, conflicts, winners)
+    _merge_handle_conflicts(conflicts, combined, on_conflict)
 
     if combined is None:
         click.echo(
@@ -1328,47 +1285,10 @@ def merge_cmd(inputs: tuple[Path, ...], output: Path, on_conflict: str, verbose:
             err=True,
         )
     else:
-        # A1 merge-path L0 plumbing: the source surface was linked with no binary
-        # present (empty exports), so re-link it against the binary base's L0
-        # exports — otherwise the provenance / mapping checks stay inert in the
-        # parallel-baseline flow. Only when the base actually carries a binary.
-        base_exports = _exported_symbols_from_snapshot(base)
-        if base_exports and combined.source_abi is not None and not (
-            combined.source_abi.roots.get("exported_symbols")
-        ):
-            from .buildsource.build_evidence import BuildEvidence
-            from .buildsource.source_graph import build_source_graph
-            from .buildsource.source_link import relink_surface_exports
-
-            relink_surface_exports(combined.source_abi, base_exports)
-            # L5: the graph was folded with an empty export set, so it lacks the
-            # source↔binary edges that diff_embedded_build_source consumes —
-            # rebuild it from the relinked surface so L5 mapping/localization is
-            # not inert (Codex).
-            if combined.source_graph is not None:
-                combined.source_graph = build_source_graph(
-                    combined.build_evidence or BuildEvidence(),
-                    source_abi=combined.source_abi,
-                )
-            # Mutating the embedded payloads invalidates the artifact digests
-            # _combine_packs precomputed; clear them so content_hash()/to_ref()
-            # recompute from the updated payloads rather than a stale hash (Codex).
-            combined.manifest.artifacts = []
-        base.build_source = combined
-        base.build_source_pack = combined.to_ref(path_hint=str(output))
+        _merge_attach_combined(combined, base, output)
 
     output.write_text(snapshot_to_json(base), encoding="utf-8")
-    click.echo(f"Merged baseline written to {output}", err=True)
-    click.echo(f"  base ABI surface: {base_path.name}", err=True)
-    click.echo(f"  build_source contributors: {contributors}/{len(snaps)}", err=True)
-    if combined is not None:
-        for cov in combined.manifest.coverage:
-            if _layer_value(cov.layer) in {
-                DataLayer.L3_BUILD.value,
-                DataLayer.L4_SOURCE_ABI.value,
-                DataLayer.L5_SOURCE_GRAPH.value,
-            }:
-                click.echo(f"  {cov.layer}: {cov.status.value}", err=True)
+    _merge_print_summary(base_path, contributors, len(snaps), combined, output)
 
 def _resolve_side_pack(
     build_info: Path | None,
@@ -1444,7 +1364,7 @@ def diff_embedded_build_source(
         # is missing, so the run must fail rather than pass on zero evidence. Emit
         # a coverage-only metrics dict so attach_evidence_metrics still counts the
         # evidence_required_missing finding (Codex review) instead of dropping it.
-        req = require_evidence_findings(policy_file, None)
+        req = require_evidence_findings(policy_file, None, None)
         metrics = evidence_coverage_metrics([]) if req else {}
         return req, [], metrics
 
@@ -1506,9 +1426,10 @@ def diff_embedded_build_source(
         apply_evidence_policy(_gr, "graph_risk", policy_file)
         changes.extend(_gr)
 
-    # ADR-033 D7 require_evidence: fail if a declared-mandatory layer is absent
-    # from the target. These are API_BREAK findings (not modulated by the knobs).
-    changes.extend(require_evidence_findings(policy_file, new_pack))
+    # ADR-033 D7 require_evidence: fail if a declared-mandatory layer is not
+    # comparable on both sides. These are API_BREAK findings (not modulated by
+    # the knobs).
+    changes.extend(require_evidence_findings(policy_file, old_pack, new_pack))
 
     # Coverage/capability reflect the *target* (new) side only: the L3/L4/L5
     # diffs run only when both sides supply a layer, so reporting the old pack's

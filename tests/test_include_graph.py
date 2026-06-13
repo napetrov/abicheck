@@ -66,6 +66,18 @@ def test_depfile_args_handles_glued_output_and_argv0_flag() -> None:
     assert depfile_args_from_argv([]) == []
 
 
+def test_depfile_args_preserves_safe_include_context_flags() -> None:
+    assert depfile_args_from_argv([
+        "clang++", "-c", "foo.cpp", "-include", "forced.h",
+        "-imacros", "config.macros", "-include-pch", "pch.pch",
+        "-iquote", "quoted", "-idirafter", "after", "-I", "include",
+    ]) == [
+        "foo.cpp", "-include", "forced.h", "-imacros", "config.macros",
+        "-include-pch", "pch.pch", "-iquote", "quoted",
+        "-idirafter", "after", "-I", "include",
+    ]
+
+
 def test_depfile_args_strips_clang_plugin_loading_options() -> None:
     # compile_commands.json is untrusted input for source-ABI replay.  The
     # depfile pass must not forward Clang escape hatches that load plugins or
@@ -76,7 +88,7 @@ def test_depfile_args_strips_clang_plugin_loading_options() -> None:
         "-fplugin=./plugin.so", "-fpass-plugin=./pass.so",
         "-mllvm", "-load=./legacy-pass.so",
         "-mllvm=-load=./joined-pass.so",
-        "@args.rsp", "--config", "evil.cfg", "--config=evil.cfg",
+        "@/tmp/args.rsp", "--config", "evil.cfg", "--config=evil.cfg",
     ]) == ["foo.cpp", "-I", "include"]
     assert depfile_args_from_argv([
         "clang++", "-cc1", "-load", "./evil.so", "foo.cpp", "-DABI=1",
@@ -142,13 +154,23 @@ def test_extractor_parses_mocked_clang(monkeypatch) -> None:
         stdout = "foo.o: foo.cpp inc/foo.h"
         stderr = ""
 
-    monkeypatch.setattr(ig.subprocess, "run", lambda *_a, **_k: _Proc())
+    seen = {}
+
+    def _run(cmd, **_kwargs):
+        seen["cmd"] = cmd
+        return _Proc()
+
+    monkeypatch.setattr(ig.subprocess, "run", _run)
     build = BuildEvidence(compile_units=[
-        CompileUnit(id="cu://foo", source="foo.cpp", argv=["foo.cpp"]),
+        CompileUnit(id="cu://foo", source="foo.cpp", argv=[
+            "/usr/bin/c++", "-fplugin=/tmp/evil.so", "foo.cpp",
+        ]),
         CompileUnit(id="cu://nosrc", source=""),  # skipped
     ])
     includes = ClangIncludeExtractor().extract_from_build(build)
     assert includes == {"cu://foo": ["foo.cpp", "inc/foo.h"]}
+    assert seen["cmd"] == ["clang++", "-M", "foo.cpp"]
+    assert "-fplugin=/tmp/evil.so" not in seen["cmd"]
 
 
 def test_extractor_handles_subprocess_error(monkeypatch) -> None:

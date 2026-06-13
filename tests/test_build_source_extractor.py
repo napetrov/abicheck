@@ -287,7 +287,7 @@ def test_manifest_missing_name(tmp_path):
 
 @pytest.mark.parametrize(
     "bad_name",
-    ["/tmp/escape", "../escape", "a/b", "a\\b", ".."],
+    ["/tmp/escape", "../escape", "a/b", "a\\b", ".."],  # noqa: S108  # nosec B108
 )
 def test_manifest_name_must_be_safe_path_component(tmp_path, bad_name):
     # A name set to an absolute path or containing traversal is later used to
