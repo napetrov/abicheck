@@ -1075,6 +1075,8 @@ def embed_build_source(
     allow_build_query: bool = False,
     clang_bin: str = "clang",
     collect_mode: str = "source-target",
+    build_query: str | None = None,
+    build_compile_db: str | None = None,
 ) -> None:
     """Embed build-info / source facts inline in *snap* (single-artifact UX).
 
@@ -1123,6 +1125,18 @@ def embed_build_source(
             cfg = load_build_config(cfg_path) if cfg_path is not None else None
         except ValueError as exc:
             raise click.ClickException(str(exc)) from exc
+        # CLI overrides (no config file needed): --build-query / --build-compile-db
+        # win over the .abicheck.yml values when supplied.
+        if build_query is not None or build_compile_db is not None:
+            import dataclasses
+
+            from .buildsource.inline import BuildConfig
+            cfg = cfg or BuildConfig()
+            cfg = dataclasses.replace(
+                cfg,
+                query=build_query if build_query is not None else cfg.query,
+                compile_db=build_compile_db if build_compile_db is not None else cfg.compile_db,
+            )
         # A1: plumb the binary's L0 exports (already parsed into this snapshot)
         # into the inline replay, so the linked source surface knows which decls
         # map to exports and the provenance/mapping checks have a signal. Empty in
@@ -1186,6 +1200,8 @@ def dump_source_only(
     build_id: str | None,
     no_git: bool,
     collect_mode: str = "source-target",
+    build_query: str | None = None,
+    build_compile_db: str | None = None,
 ) -> None:
     """Write a binary-less snapshot carrying only the embedded build/source facts.
 
@@ -1209,7 +1225,8 @@ def dump_source_only(
     snap = AbiSnapshot(library=library, version=version)
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
     _write_snapshot_output(
-        snap, output, build_info, sources, build_config, allow_build_query, collect_mode
+        snap, output, build_info, sources, build_config, allow_build_query, collect_mode,
+        build_query=build_query, build_compile_db=build_compile_db,
     )
 
 @main.command("merge")

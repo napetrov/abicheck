@@ -182,6 +182,8 @@ def _write_snapshot_output(
     build_config: Path | None = None,
     allow_build_query: bool = False,
     collect_mode: str = "source-target",
+    build_query: str | None = None,
+    build_compile_db: str | None = None,
 ) -> None:
     """Serialize snapshot and write to file or stdout.
 
@@ -191,6 +193,8 @@ def _write_snapshot_output(
     ``compare old.json new.json`` needs no out-of-band packs. *collect_mode* (the
     ADR-033 D2 CI evidence mode) selects which layers and replay scope to collect:
     ``build`` captures L3 build context only, ``off`` collects nothing.
+    *build_query* / *build_compile_db* are the CLI equivalents of the
+    ``.abicheck.yml`` ``build.query`` / ``build.compile_db`` keys.
     """
     if build_info is not None or sources is not None:
         from .cli_buildsource import embed_build_source
@@ -198,6 +202,7 @@ def _write_snapshot_output(
             snap, build_info, sources,
             build_config=build_config, allow_build_query=allow_build_query,
             collect_mode=collect_mode,
+            build_query=build_query, build_compile_db=build_compile_db,
         )
     result = snapshot_to_json(snap)
     if output:
@@ -728,6 +733,7 @@ def dump_cmd(so_path: Path | None, headers: tuple[Path, ...], includes: tuple[Pa
              git_tag: str | None, build_id: str | None, no_git: bool,
              build_info: Path | None = None, sources: Path | None = None,
              build_config: Path | None = None, allow_build_query: bool = False,
+             build_query: str | None = None, build_compile_db: str | None = None,
              collect_mode: str = "source-target") -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
@@ -746,7 +752,7 @@ def dump_cmd(so_path: Path | None, headers: tuple[Path, ...], includes: tuple[Pa
                 "produce binary data-source diagnostics."
             )
         from .cli_buildsource import dump_source_only
-        dump_source_only(sources, build_info, version, output, build_config, allow_build_query, git_tag, build_id, no_git, collect_mode)
+        dump_source_only(sources, build_info, version, output, build_config, allow_build_query, git_tag, build_id, no_git, collect_mode, build_query=build_query, build_compile_db=build_compile_db)
         return
 
     # Reconcile the --debug-format selector with the legacy --btf/--ctf/--dwarf
@@ -838,7 +844,7 @@ def dump_cmd(so_path: Path | None, headers: tuple[Path, ...], includes: tuple[Pa
         _populate_dependency_info(snap, so_path, list(search_paths), sysroot, ld_library_path)
 
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-    _write_snapshot_output(snap, output, build_info, sources, build_config, allow_build_query, collect_mode)
+    _write_snapshot_output(snap, output, build_info, sources, build_config, allow_build_query, collect_mode, build_query=build_query, build_compile_db=build_compile_db)
 
 
 def _handle_non_elf_dump(

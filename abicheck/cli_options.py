@@ -108,6 +108,19 @@ def build_source_dump_options(func: F) -> F:
         "--sources tree root.",
     )(func)
     func = click.option(
+        "--build-compile-db", "build_compile_db", default=None, metavar="GLOB",
+        help="Where a build/query lands its compile_commands.json, relative to "
+        "--sources (e.g. 'build/compile_commands.json'). CLI equivalent of "
+        "`.abicheck.yml` build.compile_db; overrides it when both are given.",
+    )(func)
+    func = click.option(
+        "--build-query", "build_query", default=None, metavar="CMD",
+        help="Build-system query command that emits a compile DB without a full "
+        "build (e.g. 'cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON'). "
+        "CLI equivalent of `.abicheck.yml` build.query — no config file needed. "
+        "Only runs with --allow-build-query.",
+    )(func)
+    func = click.option(
         "--sources", "sources",
         type=click.Path(exists=True, path_type=Path),
         default=None,
