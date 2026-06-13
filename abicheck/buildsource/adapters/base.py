@@ -233,6 +233,9 @@ def _is_msvc_command(argv: list[str]) -> bool:
         arg = argv[i]
         if arg in ("&&", ";"):
             break
+        if arg in SOURCE_OPERAND_FLAGS:
+            i += 2
+            continue
         if arg == "--driver-mode" and i + 1 < len(argv):
             if argv[i + 1].lower() == "cl":
                 return True

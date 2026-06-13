@@ -553,6 +553,14 @@ def test_effective_language_ignores_option_operands(argv, source, expected):
     assert effective_language(argv, source) == expected
 
 
+def test_driver_mode_operand_does_not_make_unix_paths_msvc() -> None:
+    from abicheck.buildsource.adapters.base import source_from_argv
+
+    assert source_from_argv([
+        "gcc", "-MMD", "-MF", "--driver-mode=cl", "-c", "/tmp/foo.c",
+    ]) == "/tmp/foo.c"
+
+
 def test_redundant_objcxx_forced_language_is_no_op_drift(tmp_path):
     # Codex P2: clang++ -x objective-c++ on a .mm TU must stay OBJCXX, not collapse
     # to CXX — otherwise std:OBJCXX->std:CXX reads as false build-flag drift.
