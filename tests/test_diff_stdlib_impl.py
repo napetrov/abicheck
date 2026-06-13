@@ -27,6 +27,7 @@ from abicheck.model import (
     Visibility,
     stdlib_namespaces_excluded,
 )
+from abicheck.policy_file import PolicyFile
 
 
 def _snap(
@@ -115,6 +116,51 @@ class TestDetectorFindings:
         )
         assert finding.effective_verdict is Verdict.BREAKING
         assert result.verdict is Verdict.BREAKING
+
+    def test_policy_override_does_not_disagree_with_effective_verdict(self, tmp_path) -> None:
+        old = _snap("1", stdlib=StdlibFamily.LIBSTDCXX, types=[_embed_stdlib_record()])
+        new = _snap("2", stdlib=StdlibFamily.LIBCXX, types=[_embed_stdlib_record()])
+        finding = next(
+            c
+            for c in compare(old, new).changes
+            if c.kind == ChangeKind.STDLIB_IMPLEMENTATION_CHANGED
+        )
+        p = tmp_path / "policy.yaml"
+        p.write_text("overrides:\n  stdlib_implementation_changed: ignore\n")
+        pf = PolicyFile.load(p)
+
+        assert finding.effective_verdict is Verdict.BREAKING
+        assert pf.compute_verdict([finding]) is Verdict.BREAKING
+
+    def test_private_embedding_does_not_escalate_when_surface_is_resolved(self) -> None:
+        private_owner = _embed_stdlib_record()
+        public_owner = RecordType(name="PublicApi", kind="class", size_bits=32)
+        public_fn = Function(
+            name="api",
+            mangled="_Z3apiv",
+            return_type="PublicApi",
+            visibility=Visibility.PUBLIC,
+        )
+        old = _snap(
+            "1", stdlib=StdlibFamily.LIBSTDCXX,
+            types=[private_owner, public_owner],
+        )
+        new = _snap(
+            "2", stdlib=StdlibFamily.LIBCXX,
+            types=[private_owner, public_owner],
+        )
+        old.functions.append(public_fn)
+        new.functions.append(public_fn)
+
+        result = compare(old, new)
+        finding = next(
+            c
+            for c in result.changes
+            if c.kind == ChangeKind.STDLIB_IMPLEMENTATION_CHANGED
+        )
+        assert "embeds a std::" not in finding.description
+        assert finding.effective_verdict is None
+        assert result.verdict is Verdict.COMPATIBLE_WITH_RISK
 
     def test_same_size_owner_with_filtered_stdlib_layout_change_is_breaking(self) -> None:
         owner = _embed_stdlib_record(size_bits=192)

@@ -258,6 +258,12 @@ class PolicyFile:
         for change in changes:
             kind = change.kind
             base_v = compute_verdict([change], policy=self.base_policy)
+            # Per-finding modulation is already the concrete classification for
+            # this finding; keep policy-file verdicts/reporters consistent by
+            # not letting a kind-wide override recategorize it differently.
+            if isinstance(getattr(change, "effective_verdict", None), Verdict):
+                verdicts.append(base_v)
+                continue
             if kind in self.overrides:
                 override_v = self.overrides[kind]
                 # A change that violates a frozen-namespace contract MUST

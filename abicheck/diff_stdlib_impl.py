@@ -98,11 +98,17 @@ def _public_type_embeds_stdlib_by_value(snap: AbiSnapshot) -> bool:
     kept all the matching records out of the surface (Codex review #345).
     """
     from .model import is_non_abi_surface_type
+    from .surface import compute_public_surface
+
+    surface = compute_public_surface(snap)
+    public_types = surface.public_types if surface.resolvable else None
 
     for rec in snap.types:
         # Skip non-ABI-surface owner records (std::/__gnu_cxx:: internals): their
         # std:: fields are not a *public* type embedding the stdlib by value.
         if is_non_abi_surface_type(rec.name):
+            continue
+        if public_types is not None and rec.name not in public_types:
             continue
         for fld in rec.fields:
             tname = (fld.type or "").strip()
