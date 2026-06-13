@@ -69,6 +69,7 @@ _DEPFILE_UNSAFE_PREFIXES = (
     "-fplugin=",
     "-fpass-plugin=",
     "-mllvm=",
+    "--config=",
 )
 
 
@@ -107,6 +108,11 @@ def depfile_args_from_argv(argv: list[str]) -> list[str]:
             continue
         if tok in _DEPFILE_DROP_WITH_VALUE or tok in _DEPFILE_UNSAFE_WITH_VALUE:
             skip_next = True
+            continue
+        if tok == "--config":
+            skip_next = True
+            continue
+        if tok.startswith("@"):
             continue
         if tok in _DEPFILE_UNSAFE_FLAG or tok.startswith(_DEPFILE_UNSAFE_PREFIXES):
             continue
