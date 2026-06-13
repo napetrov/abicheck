@@ -37,7 +37,7 @@ from .source_graph import (
 )
 
 if TYPE_CHECKING:
-    from .build_evidence import BuildEvidence, CompileUnit
+    from .build_evidence import BuildEvidence
     from .source_graph import SourceGraphSummary
 
 
