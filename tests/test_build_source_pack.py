@@ -1142,7 +1142,7 @@ def test_build_evidence_merge_dedups_by_id():
 
 
 def test_coverage_status_default_round_trip():
-    cov = BuildSourcePack.empty("/tmp/x").manifest.coverage_for(DataLayer.L3_BUILD)
+    cov = BuildSourcePack.empty("/tmp/x").manifest.coverage_for(DataLayer.L3_BUILD)  # noqa: S108  # nosec B108
     assert cov is None  # empty pack has no coverage rows until populated
 
 
