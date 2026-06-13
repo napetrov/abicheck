@@ -52,12 +52,23 @@ def main(argv: list[str] | None = None) -> int:
 
     false_positives: list[str] = []
     downgrades: list[str] = []
+    errors: list[str] = []
     for r in data.get("results", []):
         case = r.get("case_id") or r.get("name")
         got = (r.get("got") or "").upper()
         entry = gt.get(case, {})
         expected = (entry.get("expected") or "").upper()
-        if r.get("status") in {"SKIP", "ERROR"} or not got:
+        status = r.get("status")
+        # SKIP is benign (tool/platform/feature unavailable). ERROR is NOT: the
+        # validate run is invoked under `set +e`, so an ERROR row is the only
+        # remaining signal that the reduced-evidence mode failed to produce a
+        # verdict for a case. Ignoring it would let a crashed run pass the guard
+        # green without ever checking the false-positive invariant — so treat
+        # ERROR (and a missing verdict that is not a SKIP) as a guard failure.
+        if status == "SKIP":
+            continue
+        if status == "ERROR" or not got:
+            errors.append(f"{case}: status={status} ({r.get('message', '')[:120]})")
             continue
         if expected in _COMPATIBLE_EXPECTED and got == "BREAKING":
             false_positives.append(f"{case}: expected {expected} got {got}")
@@ -68,12 +79,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{label} downgrades (expected evidence loss, reported): {len(downgrades)}")
         for d in downgrades:
             print(f"  - {d}")
+
+    failed = False
+    if errors:
+        print(f"\nERROR: {label} run did not produce a verdict for {len(errors)} case(s) "
+              "(crash/compare failure — the FP invariant was never checked):", file=sys.stderr)
+        for e in errors:
+            print(f"  - {e}", file=sys.stderr)
+        failed = True
     if false_positives:
         print(f"\nERROR: {label} false positives: {len(false_positives)}", file=sys.stderr)
         for fp in false_positives:
             print(f"  - {fp}", file=sys.stderr)
+        failed = True
+    if failed:
         return 1
-    print(f"\n{label} FP guard: no spurious breaks.")
+    print(f"\n{label} FP guard: no spurious breaks, no errored cases.")
     return 0
 
 
