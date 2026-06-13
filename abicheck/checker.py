@@ -115,6 +115,7 @@ from .model import AbiSnapshot
 from .policy_file import PolicyFile
 
 if TYPE_CHECKING:
+    from .post_processing import PipelineContext
     from .suppression import SuppressionList
 
 __all__ = [
@@ -338,7 +339,7 @@ def _run_post_processing(
     policy_file: PolicyFile | None,
     scope_to_public_surface: bool,
     force_public_symbols: set[str] | None,
-) -> tuple[list[Change], list[Change], list[Change], list[Change], list[Change], bool, object]:
+) -> tuple[list[Change], list[Change], list[Change], list[Change], list[Change], bool, PipelineContext]:
     """Run the post-processing pipeline and unpack results.
 
     Returns ``(kept, redundant, opaque_filtered, suppressed, out_of_surface,
@@ -413,7 +414,7 @@ def _compute_scope_confidence(
     old: AbiSnapshot,
     new: AbiSnapshot,
     scope_to_public_surface: bool,
-    pp_ctx: object,
+    pp_ctx: PipelineContext,
 ) -> tuple[str, list[str]]:
     """Compute structured surface-scope confidence (ADR-024 §D5.3).
 
@@ -426,8 +427,8 @@ def _compute_scope_confidence(
         old,
         new,
         scope_enabled=scope_to_public_surface,
-        surf_old=pp_ctx.surf_old,  # type: ignore[attr-defined]
-        surf_new=pp_ctx.surf_new,  # type: ignore[attr-defined]
+        surf_old=pp_ctx.surf_old,
+        surf_new=pp_ctx.surf_new,
     )
 
 

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import click
 
@@ -25,7 +25,48 @@ from .dumper import dump
 from .errors import AbicheckError
 
 if TYPE_CHECKING:
-    pass
+    from .model import AbiSnapshot
+
+
+class _ExpandHeaderInputs(Protocol):
+    def __call__(self, inputs: list[Path]) -> list[Path]: ...
+
+
+class _PopulateDependencyInfo(Protocol):
+    def __call__(
+        self,
+        snap: AbiSnapshot,
+        so_path: Path,
+        search_paths: list[Path],
+        sysroot: Path | None,
+        ld_library_path: str,
+    ) -> None: ...
+
+
+class _StampProvenance(Protocol):
+    def __call__(
+        self,
+        snap: AbiSnapshot,
+        *,
+        git_tag: str | None,
+        build_id: str | None,
+        no_git: bool,
+    ) -> None: ...
+
+
+class _WriteSnapshotOutput(Protocol):
+    def __call__(
+        self,
+        snap: AbiSnapshot,
+        output: Path | None,
+        build_info: Path | None,
+        sources: Path | None,
+        build_config: Path | None,
+        allow_build_query: bool,
+        collect_mode: str,
+        build_query: str | None = ...,
+        build_compile_db: str | None = ...,
+    ) -> None: ...
 
 
 def resolve_dump_debug_format(
@@ -90,10 +131,10 @@ def perform_elf_dump(
     build_config: Path | None,
     allow_build_query: bool,
     collect_mode: str,
-    expand_header_inputs: object,
-    populate_dependency_info: object,
-    stamp_provenance: object,
-    write_snapshot_output: object,
+    expand_header_inputs: _ExpandHeaderInputs,
+    populate_dependency_info: _PopulateDependencyInfo,
+    stamp_provenance: _StampProvenance,
+    write_snapshot_output: _WriteSnapshotOutput,
     build_query: str | None = None,
     build_compile_db: str | None = None,
 ) -> None:
@@ -103,16 +144,8 @@ def perform_elf_dump(
     stamp_provenance, write_snapshot_output) are passed in from cli.py to avoid
     an import cycle — cli_dump_helpers must not import from cli.
     """
-    from collections.abc import Callable
-    from typing import cast
-
-    _expand = cast("Callable[[list[Path]], list[Path]]", expand_header_inputs)
-    _populate = cast("Callable[..., None]", populate_dependency_info)
-    _stamp = cast("Callable[..., None]", stamp_provenance)
-    _write = cast("Callable[..., None]", write_snapshot_output)
-
     compiler = "cc" if lang == "c" else "c++"
-    resolved_headers = _expand(list(headers)) if headers else []
+    resolved_headers = expand_header_inputs(list(headers)) if headers else []
     try:
         snap = dump(
             so_path=so_path,
@@ -139,10 +172,10 @@ def perform_elf_dump(
         snap.parsed_with_build_context = True
 
     if follow_deps:
-        _populate(snap, so_path, list(search_paths), sysroot, ld_library_path)
+        populate_dependency_info(snap, so_path, list(search_paths), sysroot, ld_library_path)
 
-    _stamp(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-    _write(
+    stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
+    write_snapshot_output(
         snap, output, build_info, sources, build_config, allow_build_query,
         collect_mode, build_query=build_query, build_compile_db=build_compile_db,
     )
