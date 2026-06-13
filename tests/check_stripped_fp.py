@@ -7,9 +7,10 @@ changes the evidence available to the detector. It may legitimately *lose*
 signal — a stripped or release binary drops the DWARF a layout/calling-convention
 break needs — but it must never *manufacture* a real break. So the sound,
 blockable invariant for any such full/partial run is: a case the debug ground
-truth calls COMPATIBLE / NO_CHANGE must never come out BREAKING in the reduced
-mode. Missed breaks (BREAKING→COMPATIBLE, e.g. case129 stripped/release) are
-expected evidence loss and are reported, not failed.
+truth calls non-breaking (COMPATIBLE / NO_CHANGE / COMPATIBLE_WITH_RISK) must
+never come out BREAKING in the reduced mode. Missed breaks (BREAKING→COMPATIBLE,
+e.g. case129 stripped/release) are expected evidence loss and are reported, not
+failed.
 
 Usage:
     python tests/check_stripped_fp.py <results.json> [label]
@@ -28,8 +29,11 @@ from pathlib import Path
 REPO_DIR = Path(__file__).parent.parent
 GROUND_TRUTH = REPO_DIR / "examples" / "ground_truth.json"
 
-# Verdicts the ground truth may declare as "not a break".
-_COMPATIBLE_EXPECTED = {"COMPATIBLE", "NO_CHANGE"}
+# Verdicts the ground truth may declare as "not a real ABI break".
+# COMPATIBLE_WITH_RISK is included: the runtime-model-flip cases (case130–133)
+# are risk-only, so a reduced-evidence run that reports BREAKING for one of them
+# is still a spurious break the guard must catch.
+_COMPATIBLE_EXPECTED = {"COMPATIBLE", "NO_CHANGE", "COMPATIBLE_WITH_RISK"}
 
 
 def _load(path: Path) -> dict:
