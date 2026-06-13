@@ -44,8 +44,28 @@ if TYPE_CHECKING:
 #: Flags (with their value argument) that must be stripped before re-driving a
 #: recorded compile command as ``clang -MM``: the compile action, the object
 #: output, and any existing dependency-generation options.
-_DEPFILE_DROP_WITH_VALUE = frozenset({"-o", "--output", "-MF", "-MT", "-MQ", "-MJ", "-Xclang"})
+_DEPFILE_DROP_WITH_VALUE = frozenset({"-o", "--output", "-MF", "-MT", "-MQ", "-MJ"})
 _DEPFILE_DROP_FLAG = frozenset({"-c", "-MD", "-MMD", "-MM", "-M", "-MG", "-MP", "-pipe"})
+_DEPFILE_UNSAFE_WITH_VALUE = frozenset({
+    "-Xclang",
+    "-load",
+    "-plugin",
+    "-add-plugin",
+    "-fplugin",
+    "-fpass-plugin",
+    "-mllvm",
+})
+_DEPFILE_UNSAFE_FLAG = frozenset({"-cc1"})
+_DEPFILE_UNSAFE_PREFIXES = (
+    "-Xclang=",
+    "-load=",
+    "-plugin=",
+    "-add-plugin=",
+    "-fplugin=",
+    "-fpass-plugin=",
+    "-mllvm=",
+    "--config=",
+)
 
 
 def depfile_args_from_argv(argv: list[str]) -> list[str]:
@@ -81,8 +101,15 @@ def depfile_args_from_argv(argv: list[str]) -> list[str]:
         if skip_next:
             skip_next = False
             continue
-        if tok in _DEPFILE_DROP_WITH_VALUE:
+        if tok in _DEPFILE_DROP_WITH_VALUE or tok in _DEPFILE_UNSAFE_WITH_VALUE:
             skip_next = True
+            continue
+        if tok == "--config":
+            skip_next = True
+            continue
+        if tok.startswith("@"):
+            continue
+        if tok in _DEPFILE_UNSAFE_FLAG or tok.startswith(_DEPFILE_UNSAFE_PREFIXES):
             continue
         # `-oFOO` / `-MFfoo.d` glued forms and the GCC long `--output=foo.o`
         # spelling (clang -M with --output=… writes the depfile to that file and
