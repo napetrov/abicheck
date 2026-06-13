@@ -143,14 +143,14 @@ def query_conda(pkg: str, timeout: float = 30.0) -> dict:
     req = urllib.request.Request(
         ANACONDA_API.format(pkg=pkg), headers={"User-Agent": USER_AGENT}
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # fixed api host
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (fixed api host)  # nosec B310
         return json.loads(resp.read())
 
 
 def fetch_file(url: str, dest: Path, timeout: float = 60.0) -> None:
     """Download ``url`` to ``dest`` (fixed conda-forge host)."""
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # fixed conda host
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (fixed conda host)  # nosec B310
         dest.write_bytes(resp.read())
 
 

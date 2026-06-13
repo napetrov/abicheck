@@ -877,13 +877,13 @@ def _clear_process_caches() -> None:
         if isinstance(obj, lru_type):
             try:
                 obj.cache_clear()
-            except Exception:  # noqa: BLE001 — best-effort cache reset
+            except Exception:  # noqa: BLE001 — best-effort cache reset  # nosec B110
                 pass
     try:
         from abicheck.demangle import _reset_demangle_batch_cache
 
         _reset_demangle_batch_cache()
-    except Exception:  # noqa: BLE001 — optional internal helper
+    except Exception:  # noqa: BLE001 — optional internal helper  # nosec B110
         pass
 
 
