@@ -1568,13 +1568,22 @@ def _import_is_external(
     if _looks_system_version(version):
         return True
     # Provider evidence: which library does .gnu.version_r say this version
-    # comes from? If that soname is not an intra-bundle sibling, the import is
-    # resolved from outside the bundle.
+    # comes from? GNU version names are scoped per verneed provider, not
+    # globally unique — the same label (e.g. ``FOO_1.0``) can be required from
+    # both an intra-bundle sibling and an external soname. We only treat the
+    # import as external when the version is required from an external soname
+    # *and not also* from an intra-bundle sibling. If any intra sibling
+    # advertises the label, the provider evidence is ambiguous (the import may
+    # be the dropped sibling symbol) so we keep the finding.
     intra = set(intra_needed)
+    external_match = False
     for soname, versions in consumer_meta.versions_required.items():
-        if version in versions and soname not in intra:
-            return True
-    return False
+        if version not in versions:
+            continue
+        if soname in intra:
+            return False  # ambiguous: an intra sibling also requires this label
+        external_match = True
+    return external_match
 
 
 _ELF_MAGIC = b"\x7fELF"

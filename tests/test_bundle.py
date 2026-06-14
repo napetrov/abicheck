@@ -357,6 +357,39 @@ class TestIntraDepRemoved:
         assert len(intra_removed) == 1
         assert intra_removed[0].symbol == "core_op"
 
+    def test_ambiguous_version_label_from_intra_and_external_still_fires(self) -> None:
+        # GNU version names are scoped per verneed provider, not globally
+        # unique: the same label ("FOO_1.0") can be required from both an
+        # intra-bundle sibling and an external soname. Provider evidence is
+        # then ambiguous and must NOT suppress the dropped-sibling finding.
+        new = _snapshot(
+            {
+                "libcore.so": _meta(
+                    soname="libcore.so.1", exports=["dummy"]
+                ),  # provider for core_op gone
+                "libalgo.so": _meta(
+                    soname="libalgo.so.1",
+                    needed=["libcore.so.1", "libthirdparty.so.2"],
+                    imports=["core_op"],
+                    import_versions={"core_op": "FOO_1.0"},
+                    # FOO_1.0 advertised by BOTH an intra sibling and an
+                    # external soname.
+                    versions_required={
+                        "libcore.so.1": ["FOO_1.0"],
+                        "libthirdparty.so.2": ["FOO_1.0"],
+                    },
+                ),
+            }
+        )
+        result = compare_bundle(new, new, per_library_results=[])
+        intra_removed = [
+            f
+            for f in result.bundle_findings
+            if f.kind == ChangeKind.BUNDLE_INTRA_DEP_REMOVED
+        ]
+        assert len(intra_removed) == 1
+        assert intra_removed[0].symbol == "core_op"
+
 
 # ---------------------------------------------------------------------------
 # bundle_intra_dep_signature_changed
