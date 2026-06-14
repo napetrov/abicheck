@@ -124,6 +124,8 @@ class _Rule:
 #: char-literal opener in the comment/string blanker.
 _HEXDIGITS = frozenset("0123456789abcdefABCDEF")
 
+_RAW_STRING_PREFIXES = ("u8R", "uR", "UR", "LR", "R")
+
 #: Matches the body *inside* a ``__attribute__((...))`` list up to (but not
 #: across) its closing ``))``: a run of non-paren chars or nested paren groups
 #: **up to two levels deep** (e.g. ``(8)`` in ``aligned(8)`` or
@@ -258,13 +260,16 @@ _RULES: tuple[_Rule, ...] = (
         PatternCategory.VTABLE,
         # C++11 override-only declarations are virtual even without the
         # `virtual` keyword. The delimiter guard avoids double-counting the
-        # common `virtual void f() override;` spelling and handles one-line
-        # class bodies (`struct D { void f() override; };`).
+        # common `virtual void f() override;` spelling and handles one-line class
+        # bodies (`struct D { void f() override; };`). The suffix accepts common
+        # cv/ref/noexcept/virt-specifier orderings such as `final override`,
+        # `& noexcept override`, and `&& final`.
         re.compile(
             r"(?m)(?:^|[;{}])\s*(?![^\n;{}]*\bvirtual\b)"
             r"[^\n;{}()]*\([^;\n{}]*\)\s*"
-            r"(?:const\s*)?(?:noexcept(?:\s*\([^)]*\))?\s*)?(?:&{1,2}\s*)?"
-            r"\boverride\b"
+            r"(?:const\s*)?(?:volatile\s*)?(?:&{1,2}\s*)?"
+            r"(?:noexcept(?:\s*\([^)]*\))?\s*)?"
+            r"(?:\b(?:override|final)\b\s*){1,2}(?=[=;{])"
         ),
         True,
         "virtual member affects vtable layout and dispatch",
@@ -458,6 +463,36 @@ def _is_digit_separator(text: str, i: int) -> bool:
     return token_start.isdigit()
 
 
+def _raw_string_end(text: str, quote_index: int) -> int:
+    """Return the closing quote offset for a C++ raw string, or ``-1``."""
+    prefix_start = -1
+    prefix = ""
+    for candidate in _RAW_STRING_PREFIXES:
+        start = quote_index - len(candidate)
+        if start >= 0 and text[start:quote_index] == candidate:
+            prefix_start = start
+            prefix = candidate
+            break
+    if prefix_start < 0:
+        return -1
+    if prefix_start > 0 and (text[prefix_start - 1].isalnum() or text[prefix_start - 1] == "_"):
+        return -1
+    if prefix != "R" and not prefix.endswith("R"):
+        return -1
+
+    open_paren = text.find("(", quote_index + 1, quote_index + 18)
+    if open_paren < 0:
+        return -1
+    delimiter = text[quote_index + 1 : open_paren]
+    if any(ch.isspace() or ch in "()\\" for ch in delimiter):
+        return -1
+    close = ")" + delimiter + '"'
+    close_start = text.find(close, open_paren + 1)
+    if close_start < 0:
+        return -1
+    return close_start + len(close) - 1
+
+
 def _blank_comments_and_strings(text: str, blank_strings: bool = True) -> str:
     """Replace comment (and optionally string/char-literal) *contents* with spaces.
 
@@ -465,8 +500,8 @@ def _blank_comments_and_strings(text: str, blank_strings: bool = True) -> str:
     line numbers) are unchanged — the scan can then match only real code and
     never trips on an ABI keyword mentioned inside a comment or string literal.
     A single forward state machine handles ``//`` / ``/* */`` comments and
-    ``"..."`` / ``'...'`` literals with backslash escapes. Raw string literals
-    are rare in public headers and left as-is (worst case: a spurious advisory).
+    ``"..."`` / ``'...'`` literals with backslash escapes, plus C++ raw string
+    literals so embedded quotes do not desynchronize the scanner.
 
     With ``blank_strings=False`` only comments are blanked and string/char
     literals are preserved verbatim — needed for the ``extern "C"`` rule, whose
@@ -488,9 +523,18 @@ def _blank_comments_and_strings(text: str, blank_strings: bool = True) -> str:
                 i += 2
                 state = "block_comment"
             elif ch == '"':
-                out.append('"')
-                i += 1
-                state = "string"
+                raw_end = _raw_string_end(text, i)
+                if raw_end >= 0:
+                    raw = text[i : raw_end + 1]
+                    if blank_strings:
+                        out.append("".join("\n" if c == "\n" else " " for c in raw))
+                    else:
+                        out.append(raw)
+                    i = raw_end + 1
+                else:
+                    out.append('"')
+                    i += 1
+                    state = "string"
             elif ch == "'":
                 # Distinguish a C++14 digit separator (`1'000`, `0xFF'FF`) from a
                 # char-literal opener — misreading a literal as a separator (or
