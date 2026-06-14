@@ -27,6 +27,11 @@ import click
 from .checker import DiffResult, LibraryMetadata, compare
 from .cli_audit import echo_filtered_surface, echo_pattern_modulations
 from .cli_datasources import print_data_sources as _print_data_sources
+from .cli_dump_helpers import (
+    perform_elf_dump,
+    resolve_dump_compile_db,
+    resolve_dump_debug_format,
+)
 from .cli_options import (
     adr027_compare_options,
     build_source_compare_options,
@@ -182,6 +187,8 @@ def _write_snapshot_output(
     build_config: Path | None = None,
     allow_build_query: bool = False,
     collect_mode: str = "source-target",
+    build_query: str | None = None,
+    build_compile_db: str | None = None,
 ) -> None:
     """Serialize snapshot and write to file or stdout.
 
@@ -191,6 +198,8 @@ def _write_snapshot_output(
     ``compare old.json new.json`` needs no out-of-band packs. *collect_mode* (the
     ADR-033 D2 CI evidence mode) selects which layers and replay scope to collect:
     ``build`` captures L3 build context only, ``off`` collects nothing.
+    *build_query* / *build_compile_db* are the CLI equivalents of the
+    ``.abicheck.yml`` ``build.query`` / ``build.compile_db`` keys.
     """
     if build_info is not None or sources is not None:
         from .cli_buildsource import embed_build_source
@@ -198,6 +207,7 @@ def _write_snapshot_output(
             snap, build_info, sources,
             build_config=build_config, allow_build_query=allow_build_query,
             collect_mode=collect_mode,
+            build_query=build_query, build_compile_db=build_compile_db,
         )
     result = snapshot_to_json(snap)
     if output:
@@ -728,6 +738,7 @@ def dump_cmd(so_path: Path | None, headers: tuple[Path, ...], includes: tuple[Pa
              git_tag: str | None, build_id: str | None, no_git: bool,
              build_info: Path | None = None, sources: Path | None = None,
              build_config: Path | None = None, allow_build_query: bool = False,
+             build_query: str | None = None, build_compile_db: str | None = None,
              collect_mode: str = "source-target") -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
@@ -746,25 +757,11 @@ def dump_cmd(so_path: Path | None, headers: tuple[Path, ...], includes: tuple[Pa
                 "produce binary data-source diagnostics."
             )
         from .cli_buildsource import dump_source_only
-        dump_source_only(sources, build_info, version, output, build_config, allow_build_query, git_tag, build_id, no_git, collect_mode)
+        dump_source_only(sources, build_info, version, output, build_config, allow_build_query, git_tag, build_id, no_git, collect_mode, build_query=build_query, build_compile_db=build_compile_db)
         return
 
-    # Reconcile the --debug-format selector with the legacy --btf/--ctf/--dwarf
-    # flags. The selector supersedes the legacy flags whenever it is given:
-    # an explicit "auto" returns to auto-detection (None) even if a legacy flag
-    # is also present; only when the selector is absent do the legacy flags apply.
-    if debug_format_opt is not None:
-        effective_debug_format = None if debug_format_opt.lower() == "auto" else debug_format_opt
-    else:
-        effective_debug_format = debug_format
-
-    # Resolve -p / --compile-db aliases
-    effective_compile_db = compile_db_path or compile_db_path_alt
-    if effective_compile_db and not headers:
-        raise click.UsageError(
-            "Compilation database (-p / --compile-db) requires -H/--header. "
-            "Without headers, CastXML has nothing to parse."
-        )
+    effective_debug_format = resolve_dump_debug_format(debug_format_opt, debug_format)
+    effective_compile_db = resolve_dump_compile_db(compile_db_path, compile_db_path_alt, headers)
 
     # --show-data-sources: diagnostic output and exit
     if show_data_sources:
@@ -789,7 +786,7 @@ def dump_cmd(so_path: Path | None, headers: tuple[Path, ...], includes: tuple[Pa
             so_path, binary_fmt, headers, includes, version, lang, pdb_path,
             follow_deps, git_tag, build_id, no_git, output, public_headers,
             public_header_dirs, build_info, sources, build_config,
-            allow_build_query, collect_mode,
+            allow_build_query, collect_mode, build_query, build_compile_db,
         )
         return
 
@@ -806,39 +803,41 @@ def dump_cmd(so_path: Path | None, headers: tuple[Path, ...], includes: tuple[Pa
         if artifact:
             click.echo(f"Debug info: {artifact.source}", err=True)
 
-    compiler = "cc" if lang == "c" else "c++"
-    resolved_headers = _expand_header_inputs(list(headers)) if headers else []
-    try:
-        snap = dump(
-            so_path=so_path,
-            headers=resolved_headers,
-            extra_includes=list(includes),
-            version=version,
-            compiler=compiler,
-            gcc_path=gcc_path,
-            gcc_prefix=gcc_prefix,
-            gcc_options=effective_gcc_options,
-            sysroot=sysroot,
-            nostdinc=nostdinc,
-            lang=lang if lang == "c" else None,
-            dwarf_only=dwarf_only,
-            debug_format=effective_debug_format,
-            public_headers=list(public_headers),
-            public_header_dirs=list(public_header_dirs),
-        )
-    except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
-        raise click.ClickException(str(exc)) from exc
-
-    # Record that the header AST was parsed with the real build context (ADR-029),
-    # so a later compare can suppress header-parse-context drift for this side.
-    if effective_compile_db and resolved_headers:
-        snap.parsed_with_build_context = True
-
-    if follow_deps:
-        _populate_dependency_info(snap, so_path, list(search_paths), sysroot, ld_library_path)
-
-    _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-    _write_snapshot_output(snap, output, build_info, sources, build_config, allow_build_query, collect_mode)
+    perform_elf_dump(
+        so_path=so_path,
+        headers=headers,
+        includes=includes,
+        version=version,
+        lang=lang,
+        gcc_path=gcc_path,
+        gcc_prefix=gcc_prefix,
+        effective_gcc_options=effective_gcc_options,
+        sysroot=sysroot,
+        nostdinc=nostdinc,
+        dwarf_only=dwarf_only,
+        effective_debug_format=effective_debug_format,
+        public_headers=public_headers,
+        public_header_dirs=public_header_dirs,
+        effective_compile_db=effective_compile_db,
+        follow_deps=follow_deps,
+        search_paths=search_paths,
+        ld_library_path=ld_library_path,
+        git_tag=git_tag,
+        build_id=build_id,
+        no_git=no_git,
+        output=output,
+        build_info=build_info,
+        sources=sources,
+        build_config=build_config,
+        allow_build_query=allow_build_query,
+        collect_mode=collect_mode,
+        expand_header_inputs=_expand_header_inputs,
+        populate_dependency_info=_populate_dependency_info,
+        stamp_provenance=_stamp_provenance,
+        write_snapshot_output=_write_snapshot_output,
+        build_query=build_query,
+        build_compile_db=build_compile_db,
+    )
 
 
 def _handle_non_elf_dump(
@@ -861,6 +860,8 @@ def _handle_non_elf_dump(
     build_config: Path | None = None,
     allow_build_query: bool = False,
     collect_mode: str = "source-target",
+    build_query: str | None = None,
+    build_compile_db: str | None = None,
 ) -> None:
     """Handle PE/Mach-O native dump path and output writing."""
     if follow_deps:
@@ -877,7 +878,10 @@ def _handle_non_elf_dump(
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-    _write_snapshot_output(snap, output, build_info, sources, build_config, allow_build_query, collect_mode)
+    _write_snapshot_output(
+        snap, output, build_info, sources, build_config, allow_build_query,
+        collect_mode, build_query=build_query, build_compile_db=build_compile_db,
+    )
 
 
 def _resolve_build_context_flags(
@@ -1593,6 +1597,12 @@ def _finalize_compare_result(
                    "exported API are recorded as filtered, not reported. Internal-type "
                    "leaks are never hidden. On by default; use --no-scope-public-headers "
                    "to report every finding regardless of surface.")
+@click.option("--collapse-versioned-symbols", "collapse_versioned_symbols", is_flag=True, default=False,
+              help="Opt-in (G15): when a versioned-symbol scheme is detected (most removed "
+                   "symbols reappear differing only by a version token, e.g. ICU u_*_NN), "
+                   "reclassify those version-rename pairs as compatible so the verdict "
+                   "reflects the real delta, not the rename churn. A real SONAME bump and "
+                   "non-versioned removals still drive the verdict.")
 @click.option("--show-filtered", "show_filtered", is_flag=True, default=False,
               help="List findings excluded by --scope-public-headers (audit trail).")
 @click.option("--public-symbol", "public_symbols", multiple=True,
@@ -1688,7 +1698,7 @@ def compare_cmd(
     severity_addition: str | None,
     follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
     show_redundant: bool, show_only: str | None, stat: bool,
-    scope_public_headers: bool, show_filtered: bool,
+    scope_public_headers: bool, collapse_versioned_symbols: bool, show_filtered: bool,
     public_symbols: tuple[str, ...], public_symbols_list: Path | None,
     report_mode: str, show_impact: bool,
     recommend: bool,
@@ -1874,6 +1884,7 @@ def compare_cmd(
         extra_changes=extra_changes,
         pattern_verdicts=apply_patterns,
         surface_metrics=surface_metrics,
+        collapse_versioned_symbols=collapse_versioned_symbols,
     )
     if layer_coverage_rows:
         result.layer_coverage = layer_coverage_rows

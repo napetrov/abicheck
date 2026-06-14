@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -85,8 +86,33 @@ def _shared_lib_suffix() -> str:
 SHARED_LIB_SUFFIX = _shared_lib_suffix()
 
 
-def _find_compiler(is_cpp: bool = False) -> str | None:
-    """Find a C/C++ compiler available on this platform."""
+# Toolchain family override (set by --toolchain on the CLI). When None the
+# platform-native default order is used. Promoting Clang to a first-class
+# validator (see examples-validation.yml) flips producer-sensitive cases such
+# as case64 (GCC does not emit DW_AT_calling_convention for ms_abi).
+PREFERRED_FAMILY: str | None = None
+
+
+def _find_compiler(is_cpp: bool = False, preferred_family: str | None = None) -> str | None:
+    """Find a C/C++ compiler available on this platform.
+
+    *preferred_family* ("gcc" | "clang" | "msvc") reorders the candidate list to
+    prefer that toolchain; it defaults to the module-level ``PREFERRED_FAMILY``
+    so a single ``--toolchain`` flag steers every compile in the run. Mirrors
+    ``scripts/benchmark_comparison.py._find_compiler`` so the two harnesses pick
+    the same producer.
+    """
+    if preferred_family is None:
+        preferred_family = PREFERRED_FAMILY
+    # With no explicit family forced (--toolchain auto), honor CC/CXX from the
+    # environment: CMake-backed cases build with them, so direct compilation,
+    # the JSON metadata, and known_gap toolchain-scoping must agree with the
+    # producer CMake actually used. An explicit --toolchain already exports
+    # CC/CXX to match its family (see main), so it keeps the ordering below.
+    if preferred_family is None:
+        env = os.environ.get("CXX" if is_cpp else "CC")
+        if env and shutil.which(env):
+            return env
     if is_cpp:
         candidates = {
             "win32": ["cl", "g++", "clang++"],
@@ -97,10 +123,51 @@ def _find_compiler(is_cpp: bool = False) -> str | None:
             "win32": ["cl", "gcc", "clang"],
             "darwin": ["clang", "gcc"],
         }.get(sys.platform, ["gcc", "clang"])
+
+    if preferred_family == "clang":
+        pref = ["clang++-18", "clang++", "g++", "cl"] if is_cpp else ["clang-18", "clang", "gcc", "cl"]
+        candidates = [c for c in pref if c in set(candidates) or c.startswith("clang")]
+    elif preferred_family == "gcc":
+        pref = ["g++", "clang++", "cl"] if is_cpp else ["gcc", "clang", "cl"]
+        candidates = [c for c in pref if c in set(candidates)]
+    elif preferred_family == "msvc":
+        candidates = [c for c in candidates if c == "cl"]
+
     for cc in candidates:
         if shutil.which(cc):
             return cc
     return None
+
+
+def _toolchain_family(is_cpp: bool) -> str:
+    """Producer family ("gcc"|"clang"|"") of the compiler selected for *is_cpp*.
+
+    Derived from the real ``_find_compiler`` result for the case's source
+    language (which honours ``PREFERRED_FAMILY``/``CC``/``CXX`` but falls back
+    when the requested family is absent), NOT from the requested family — so a
+    C fixture built by gcc under ``CC=gcc CXX=clang++`` scopes its known_gap to
+    gcc, and ``--toolchain clang`` on a clang-less host scopes to gcc.
+    """
+    name = Path(_find_compiler(is_cpp=is_cpp) or "").name
+    if "clang" in name:
+        return "clang"
+    if "gcc" in name or "g++" in name:
+        return "gcc"
+    return ""
+
+
+def _gap_applies(entry: dict, is_cpp: bool) -> bool:
+    """Whether *entry*'s known_gap applies under the case's actual compiler.
+
+    A ``known_gap_toolchains`` list scopes the gap to specific producers; on any
+    other producer a verdict mismatch is a real failure (so a producer-specific
+    gap like case64/case103 does not mask a regression on the other producer).
+    Absent ⇒ applies everywhere (back-compat).
+    """
+    scope = entry.get("known_gap_toolchains")
+    if not scope:
+        return True
+    return _toolchain_family(is_cpp) in scope
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +182,12 @@ class CaseResult(NamedTuple):
     variant: str = DEFAULT_ARTIFACT_VARIANT
     seconds: float = 0.0
     source_layers: tuple[str, ...] = ()
+    # Strict-category signal: "ok" | "collapsed" | "n/a". "collapsed" means the
+    # verdict PASSed only because _normalize_verdict folds API_BREAK into
+    # COMPATIBLE, while the case had full (L2+) evidence and a source-level
+    # expected category — i.e. the exact semantic category was lost. Surfaced
+    # (not failed) by default; check_validate_results.py can gate on it.
+    category_strict: str = "n/a"
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +487,72 @@ def _sources_path(
     return candidate if candidate.is_dir() else None
 
 
+def _build_dump_cmd(
+    so: Path,
+    snap: Path,
+    hdr: Path | None,
+    compile_db: Path,
+    build_source: Path | None,
+    build_info: Path | None,
+    sources_path: Path | None,
+) -> list[str]:
+    """Build an ``abicheck dump`` command for one library side.
+
+    *compile_db* is the side-specific compile_commands.json path (may not
+    exist yet); it is only appended when *build_source* is set and the file
+    actually exists.
+    """
+    cmd = [sys.executable, "-m", "abicheck.cli", "dump", str(so), "-o", str(snap)]
+    if hdr and Path(hdr).exists():
+        cmd += ["-H", str(hdr)]
+        if build_source is not None and compile_db.exists():
+            cmd += ["-p", str(compile_db)]
+    if build_info is not None:
+        cmd += ["--build-info", str(build_info)]
+    if sources_path is not None:
+        cmd += ["--sources", str(sources_path)]
+    return cmd
+
+
+def _build_compare_cmd(
+    snap1: Path,
+    snap2: Path,
+    scope_public_headers: bool,
+    old_build_source: Path | None,
+    new_build_source: Path | None,
+) -> list[str]:
+    """Build an ``abicheck compare`` command from two snapshots.
+
+    Appends ``--old-build-info``/``--old-sources`` and their ``new-*``
+    counterparts when the respective build-source paths are provided, and
+    always sets the scoping flag explicitly so verdicts are deterministic.
+    """
+    cmd = [
+        sys.executable, "-m", "abicheck.cli", "compare", str(snap1), str(snap2), "--format", "json",
+    ]
+    if old_build_source is not None:
+        cmd += ["--old-build-info", str(old_build_source), "--old-sources", str(old_build_source)]
+    if new_build_source is not None:
+        cmd += ["--new-build-info", str(new_build_source), "--new-sources", str(new_build_source)]
+    # Scoping is on by default since ADR-024 Phase 5; ground_truth.json verdicts
+    # are authored unscoped unless the case opts in, so be explicit either way.
+    cmd.append("--scope-public-headers" if scope_public_headers else "--no-scope-public-headers")
+    return cmd
+
+
+def _run_compare_and_parse(compare_cmd: list[str]) -> tuple[str | None, str | None]:
+    """Run the compare command and parse its JSON verdict.
+
+    Returns ``(verdict, None)`` on success or ``(None, error_msg)`` on failure.
+    """
+    rc = subprocess.run(compare_cmd, capture_output=True, text=True, timeout=60)
+    try:
+        data = json.loads(rc.stdout)
+        return data.get("verdict", "UNKNOWN"), None
+    except json.JSONDecodeError:
+        return None, f"invalid JSON from compare: {rc.stdout[:200]}"
+
+
 def _dump_and_compare(
     tmp: Path,
     v1_so: Path,
@@ -433,64 +572,41 @@ def _dump_and_compare(
     On success *error_msg* is None. On failure *verdict* is None.
     """
     snap1 = tmp / "snap1.json"
-    cmd1 = [sys.executable, "-m", "abicheck.cli", "dump", str(v1_so), "-o", str(snap1)]
-    if v1_hdr and Path(v1_hdr).exists():
-        cmd1 += ["-H", str(v1_hdr)]
-        old_compile_db = tmp / "old_compile_commands.json"
-        if old_build_source is not None and old_compile_db.exists():
-            cmd1 += ["-p", str(old_compile_db)]
-    if old_build_info is not None:
-        cmd1 += ["--build-info", str(old_build_info)]
-    sr1 = _sources_path(case_dir, "v1", sources)
-    if sr1 is not None:
-        cmd1 += ["--sources", str(sr1)]
+    cmd1 = _build_dump_cmd(
+        so=v1_so,
+        snap=snap1,
+        hdr=v1_hdr,
+        compile_db=tmp / "old_compile_commands.json",
+        build_source=old_build_source,
+        build_info=old_build_info,
+        sources_path=_sources_path(case_dir, "v1", sources),
+    )
     r1 = subprocess.run(cmd1, capture_output=True, text=True, timeout=120)
     if r1.returncode != 0:
         return None, f"dump v1 failed: {r1.stderr[:200]}"
 
     snap2 = tmp / "snap2.json"
-    cmd2 = [sys.executable, "-m", "abicheck.cli", "dump", str(v2_so), "-o", str(snap2)]
-    if v2_hdr and Path(v2_hdr).exists():
-        cmd2 += ["-H", str(v2_hdr)]
-        new_compile_db = tmp / "new_compile_commands.json"
-        if new_build_source is not None and new_compile_db.exists():
-            cmd2 += ["-p", str(new_compile_db)]
-    if new_build_info is not None:
-        cmd2 += ["--build-info", str(new_build_info)]
-    sr2 = _sources_path(case_dir, "v2", sources)
-    if sr2 is not None:
-        cmd2 += ["--sources", str(sr2)]
+    cmd2 = _build_dump_cmd(
+        so=v2_so,
+        snap=snap2,
+        hdr=v2_hdr,
+        compile_db=tmp / "new_compile_commands.json",
+        build_source=new_build_source,
+        build_info=new_build_info,
+        sources_path=_sources_path(case_dir, "v2", sources),
+    )
     r2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=120)
     if r2.returncode != 0:
         return None, f"dump v2 failed: {r2.stderr[:200]}"
 
-    compare_cmd = [
-        sys.executable, "-m", "abicheck.cli", "compare", str(snap1), str(snap2), "--format", "json",
-    ]
-    if old_build_source is not None:
-        compare_cmd += [
-            "--old-build-info", str(old_build_source),
-            "--old-sources", str(old_build_source),
-        ]
-    if new_build_source is not None:
-        compare_cmd += [
-            "--new-build-info", str(new_build_source),
-            "--new-sources", str(new_build_source),
-        ]
-    # Scoping is on by default since ADR-024 Phase 5; ground_truth.json verdicts
-    # are authored unscoped unless the case opts in, so be explicit either way.
-    compare_cmd.append(
-        "--scope-public-headers" if scope_public_headers else "--no-scope-public-headers"
+    compare_cmd = _build_compare_cmd(
+        snap1=snap1,
+        snap2=snap2,
+        scope_public_headers=scope_public_headers,
+        old_build_source=old_build_source,
+        new_build_source=new_build_source,
     )
-    rc = subprocess.run(
-        compare_cmd,
-        capture_output=True, text=True, timeout=60,
-    )
-    try:
-        data = json.loads(rc.stdout)
-        return data.get("verdict", "UNKNOWN"), None
-    except json.JSONDecodeError:
-        return None, f"invalid JSON from compare: {rc.stdout[:200]}"
+    return _run_compare_and_parse(compare_cmd)
 
 
 def _write_compile_db(
@@ -829,7 +945,6 @@ def run_case(
 ) -> CaseResult:
     """Build, compare, and evaluate one example case."""
     expected_raw = entry.get("expected")
-    known_gap = entry.get("known_gap")
 
     skip_result = _check_case_preconditions(name, entry)
     if skip_result is not None:
@@ -839,6 +954,15 @@ def run_case(
     if isinstance(resolved, CaseResult):
         return resolved._replace(variant=variant)
     case_dir, (v1_src, v2_src, v1_hdr, v2_hdr) = resolved
+
+    # A producer-scoped known_gap only excuses a mismatch under the producer that
+    # actually built the case (resolved per source language); on other producers
+    # the gap is dropped so a regression FAILs rather than being xfailed.
+    known_gap = (
+        entry.get("known_gap")
+        if _gap_applies(entry, v1_src.suffix == ".cpp")
+        else None
+    )
 
     tmp = tmp_base / name
     if variant != DEFAULT_ARTIFACT_VARIANT:
@@ -923,10 +1047,40 @@ def run_case(
         sources=sources_present,
         build_info=build_info_present,
     )
-    return _evaluate_verdict(
+    result = _evaluate_verdict(
         name, expected_raw, got, known_gap,
         allow_risk_for_compatible=allow_risk,
     )._replace(variant=variant, source_layers=source_layers)
+    return result._replace(
+        category_strict=_category_strict_signal(entry, result, source_layers)
+    )
+
+
+def _category_strict_signal(
+    entry: dict,
+    result: CaseResult,
+    source_layers: tuple[str, ...],
+) -> str:
+    """Detect an API_BREAK→COMPATIBLE category collapse masked by normalization.
+
+    Returns "collapsed" when the run PASSed only because API_BREAK and
+    COMPATIBLE normalize together, *and* the case had full header evidence (L2)
+    so the precise category was observable. Otherwise "ok" (PASS with no
+    collapse) or "n/a" (not a PASS, or no full evidence to judge by).
+    """
+    if result.status != "PASS":
+        return "n/a"
+    if "L2" not in source_layers:
+        return "n/a"
+    expected = result.expected or ""
+    got = result.got or ""
+    if expected == got:
+        return "ok"
+    # PASS with differing raw verdicts ⇒ normalization folded them. Flag only
+    # the source-level category boundary the doc cares about (api_break).
+    if entry.get("category") == "api_break" and _normalize_verdict(got) == _normalize_verdict(expected):
+        return "collapsed"
+    return "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -982,10 +1136,13 @@ def _run_all_cases(
 
 
 def _summary_counts(results: list[CaseResult]) -> dict[str, int]:
-    """Count result statuses."""
+    """Count result statuses, plus the strict-category collapse tally."""
     counts: dict[str, int] = {}
     for r in results:
         counts[r.status] = counts.get(r.status, 0) + 1
+    collapsed = sum(1 for r in results if r.category_strict == "collapsed")
+    if collapsed:
+        counts["CATEGORY_COLLAPSED"] = collapsed
     return counts
 
 
@@ -1001,6 +1158,7 @@ def _result_to_json(r: CaseResult) -> dict[str, object]:
     )
     d["evidence_asymmetry"] = "symmetric"
     d["manual_review_ok"] = r.status in {"XFAIL", "SKIP"}
+    d["category_strict"] = r.category_strict
     return d
 
 
@@ -1021,6 +1179,9 @@ def _json_payload(
         "ground_truth_cases": total_ground_truth_cases,
         "selected_cases": len(names),
         "artifact_variants": list(variants),
+        "toolchain": PREFERRED_FAMILY or "auto",
+        "compiler_c": _find_compiler(is_cpp=False) or "none",
+        "compiler_cxx": _find_compiler(is_cpp=True) or "none",
         "summary": _summary_counts(results),
         "results": [_result_to_json(r) for r in results],
     }
@@ -1085,7 +1246,32 @@ def main(argv: list[str] | None = None) -> int:
             "release-headers, stripped-headers, build-source, or all."
         ),
     )
+    ap.add_argument(
+        "--toolchain",
+        choices=("auto", "gcc", "clang", "msvc"),
+        default="auto",
+        help=(
+            "Compiler family to prefer for every compile/build (default: auto = "
+            "platform-native order). Use 'clang' to exercise producer-sensitive "
+            "cases such as case64 (DW_AT_calling_convention for ms_abi)."
+        ),
+    )
     args = ap.parse_args(argv)
+
+    global PREFERRED_FAMILY
+    PREFERRED_FAMILY = None if args.toolchain == "auto" else args.toolchain
+    # CMake-built cases honour CC/CXX; export them so the chosen family also
+    # drives the cmake configure step, not just direct compilation. An explicit
+    # --toolchain must *override* any pre-existing CC/CXX in the environment —
+    # otherwise `CC=gcc ... --toolchain clang` would build CMake cases with gcc
+    # while the run reports clang. (auto leaves the environment untouched.)
+    if PREFERRED_FAMILY is not None:
+        cc = _find_compiler(is_cpp=False)
+        cxx = _find_compiler(is_cpp=True)
+        if cc:
+            os.environ["CC"] = cc
+        if cxx:
+            os.environ["CXX"] = cxx
 
     prereq_err = _check_prerequisites()
     if prereq_err:

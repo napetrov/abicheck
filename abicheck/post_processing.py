@@ -48,6 +48,10 @@ class PipelineContext:
     # ADR-024 §D4: when True, FilterNonPublicSurface moves findings that are
     # not on the public-header-scoped ABI surface to ``out_of_surface``.
     scope_to_public_surface: bool = False
+    # G15 (opt-in): when True, DetectVersionedSymbolScheme reclassifies the
+    # version-rename pairs (ICU `u_*_NN`) as compatible so the verdict reflects
+    # the real delta instead of the rename churn. Off by default (authority rule).
+    collapse_versioned_symbols: bool = False
     # ADR-024 §D6 widening overlay: symbol names (mangled or demangled) the
     # user *guarantees* are public even when header provenance can't see them
     # (asm stubs, .def exports, extern "C" shims, MSVC-mangling gaps). Matching
@@ -319,10 +323,13 @@ class SuppressRenamedPairs:
 
     name = "suppress_renamed_pairs"
 
-    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+    @staticmethod
+    def _build_rename_maps(
+        changes: list[Change],
+    ) -> tuple[dict[str, str], dict[str, str], dict[str, Change]]:
+        """Return (renamed_old, renamed_new, rename_changes) from FUNC_LIKELY_RENAMED entries."""
         from .checker_policy import ChangeKind
 
-        # Build rename mappings: old_name → new_name and new_name → old_name
         renamed_old: dict[str, str] = {}  # old_value → new_value
         renamed_new: dict[str, str] = {}  # new_value → old_value
         rename_changes: dict[str, Change] = {}  # old_value → the rename Change
@@ -331,29 +338,66 @@ class SuppressRenamedPairs:
                 renamed_old[c.old_value] = c.new_value
                 renamed_new[c.new_value] = c.old_value
                 rename_changes[c.old_value] = c
+        return renamed_old, renamed_new, rename_changes
 
+    @staticmethod
+    def _try_suppress_removed(
+        c: Change,
+        renamed_old: dict[str, str],
+        rename_changes: dict[str, Change],
+        ctx: PipelineContext,
+    ) -> bool:
+        """Suppress a FUNC_REMOVED/FUNC_REMOVED_ELF_ONLY change if it belongs to a rename pair.
+
+        Returns True when the change was suppressed (caller should skip appending it).
+        """
+        old_name = c.old_value or c.symbol
+        if old_name not in renamed_old:
+            return False
+        c.caused_by_type = f"rename:{old_name}→{renamed_old[old_name]}"
+        ctx.redundant.append(c)
+        rc = rename_changes.get(old_name)
+        if rc is not None:
+            rc.caused_count += 1
+        return True
+
+    @staticmethod
+    def _try_suppress_added(
+        c: Change,
+        renamed_new: dict[str, str],
+        rename_changes: dict[str, Change],
+        ctx: PipelineContext,
+    ) -> bool:
+        """Suppress a FUNC_ADDED change if it belongs to a rename pair.
+
+        Returns True when the change was suppressed (caller should skip appending it).
+        """
+        new_name = c.new_value or c.symbol
+        if new_name not in renamed_new:
+            return False
+        old_name = renamed_new[new_name]
+        c.caused_by_type = f"rename:{old_name}→{new_name}"
+        ctx.redundant.append(c)
+        rc = rename_changes.get(old_name)
+        if rc is not None:
+            rc.caused_count += 1
+        return True
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .checker_policy import ChangeKind
+
+        renamed_old, renamed_new, rename_changes = self._build_rename_maps(changes)
         if not renamed_old:
             return changes
 
+        removed_kinds = (ChangeKind.FUNC_REMOVED, ChangeKind.FUNC_REMOVED_ELF_ONLY)
         kept: list[Change] = []
         for c in changes:
-            if c.kind in (ChangeKind.FUNC_REMOVED, ChangeKind.FUNC_REMOVED_ELF_ONLY):
-                old_name = c.old_value or c.symbol
-                if old_name in renamed_old:
-                    c.caused_by_type = f"rename:{old_name}→{renamed_old[old_name]}"
-                    ctx.redundant.append(c)
-                    rc = rename_changes.get(old_name)
-                    if rc is not None:
-                        rc.caused_count += 1
+            if c.kind in removed_kinds:
+                if self._try_suppress_removed(c, renamed_old, rename_changes, ctx):
                     continue
             elif c.kind == ChangeKind.FUNC_ADDED:
-                new_name = c.new_value or c.symbol
-                if new_name in renamed_new:
-                    c.caused_by_type = f"rename:{renamed_new[new_name]}→{new_name}"
-                    ctx.redundant.append(c)
-                    rc = rename_changes.get(renamed_new[new_name])
-                    if rc is not None:
-                        rc.caused_count += 1
+                if self._try_suppress_added(c, renamed_new, rename_changes, ctx):
                     continue
             kept.append(c)
         return kept
@@ -420,11 +464,17 @@ class DetectCppPatterns:
 
     name = "detect_cpp_patterns"
 
-    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
-        from .checker_policy import ChangeKind
+    @staticmethod
+    def _run_all_detectors(
+        ctx: PipelineContext,
+        changes: list[Change],
+    ) -> tuple[list[Change], set[str]]:
+        """Invoke every sub-detector and return ``(new_findings, suppressed_keys)``.
 
-        # Generic detectors live in dedicated modules after PR-D; the
-        # remaining library-family ones stay in diff_cpp_patterns.
+        ``suppressed_keys`` is the union of the per-symbol keys emitted by the
+        SYCL and ISA grouped detectors; these identify ``FUNC_REMOVED`` children
+        that must be moved to ``ctx.suppressed`` so they don't inflate the verdict.
+        """
         from .diff_cpp_patterns import (
             detect_cpu_dispatch_isa_dropped,
             detect_default_template_arg_changed,
@@ -439,80 +489,64 @@ class DetectCppPatterns:
         new_findings.extend(detect_serialization_tag_changes(ctx.old, ctx.new))
         new_findings.extend(detect_missing_instantiations(ctx.old, ctx.new))
 
-        sycl_findings, sycl_suppressed = detect_sycl_overload_set_removal(
-            ctx.old,
-            ctx.new,
-        )
+        sycl_findings, sycl_suppressed = detect_sycl_overload_set_removal(ctx.old, ctx.new)
         new_findings.extend(sycl_findings)
 
-        isa_findings, isa_suppressed = detect_cpu_dispatch_isa_dropped(
-            ctx.old,
-            ctx.new,
-        )
+        isa_findings, isa_suppressed = detect_cpu_dispatch_isa_dropped(ctx.old, ctx.new)
         new_findings.extend(isa_findings)
 
         new_findings.extend(detect_tag_type_renamed(ctx.old, ctx.new))
-        new_findings.extend(
-            detect_default_template_arg_changed(
-                ctx.old,
-                ctx.new,
-            )
-        )
-        new_findings.extend(
-            detect_inline_body_renamed_member(
-                ctx.old,
-                ctx.new,
-                changes,
-            )
-        )
+        new_findings.extend(detect_default_template_arg_changed(ctx.old, ctx.new))
+        new_findings.extend(detect_inline_body_renamed_member(ctx.old, ctx.new, changes))
 
-        # Filter out per-symbol ``func_removed`` findings that are
-        # children of the grouped SYCL/ISA detectors.
-        #
-        # Two reasons to use ``ctx.suppressed`` (not ``ctx.redundant``):
-        # (a) ``compare()`` computes verdict on ``kept + redundant`` —
-        #     redundant items still drive the verdict. Putting the
-        #     children there would let per-symbol BREAKING outrank the
-        #     grouped RISK finding. ``ctx.suppressed`` is excluded from
-        #     verdict computation, which is what we want for children
-        #     subsumed by a grouped finding.
-        # (b) ``FilterRedundant`` (earlier in the pipeline) sets
-        #     ``ctx.kept = changes`` — that's a *reference* to this same
-        #     list. If we rebind ``changes`` to a new filtered list,
-        #     ``ctx.kept`` still points at the old one and our
-        #     suppression is silently lost. Mutate in place instead.
-        #
-        # We match the per-symbol ``Change.symbol`` against the
-        # suppression set using BOTH exact equality and a guarded
-        # substring containment. On Linux ``diff_symbols._diff_functions``
-        # emits ``Change.symbol = fn.mangled`` (Itanium mangling); on
-        # Windows ``diff_platform._diff_pe`` emits
-        # ``Change.symbol = e.name`` (PE export-table name = MSVC
-        # mangling), which is a sibling encoding of the same underlying
-        # function but a different string. The demangled function name
-        # (e.g. ``kmeans_compute_avx512``) is a substring of both
-        # mangled forms, so substring containment is the platform-
-        # portable signal — *but* only when the key is structured enough
-        # to be unambiguous. A generic short leaf like ``compute`` would
-        # falsely match unrelated symbols such as ``precompute`` or
-        # ``Recompute_xyz``. The ``_matches_suppression_key`` helper
-        # requires the key to contain a namespace separator, an
-        # underscore, or be at least 12 chars before allowing substring
-        # match. Exact equality is always honoured.
-        suppressed_keys = sycl_suppressed | isa_suppressed
-        if suppressed_keys:
-            to_keep: list[Change] = []
-            for ch in changes:
-                if ch.kind == ChangeKind.FUNC_REMOVED and any(
-                    _matches_suppression_key(ch.symbol, key) for key in suppressed_keys
-                ):
-                    ctx.suppressed.append(ch)
-                    continue
-                to_keep.append(ch)
-            changes[:] = to_keep
+        return new_findings, sycl_suppressed | isa_suppressed
 
-        if not new_findings:
-            return changes
+    @staticmethod
+    def _suppress_grouped_children(
+        changes: list[Change],
+        suppressed_keys: set[str],
+        ctx: PipelineContext,
+    ) -> None:
+        """Remove FUNC_REMOVED children subsumed by a grouped SYCL/ISA finding.
+
+        Mutates ``changes`` in place (via slice assignment) and appends the
+        removed entries to ``ctx.suppressed``.
+
+        Two reasons to use ``ctx.suppressed`` (not ``ctx.redundant``):
+        (a) ``compare()`` computes verdict on ``kept + redundant`` —
+            redundant items still drive the verdict. Putting the
+            children there would let per-symbol BREAKING outrank the
+            grouped RISK finding. ``ctx.suppressed`` is excluded from
+            verdict computation, which is what we want for children
+            subsumed by a grouped finding.
+        (b) ``FilterRedundant`` (earlier in the pipeline) sets
+            ``ctx.kept = changes`` — that's a *reference* to this same
+            list. If we rebind ``changes`` to a new filtered list,
+            ``ctx.kept`` still points at the old one and our
+            suppression is silently lost. Mutate in place instead.
+
+        Matching uses BOTH exact equality and a guarded substring containment
+        (see ``_matches_suppression_key`` for the unambiguity rules).
+        """
+        from .checker_policy import ChangeKind
+
+        to_keep: list[Change] = []
+        for ch in changes:
+            if ch.kind == ChangeKind.FUNC_REMOVED and any(
+                _matches_suppression_key(ch.symbol, key) for key in suppressed_keys
+            ):
+                ctx.suppressed.append(ch)
+                continue
+            to_keep.append(ch)
+        changes[:] = to_keep
+
+    @staticmethod
+    def _merge_new_findings(
+        changes: list[Change],
+        new_findings: list[Change],
+        ctx: PipelineContext,
+    ) -> None:
+        """Append deduplicated ``new_findings`` to ``changes``, respecting suppression."""
         seen_keys = {(c.kind, c.symbol) for c in changes}
         for c in new_findings:
             if ctx.suppression is not None and ctx.suppression.is_suppressed(c):
@@ -523,6 +557,16 @@ class DetectCppPatterns:
                 continue
             changes.append(c)
             seen_keys.add(key)
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        new_findings, suppressed_keys = self._run_all_detectors(ctx, changes)
+
+        if suppressed_keys:
+            self._suppress_grouped_children(changes, suppressed_keys, ctx)
+
+        if new_findings:
+            self._merge_new_findings(changes, new_findings, ctx)
+
         return changes
 
 
@@ -725,6 +769,44 @@ class DemoteUnreachableInternalChurn:
         return changes
 
 
+class DetectVersionedSymbolScheme:
+    """Emit one advisory ``versioned_symbol_scheme_detected`` finding when most
+    removed symbols reappear as added symbols differing only by a version token
+    (field-eval P08: ICU ``u_*_75`` → ``u_*_78``). Additive by default — it
+    explains the churn, the individual func_removed/func_added findings and their
+    verdict are untouched.
+
+    When ``ctx.collapse_versioned_symbols`` is set (opt-in, G15 second half), the
+    matched version-rename pairs are additionally **reclassified as compatible**:
+    moved to ``ctx.suppressed`` and dropped from the kept set, so the verdict
+    reflects the real delta instead of the rename churn. This is deliberately
+    behind a flag (authority rule: it downgrades artifact-level removals); a real
+    SONAME bump or non-versioned removals still drive their own verdict."""
+
+    name = "detect_versioned_symbol_scheme"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .checker_policy import ChangeKind
+        from .versioned_symbol_scheme import analyze_versioned_scheme
+
+        if any(c.kind is ChangeKind.VERSIONED_SYMBOL_SCHEME_DETECTED for c in changes):
+            return changes  # idempotent if the pipeline is re-run
+        advisory, matched = analyze_versioned_scheme(changes)
+        if advisory is None:
+            return changes
+        if ctx.suppression is not None and ctx.suppression.is_suppressed(advisory):
+            ctx.suppressed.append(advisory)
+        else:
+            changes.append(advisory)
+        if ctx.collapse_versioned_symbols and matched:
+            matched_ids = {id(c) for c in matched}
+            ctx.suppressed.extend(matched)
+            kept = [c for c in changes if id(c) not in matched_ids]
+            ctx.kept = kept  # keep verdict source in sync (set mid-pipeline by FilterRedundant)
+            return kept
+        return changes
+
+
 class EscalateFrozenNamespaceViolations:
     """Tag findings whose symbol / caused_by_type lies in a contractually
     frozen namespace (e.g. ``**::detail::r1``).
@@ -857,6 +939,7 @@ class PostProcessingPipeline:
         frozen_namespaces: list[str] | None = None,
         scope_to_public_surface: bool = False,
         force_public_symbols: set[str] | None = None,
+        collapse_versioned_symbols: bool = False,
     ) -> PipelineContext:
         """Run all steps, returning the final PipelineContext."""
         ctx = PipelineContext(
@@ -866,6 +949,7 @@ class PostProcessingPipeline:
             frozen_namespaces=list(frozen_namespaces or []),
             scope_to_public_surface=scope_to_public_surface,
             force_public_symbols=set(force_public_symbols or set()),
+            collapse_versioned_symbols=collapse_versioned_symbols,
         )
         for step in self.steps:
             changes = step.run(changes, ctx)
@@ -902,6 +986,9 @@ DEFAULT_PIPELINE = PostProcessingPipeline(
         DetectCppPatterns(),
         DetectNamespacePatterns(),
         DetectTemplatePatterns(),
+        # Advisory overlay: explains a versioned-symbol-scheme churn (P08). Runs
+        # after rename suppression so it only sees residual removed/added pairs.
+        DetectVersionedSymbolScheme(),
         # Runs last so it can tag both raw findings and the synthetic
         # overlays added by DetectInternalLeaks / DetectCppPatterns.
         EscalateFrozenNamespaceViolations(),

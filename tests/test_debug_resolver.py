@@ -939,7 +939,7 @@ class TestDebuginfodNetwork:
 
     def test_fetch_one_url_disallowed_scheme(self) -> None:
         resolver = DebuginfodResolver(server_urls=["http://x"])
-        result = resolver._fetch_one_url("http://x", "abcd1234", Path("/tmp/c"))
+        result = resolver._fetch_one_url("http://x", "abcd1234", Path("/tmp/c"))  # noqa: S108  # nosec B108
         assert result is None
 
     def test_fetch_one_url_success(self, tmp_path: Path) -> None:

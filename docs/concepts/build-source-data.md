@@ -184,24 +184,29 @@ abicheck dump --sources ./src/ --collect-mode off           -o s.json  # embed n
 |------|------------------|--------------|
 | `off` | none | — |
 | `build` | L3 build context only | — |
+| `graph-build` | L3 + L5 graph (no source replay) | — |
 | `source-changed` | L3 + L4 + L5 | changed TUs |
 | `source-target` *(default)* | L3 + L4 + L5 | target |
 | `graph-summary` | L3 + L4 + L5 | changed |
 | `graph-full` | L3 + L4 + L5 | full |
 
 `build` is the cheap PR default (build-flag/toolchain drift, no source parse);
-the `source-*` / `graph-*` modes add the L4 source replay and L5 graph at the
-matching replay scope.
+`graph-build` additionally folds the **L5 structural graph** (target → source →
+header → build-option nodes) from those L3 facts *without* the L4 source replay,
+so the graph + build options are available even on large monorepos where a full
+L4 parse would take hours; the `source-*` / `graph-*` modes add the L4 source
+replay and L5 graph at the matching replay scope.
 
 ### Build-tool query configuration (`.abicheck.yml`)
 
-A source checkout often *contains* the build system. abicheck can use it to
-recover exact ABI-affecting flags and generated headers — gated by a per-project
-config and the ADR-032 D5 action ceiling (**read by default, query opt-in, full
-build never**):
+A source checkout often *contains* the build system. abicheck can use existing
+build outputs from the checkout, while executable build queries are gated by an
+explicit trusted config path and the ADR-032 D5 action ceiling (**read by
+default, trusted query opt-in, full build never**):
 
 ```yaml
-# .abicheck.yml at the source-tree root (or pass --build-config <path>)
+# .abicheck.yml at the source-tree root for non-executing settings
+# (pass a trusted --build-config <path> before build.query can run)
 build:
   system: bazel            # bazel | cmake | make | meson | auto (default: auto-detect)
   # A command that EMITS flags/exports without performing a full project build —
@@ -215,9 +220,12 @@ sources:
 
 - **`inspect` (default, always on):** read existing build outputs / compile DBs
   the checkout already has. No config needed.
-- **`query_build_system` (opt-in, `--allow-build-query`):** run the configured
-  `build.query` command to emit flags/exports. abicheck runs it with no shell
-  (parsed via `shlex`) in the source-tree directory.
+- **`query_build_system` (opt-in, explicit trusted config + `--allow-build-query`):**
+  run the configured `build.query` command to emit flags/exports. abicheck runs
+  it with no shell (parsed via `shlex`) in the source-tree directory. A
+  `.abicheck.yml` auto-discovered from `--sources` is still used for
+  non-executing settings such as `build.compile_db`, but its `build.query` is
+  ignored; pass a trusted config path with `--build-config` to enable queries.
 - **`run_build` / `wrap_build` (denied):** abicheck never performs a full
   project build or compiler-wrapper interception.
 
@@ -582,6 +590,72 @@ that was **not** parsed with the build's ABI-relevant flags. To avoid this,
 dump the snapshot with the build's compile database — `abicheck dump … -p build/`
 records `parsed_with_build_context` on the snapshot, and a later `compare`
 honors it and suppresses the drift finding.
+
+## Inputs, expectations & cost — a field guide
+
+Source/build data is opt-in and its value (and price) depends entirely on **what
+you can feed it**. This guide maps each realistic input to what you get, what it
+*cannot* see, and the rough cost. (Times are order-of-magnitude from a field
+evaluation across ~30 conda-forge libraries up to LLVM/oneDAL on a 4-core box;
+your numbers scale with translation-unit count and per-TU header weight.)
+
+### What each input buys you
+
+| You have | Layers | Detects | Key limitation | Typical cost |
+|---|---|---|---|---|
+| Just the `.so`/`.dll`/`.dylib` | L0 | added/removed/renamed symbols, SONAME, linkage, symbol-versioning, binary-only vtable/RTTI size deltas | no types/layout — shipped release binaries are usually DWARF-stripped, so you run `elf_only` (LOW confidence) | dump 0.3–0.6 s small, ~17 s for a 150 MB/150k-symbol lib |
+| + debug info (DWARF/PDB/BTF/CTF) | +L1 | struct layout, member/enum/typedef changes, calling convention, signatures | only as good as the debug info shipped; release packages rarely include it (install the `-dbg`/`debuginfo` package) | adds a few seconds + a larger snapshot |
+| + public headers (`-H`) | +L2 | API decls absent from the symbol table; **public-surface scoping** to cut internal noise | needs **castxml**; castxml ≤0.6.3 cannot parse a modern libstdc++ (`<string>` etc.), so L2 is reliable for C, fragile for C++; `-H` should be given the build's `-I` dirs (generated headers) | sub-second per header set |
+| + build dir / compile DB (`--build-info` / `--build-query`) | +L3 | toolchain & build-flag drift (visibility, `-std`, ABI flags), target/source/option graph | a plain `compile_commands.json` carries compile units but not targets/toolchains (use the CMake File API for those); command-string DBs under-report normalized options | **flat ~0.3–0.5 s** regardless of project size — it only parses the DB |
+| + source checkout (`--sources`) | +L4+L5 | macro / default-arg / inline / template / constexpr **body** changes; full source→symbol graph | **needs clang** and the **generated headers to exist** (configure-only fails on tablegen `*.inc`); the default clang extractor emits body fingerprints, not full decl tables (a pure-C public API yields little) | **dominated by clang re-parsing every TU**: ~0.3 s/TU (simple C) → ~2 s/TU (C++); LLVM-scale = tens of minutes to hours |
+
+### Source-phase by build system
+
+`--sources` needs a `compile_commands.json`. How you get one differs:
+
+| Build system | Compile DB | abicheck flow |
+|---|---|---|
+| **CMake** | `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` at configure | auto-discovered if it lands in `build/` (or pass `--build-info`) |
+| **Meson** | always emitted by `meson setup` (no build needed) | auto-discovered in `build/`/`builddir` — the smoothest path |
+| **Autotools** | none, ever | run `bear -- make` (a real build), or wire `--build-query` |
+| **Bazel / custom** | via `bazel aquery` or a wrapper | pre-capture and pass `--build-info`; heavyweight toolchains (e.g. oneDAL: Bazel + oneMKL/DPC++) are impractical to configure in a generic CI box — use the artifact tiers there |
+
+abicheck never runs your build by default. To let it run the configure/query step
+itself, pass the command on the CLI (no config file needed):
+
+```bash
+abicheck dump libfoo.so --sources ./src \
+  --build-query 'cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON' \
+  --build-compile-db build/compile_commands.json --allow-build-query
+```
+
+(or set `build.query` / `build.compile_db` in `.abicheck.yml`). It is gated by
+`--allow-build-query` and still never runs `make all` / `cmake --build`.
+
+### Time & resource model
+
+- **L0/L1 (artifact)** — fast and memory-frugal even at extreme scale: a 150 MB,
+  ~150k-symbol library dumps in ~17 s using ~330 MB RAM; the snapshot is tens of MB.
+- **L3 (build data)** — effectively free (~0.3–0.5 s), independent of project size.
+- **L4+L5 (source replay)** — the expensive tier; cost ≈ *TUs × per-TU parse*.
+  It does **not** scale to monorepos as a full pass. Control it with:
+  - `--collect-mode source-changed` — replay only the TUs a PR touches (the CI default);
+  - `--collect-mode graph-build` — L3 + the L5 structural graph (build options +
+    target/source/header nodes) with **no** L4 parse — feasible on LLVM in seconds;
+  - the content-addressed per-TU cache (`abicheck collect --build-cache-dir`) — unchanged TUs are skipped on re-runs.
+- **`compare`** — cost is driven less by raw symbol count than by the **fuzzy
+  rename matcher** (≈ O(removed × added)). Naming schemes that churn the whole
+  surface (ICU's `_NN` version suffix) are the worst case; the
+  `versioned_symbol_scheme_detected` advisory flags that situation.
+
+### Recommended defaults
+
+- **PR gate:** dump the two binaries (L0/L1) + `--collect-mode build` for cheap
+  build-flag drift. Add `source-changed` only if you need source-level API checks.
+- **Release:** the full `--sources` pass on the changed library, with `-H` for
+  public-surface scoping.
+- **Monorepo / huge project:** stay on the artifact tiers + `graph-build`; never
+  run a full L4 pass over thousands of TUs.
 
 ## Schema & storage
 
