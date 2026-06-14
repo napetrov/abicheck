@@ -75,6 +75,14 @@ def print_data_sources(
             normalized_path, elf_meta, dwarf_meta, has_headers, build_source_pack
         )
     )
+    # Make the preview-only contract unmissable: --show-data-sources never
+    # writes a snapshot or embeds L3/L4/L5 facts; it inspects and reports.
+    click.echo(
+        "\nNote: --show-data-sources is preview-only — no snapshot was written "
+        "and no L3/L4/L5 facts were embedded. Re-run without --show-data-sources "
+        "(optionally with --build-info/--sources) to produce a snapshot.",
+        err=True,
+    )
 
 
 def _combine_diagnostic_packs(

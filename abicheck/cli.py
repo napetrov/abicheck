@@ -679,8 +679,10 @@ def _populate_dependency_info(
                    "data source even when headers are available. Enables type-aware "
                    "artifact checks without requiring castxml.")
 @click.option("--show-data-sources", is_flag=True, default=False,
-              help="Print which data layers (L0-L5) are available for the "
-                   "binary and exit.")
+              help="Preview only: print which data layers (L0-L5) are available "
+                   "for the binary and exit. No snapshot is written and no "
+                   "L3/L4/L5 facts are embedded — re-run without this flag "
+                   "(optionally with --build-info/--sources) to produce a snapshot.")
 @click.option("--debug-format", "debug_format_opt",
               type=click.Choice(["auto", "dwarf", "btf", "ctf"], case_sensitive=False), default=None,
               help="Force the ELF debug format (auto=pick best available). "

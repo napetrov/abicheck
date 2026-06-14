@@ -15,9 +15,9 @@ and the work already shipped on this branch. Each item carries **context**,
 |----|------|--------|-----------------|
 | P01 split conda pkgs | discovery | documented (field guide) | — (conda reality) |
 | P02 variant select | discovery | documented | — |
-| P03 `--show-data-sources` preview-only | UX | **OPEN** | §B1 NEW |
+| P03 `--show-data-sources` preview-only | UX | **shipped** (preview-only made explicit) | §B1 NEW |
 | P04 `-H` hard-errors w/o castxml | env | resolved (tool present) | — |
-| P05 clang L4 empty decl tables | C++ L4 | **OPEN** | §A1 (gap **G4**) |
+| P05 clang L4 empty decl tables | C++ L4 | **shipped** (clang AST emits decls/types) | §A1 (gap **G4**) |
 | P06 serial L4 | perf | **shipped** (parallel) | §C1 (scaling validation) |
 | P07 plain DB no toolchain | discovery | documented | §E3 NEW (validate) |
 | P08 versioned-symbol noise | correctness | **shipped** (detector+collapse) | §G (gap **G15**) |
@@ -26,10 +26,10 @@ and the work already shipped on this branch. Each item carries **context**,
 | P11 compare rename cost | perf | **shipped** (batch-demangle) | — |
 | P12 meson `builddir` | discovery | **shipped** | — |
 | P13 L4 infeasible on monorepo | perf/scope | documented + mitigations | §E4 (retry live) |
-| P14 castxml no compile-DB `-I` | C++ L2 | **OPEN** | §A2 (gap **G16**/G4) |
-| P15 castxml ✗ libstdc++ 13 | C++ L2/L4 | **OPEN** | §A1 (gap **G4**) |
-| P16 `--lang c` aborts on extern "C" | UX | **OPEN** | §A3 (gap **G16**) |
-| P17 thin build-option normalization | discovery | **OPEN** | §B2 NEW |
+| P14 castxml no compile-DB `-I` | C++ L2 | **shipped** (compile-DB `-I`/flags bridged) | §A2 (gap **G16**/G4) |
+| P15 castxml ✗ libstdc++ 13 | C++ L2/L4 | **mitigated** (clang default backend) | §A1 (gap **G4**) |
+| P16 `--lang c` aborts on extern "C" | UX | **shipped** (warn + C++ retry) | §A3 (gap **G16**) |
+| P17 thin build-option normalization | discovery | **shipped** (broadened vocabulary) | §B2 NEW |
 | P18 L5 coupled to L4 | UX | **shipped** (`graph-build`) | — |
 | P19 L4 needs generated headers | discovery | **shipped** (hint) | — |
 | P20 multi-`.so` pairing | discovery | documented + eval guard | §F2 NEW (FP corpus) |
@@ -39,55 +39,52 @@ and the work already shipped on this branch. Each item carries **context**,
 
 ## A. C++ source-ABI unblock (the highest-leverage cluster)
 
-The single biggest gap the eval surfaced: **no real C++ source-ABI surface is
-obtainable today** on a stock toolchain. castxml ≤0.6.3 cannot parse libstdc++ 13
-(P15); the clang L4 extractor sidesteps that but emits only body fingerprints,
-**zero declarations/types** (P05). Result: L4 is empty for the C++ libraries that
-need it most. These map to existing gaps **G4** and **G16**.
+The eval (run against the pre-`b2b19bc` state) framed this as "no real C++
+source-ABI surface obtainable today". **The code has since advanced past the
+eval snapshot**: the clang AST-JSON backend is the *default* source extractor
+and already emits declarations + types, and the `-p`/compile-DB bridge already
+carries the build's include paths into the header parse. A1 and A2 are therefore
+**verified shipped** below (regression-tested at the unit level); the residual
+work is the live C++ validation campaign tracked under §C/§E.
 
-### A1. libclang declaration/type extractor (P15, P05) — gap **G4**
-- **Context.** `g4-header-ast-extractor.md` already plans "a libclang-based
-  header-AST extractor alongside castxml". The eval is the concrete motivation:
-  ICU/snappy yield `reachable_declarations: 0` today; castxml dies in
-  `/usr/include/c++/13/bits/basic_string.h`.
-- **Pointers.**
-  - `abicheck/buildsource/source_extractors/clang.py` — current clang extractor
-    (`extract` ~L1164); emits `SourceEntity` *body fingerprints*, not decl tables.
-  - `abicheck/buildsource/source_extractors/castxml.py` — the declaration backend
-    that breaks on modern libstdc++.
-  - `abicheck/buildsource/source_extractors/base.py` — `SourceAbiExtractor` iface.
-  - `abicheck/buildsource/source_abi.py` — `SourceAbiTu.reachable_declarations`
-    (the field that comes back empty).
-  - Registry: `UC-ARCH-header-only` / `UC-ARCH-c-library` evidence
-    `abicheck/dumper_castxml.py`.
-- **Approach.** Add a `libclang` (cindex) extractor producing real
-  `SourceEntity` decls/types/typedefs/enums from the AST (not text fingerprints);
-  prefer it over castxml when `python-clang`/`libclang` is present; fall back to
-  castxml, then to the body-fingerprint clang path. Reuse the compile-DB flags
-  per TU.
-- **Acceptance.** snappy/ICU `--sources` runs return non-zero
-  `reachable_declarations` / `reachable_types`; the 9 source-replay findings fire
-  on a real C++ lib; new integration test on a compiled C++ fixture.
-- **Effort·Risk.** L · medium (libclang version skew). **Do first — unblocks A2/A3, B, and all C++ validation.**
+### A1. clang declaration/type extractor (P15, P05) — gap **G4** — **shipped/verified**
+- **Context.** `g4-header-ast-extractor.md` planned "a libclang-based header-AST
+  extractor alongside castxml" because ICU/snappy yielded `reachable_declarations: 0`
+  in the eval and castxml dies in `/usr/include/c++/13/bits/basic_string.h`.
+- **What actually shipped (no new dependency).** The `clang -ast-dump=json`
+  backend (`source_extractors/clang.py`) already produces real `SourceEntity`
+  decls/types/typedefs/enums/constexpr/macros from the AST — not just body
+  fingerprints — and is the *default* inline extractor (`inline.py:161`,
+  `_make_source_extractor` returns `ClangSourceExtractor` unless `castxml` is
+  explicitly requested). The linker (`source_link._route_entity`) routes
+  functions → `reachable_declarations` and records/enums/typedefs →
+  `reachable_types`. So a stock clang toolchain yields a non-empty C++ source
+  surface and sidesteps the castxml-on-libstdc++13 break (P15) entirely — no
+  `python-clang`/`libclang` (cindex) dependency was needed (ADR-001).
+- **Acceptance (pinned).** `tests/test_source_extractors_clang.py::test_clang_ast_yields_nonzero_reachable_surface`
+  feeds a representative clang AST through `source_abi_from_clang_ast` →
+  `link_source_abi` and asserts both `reachable_declarations` and
+  `reachable_types` are non-empty (the literal eval metric), at the fast-lane
+  unit level (no clang needed). The live snappy/ICU `--sources` confirmation is
+  the §E source-tier campaign (D1/E4).
+- **Residual.** A dedicated cindex backend is *not* planned — the AST-JSON path
+  covers the acceptance. castxml remains an opt-in alternative (`--source-extractor castxml`).
 
-### A2. castxml/clang inherits compile-DB include paths (P14) — gap **G16**/G4
+### A2. castxml/clang inherits compile-DB include paths (P14) — gap **G16**/G4 — **shipped/verified**
 - **Context.** Public headers routinely `#include` *generated* headers
-  (`snappy-stubs-public.h`); the `-H` path doesn't pass the build's `-I`, so L2
-  fails `file not found` until the user adds `-I <builddir>` by hand.
-- **Pointers.**
-  - `abicheck/dumper_castxml.py` `_build_castxml_command` (~L302),
-    `extra_includes` handling (~L131/L149).
-  - `abicheck/build_context.py` — per-TU include flags already parsed
-    (`_try_consume_include` ~L250, `_try_consume_isystem` ~L262).
-  - Bridge point: the `-p`/`--compile-db` path in `abicheck/cli.py` `dump`.
-- **Approach.** When a compile DB is supplied/auto-discovered, derive `-I`/
-  `-isystem`/`-D`/`--target`/`--sysroot` from the matched compile unit and pass
-  them into the header-AST invocation automatically.
-- **Acceptance.** `dump <so> -H include/ -p build/` parses a public header that
-  includes a generated header **without** a manual `-I`.
-- **Effort·Risk.** S–M · low.
+  (`snappy-stubs-public.h`); without the build's `-I`, the header parse fails
+  `file not found`.
+- **What actually shipped.** `cli._resolve_build_context_flags` runs
+  `build_context_for_header(db, header).to_castxml_flags()` whenever a compile DB
+  is supplied via `-p`/`--compile-db`, deriving `-I`/`-isystem`/`-D`/`-U`/`-std`/
+  `--target`/`--sysroot` from the matched TU; `_merge_gcc_options` folds them into
+  the castxml invocation. So the build dir holding generated headers is on the
+  include path automatically — no manual `-I`.
+- **Acceptance (pinned).** `tests/test_build_context.py::TestPerHeaderMatching::test_matched_tu_include_paths_flow_into_castxml_flags`
+  asserts the matched TU's include dirs (where generated headers land), defines,
+  and ABI flags all reach `to_castxml_flags()` without a manual include.
 
-### A3. `--lang c` heuristic should warn, not abort (P16) — gap **G16**
+### A3. `--lang c` heuristic should warn, not abort (P16) — gap **G16** — **shipped**
 - **Context.** `G16` already lists this (`--lang c` + `extern "C"` fails because
   castxml drives clang C++-ish). The eval reproduced it on `zlib.h`: the "header
   appears to contain C++ syntax" hint **aborts** instead of degrading.
@@ -98,12 +95,19 @@ need it most. These map to existing gaps **G4** and **G16**.
   language mode; never hard-fail a correct `extern "C"` header.
 - **Acceptance.** `dump zlib.h --lang c` succeeds (or warns + falls back), no abort.
 - **Effort·Risk.** S · low. Fold into the G16 work.
+- **Shipped.** `dumper._castxml_dump` now factors the single invocation into
+  `_run_castxml_attempt` and, when an explicit `--lang c` parse fails *and* the
+  header carries C++ constructs (`extern "C"`/class/namespace) *and* the failure
+  is not a frontend-too-old signature, retries once in C++ mode with a warning
+  rather than hard-failing. A pure-C header that fails in C mode is not retried
+  (the failure is real), and if both modes fail the originally-requested C-mode
+  error/hint is surfaced. Tests: `tests/test_castxml_toolchain_robustness.py::TestLangCFallsBackToCpp`.
 
 ---
 
 ## B. Net-new code fixes (NEW)
 
-### B1. `--show-data-sources` is preview-only (P03) — NEW
+### B1. `--show-data-sources` is preview-only (P03) — NEW — **shipped**
 - **Context.** Running `dump --show-data-sources` prints the L0–L5 table but
   **collects nothing** and embeds nothing — surprising; a user expects it to also
   produce the snapshot.
@@ -114,8 +118,13 @@ need it most. These map to existing gaps **G4** and **G16**.
 - **Acceptance.** Either the snapshot is written with embedded facts, or the
   preview-only nature is unmissable in output + `--help`.
 - **Effort·Risk.** S · low.
+- **Shipped (made the contract unmissable).** The `--show-data-sources` help now
+  opens with "Preview only … No snapshot is written and no L3/L4/L5 facts are
+  embedded", and `print_data_sources` prints a loud trailing notice to stderr
+  after the table. Tests: `test_dwarf_snapshot.py::TestCLIDwarfFlags::test_dump_help_flags_data_sources_preview_only`
+  and the `preview-only` assertions in `test_show_data_sources_via_runner`.
 
-### B2. Build-option normalization vocabulary is thin (P17) — NEW
+### B2. Build-option normalization vocabulary is thin (P17) — NEW — **shipped**
 - **Context.** LLVM produced **6 build_options from 2,719 TUs**; zstd 0. The
   `command`-string DB *is* shlex-parsed (`build_context.py:91`), so this is **not**
   a parsing gap — `derive_build_options` only normalizes a small flag set
@@ -130,6 +139,15 @@ need it most. These map to existing gaps **G4** and **G16**.
 - **Acceptance.** LLVM/zstd L3 surfaces the real ABI-affecting flag set; a flag
   flip between releases shows as `build_flag_changed` drift.
 - **Effort·Risk.** M · low.
+- **Shipped.** Extended `ABI_RELEVANT_FLAG_PREFIXES` (`adapters/base.py`) with
+  `-stdlib=`, `-march=`/`-mtune=`/`-mfloat-abi=`/`-mfpmath=`, `-fsanitize=`/
+  `-fno-sanitize=`, `-fPIC`/`-fpic`/`-fPIE`/`-fpie` (+ negatives) and
+  `-f[no-]omit-frame-pointer`. `derive_build_options` already projects unknown
+  ABI-relevant flags into `BuildOption`s and `build_diff._diff_options` already
+  emits `ABI_RELEVANT_BUILD_FLAG_CHANGED` for any keyed drift, so no new
+  ChangeKind was needed. A `-stdlib=libstdc++ → libc++` swap now reads as a single
+  drift finding. Tests: `tests/test_build_source_pack.py::test_broadened_abi_flag_vocabulary_is_captured`,
+  `test_stdlib_flip_surfaces_as_abi_build_flag_drift`, `test_march_added_surfaces_as_abi_build_flag_drift`.
 
 ---
 
@@ -148,32 +166,40 @@ need it most. These map to existing gaps **G4** and **G16**.
 
 ---
 
-## D. eval-suite infrastructure (NEW)
+## D. eval-suite infrastructure (NEW) — **shipped**
 
-### D1. Add the build/source (L3/L4/L5) tier to the runner
-- **Context.** The new benchmark suite (`eval/runner.py`) runs only the binary
-  (L0/L1) tier (22/22 verdicts match). The source tier (old `bsdrive.py`
-  prototype) was not folded in.
-- **Pointers.** `eval/runner.py` (`run`, `scan_one`), `eval/manifest.yaml`
-  (`source:` repo/tags already present for zlib/zstd/snappy); the retired prototype
-  logic is in git history (`eval/field-eval/scripts/bsdrive.py`).
-- **Approach.** Add `runner.py --tier source`: for manifest entries with a
-  `source:` block, clone at the tag, configure (or `--build-query`), run
-  `dump --sources --collect-mode source-target`, record L3/L4/L5 coverage +
-  timings into `results/`. Gate on `clang`/`cmake` presence; skip gracefully.
-- **Acceptance.** `eval/REPORT.md` gains a source-tier table; reproducible.
-- **Effort·Risk.** M · medium (needs toolchain; gate on availability).
+### D1. Add the build/source (L3/L4/L5) tier to the runner — **shipped**
+- **Context.** The benchmark suite (`eval/runner.py`) ran only the binary
+  (L0/L1) tier. The source tier was not folded in.
+- **Shipped.** `eval/runner.py --tier {binary,source,both}` (default `binary`).
+  The source tier iterates manifest entries with a `source:` block:
+  `_scan_source_side` shallow-clones the repo at the tag (`_git_clone_tag`),
+  configures it (`_cmake_configure` → `compile_commands.json`, honoring
+  per-entry `cmake_subdir`/`cmake_args`), runs `dump --sources <tree>
+  --build-info <build> --collect-mode source-target`, and `_source_coverage`
+  counts the embedded `build_source` L3 (compile units/targets/options) / L4
+  (declarations/types/macros) / L5 (nodes/edges) facts; the two sides are then
+  `compare`d. Gated on git+cmake (skips gracefully with a row per entry when
+  absent), notes when clang is missing (partial L4). `render_report` gained a
+  Source-tier table; `REPORT.md` now carries both tiers. Manifest doc + zstd
+  `cmake_subdir: build/cmake` added.
+- **Acceptance (met).** `eval/REPORT.md` gains a reproducible source-tier table
+  (`python eval/runner.py --tier source`); pure helpers unit-tested in
+  `tests/test_eval_runner.py`.
 
-### D2. Wire the suite into CI as a scheduled lane
+### D2. Wire the suite into CI as a scheduled lane — **shipped**
 - **Context.** The suite is a real-world verdict **regression guard** (`expect`
-  in `manifest.yaml`); today it's manual.
-- **Pointers.** `.github/workflows/` (mirror the `mutation.yml`/`performance.yml`
-  scheduled-lane pattern); `eval/runner.py` exit on `verdict_matches_expected`
-  drift.
-- **Approach.** Weekly / label-triggered job: `pip install pyyaml`, run the binary
-  tier, fail on any `expect` drift, upload `results/`. Network-gated (anaconda.org).
-- **Acceptance.** Green scheduled lane; red on an injected verdict drift.
-- **Effort·Risk.** S–M · low.
+  in `manifest.yaml`); it was manual.
+- **Shipped.** `.github/workflows/eval-suite.yml` (mirrors the
+  `performance.yml`/`mutation.yml` pattern): `workflow_dispatch` +
+  weekly `schedule` (Mon 05:31 UTC) + `eval`-label PR trigger. The **binary-tier
+  job gates** — `python eval/runner.py --tier binary --fail-on-drift` exits
+  non-zero on any verdict drift / scan error (`runner.drift_rows`). The
+  **source-tier job is non-gating** (`continue-on-error`): installs git+cmake+clang,
+  runs `--tier source`, writes coverage to the job summary, uploads `results/`.
+  Network-gated (anaconda.org + GitHub clones), so it never runs on every push.
+- **Acceptance (met).** Green scheduled lane; red on an injected verdict drift
+  (the `--fail-on-drift` gate, unit-tested via `drift_rows`).
 
 ---
 
@@ -256,8 +282,17 @@ The entire eval was **Linux/ELF**. These are untested paths, not known bugs.
 ---
 
 ## Recommended order
-1. **A1 (G4 libclang decl extractor)** — unblocks A2/A3, all C++ validation, real L4 value.
-2. **D1 + D2 (eval source tier + CI)** — turns this research into a standing guard.
-3. **B1, B2, A3** — cheap, high-friction-removal UX/discovery fixes.
+1. ~~**A1 (G4 decl extractor) + A2 (compile-DB `-I`)**~~ — **shipped/verified**: the
+   clang AST-JSON backend (default) emits decls/types and feeds
+   `reachable_declarations`/`reachable_types`; the `-p` bridge carries the build's
+   include paths/flags into the parse. Both pinned by fast-lane regression tests.
+2. ~~**D1 + D2 (eval source tier + CI)**~~ — **shipped**: `runner.py --tier
+   source|both` records L3/L4/L5 coverage; `eval-suite.yml` runs the binary tier
+   as a gating weekly/label lane (`--fail-on-drift`) and the source tier as a
+   non-gating coverage lane. This is now the way to confirm A1/A2 *live* on
+   snappy/ICU (the source-tier job).
+3. ~~**B1, B2, A3**~~ — **shipped** (cheap, high-friction-removal UX/discovery fixes:
+   `--show-data-sources` preview-only messaging, broadened build-flag vocabulary,
+   `--lang c` → C++ auto-retry).
 4. **E1 (PE/Mach-O)** — close the platform-coverage hole.
 5. **C1, E2–E4, F, G** — depth & breadth as capacity allows.

@@ -599,6 +599,16 @@ class TestCLIDwarfFlags:
         )
         assert "--show-data-sources" in result.stdout
 
+    def test_dump_help_flags_data_sources_preview_only(self) -> None:
+        """--show-data-sources help must make the preview-only contract clear
+        (B1): it writes no snapshot and embeds no L3/L4/L5 facts."""
+        result = subprocess.run(
+            [sys.executable, "-c", "from abicheck.cli import main; main()", "dump", "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert "Preview only" in result.stdout
+        assert "No snapshot is written" in result.stdout
+
     def test_compare_help_shows_dwarf_only(self) -> None:
         """compare --help should mention --dwarf-only."""
         result = subprocess.run(
@@ -1298,6 +1308,9 @@ class TestCLIInProcess:
         assert "Data sources for" in result.output
         assert "L0 Binary metadata" in result.output
         assert "L1 Debug info" in result.output
+        # B1: the preview-only contract is surfaced loudly, not silently.
+        assert "preview-only" in result.output
+        assert "no snapshot was written" in result.output
 
     def test_dwarf_only_via_runner(self, _debug_lib: Path, tmp_path: Path) -> None:
         """--dwarf-only via CliRunner for in-process coverage."""
