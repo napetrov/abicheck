@@ -202,6 +202,27 @@ cost probe; `--audit` runs intra-version (ignores `--baseline`).
 Convenience subcommands (thin wrappers, same engine):
 `abicheck scan estimate …` ≡ `--estimate`; `abicheck scan audit …` ≡ `--audit`.
 
+### How each layer is collected (and whether it always runs)
+
+Each L-layer uses a different method; the expensive ones are scoped or gated, so
+not everything runs on every PR. The L5 graph is **not** fully built by default —
+only the cheap structural fold is, the semantic edges are budget-gated.
+
+| Layer | How collected | Compiler? | Default PR | Scope |
+|---|---|---|---|---|
+| pre-scan (D2) | regex/lexical over changed+public files | no | always | changed+public |
+| L2 headers | castxml / DWARF (existing) | no | always | public surface |
+| L3 build | parse `compile_commands.json` / CMake / Ninja / Bazel | no | always (cheap) | whole build |
+| L5 graph (structural) | fold L3 → target/file/option nodes | no | when L3 ran | whole build |
+| L4 source | clang/castxml parse actual TUs | yes | triggered | **POI-scoped** |
+| L5 graph (semantic edges) | include `clang -MM` + call `clang -ast-dump` / Kythe/CodeQL | yes | budgeted | POI / changed |
+
+**Reporting is mandatory and explicit (4a):** every run — not just partial ones —
+prints a per-layer table stating, for each layer, `collected` / `skipped (reason)`
++ how much (TUs/files) + cache-hit rate, plus the confidence per evidence source.
+A reader always sees exactly which depth was reached; there is never a bare
+"source scan ran" without the layer breakdown.
+
 ### Python API — `abicheck/service.py`
 
 ```python
