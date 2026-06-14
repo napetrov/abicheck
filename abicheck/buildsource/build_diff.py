@@ -260,6 +260,14 @@ def _toolchain_fingerprints(ev: BuildEvidence) -> dict[str, str]:
     return out
 
 
+def _toolchain_identities(ev: BuildEvidence) -> set[str]:
+    """Language-agnostic identity fingerprints: ``"compiler_id version target"``."""
+    return {
+        f"{tc.compiler_id} {tc.version} {tc.target_triple}".strip()
+        for tc in ev.toolchains
+    }
+
+
 def _diff_toolchains(old: BuildEvidence, new: BuildEvidence) -> list[Change]:
     old_fp = _toolchain_fingerprints(old)
     new_fp = _toolchain_fingerprints(new)
@@ -276,6 +284,28 @@ def _diff_toolchains(old: BuildEvidence, new: BuildEvidence) -> list[Change]:
                     ),
                     old_value=old_fp[lang],
                     new_value=new_fp[lang],
+                )
+            )
+    # Fallback for asymmetric language keys (field-eval E3 / P07): clang's
+    # DW_AT_producer carries no language token, so parse_producer yields
+    # language="" and the toolchain keys by id, while gcc keys by "C"/"CXX".
+    # The per-language loop above then shares no key and misses an obvious
+    # gcc↔clang swap. When no per-language drift fired but the compiler
+    # *identities* differ, surface the change once.
+    if not changes:
+        old_id = _toolchain_identities(old)
+        new_id = _toolchain_identities(new)
+        if old_id and new_id and old_id != new_id:
+            changes.append(
+                Change(
+                    kind=ChangeKind.TOOLCHAIN_VERSION_CHANGED,
+                    symbol="toolchain",
+                    description=(
+                        "Toolchain identity changed: "
+                        f"{', '.join(sorted(old_id))!r} -> {', '.join(sorted(new_id))!r}"
+                    ),
+                    old_value=", ".join(sorted(old_id)),
+                    new_value=", ".join(sorted(new_id)),
                 )
             )
     return changes

@@ -449,6 +449,28 @@ def test_diff_emits_toolchain_version_changed():
     assert any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
 
 
+def test_diff_surfaces_toolchain_swap_with_asymmetric_language_keys():
+    # clang's DW_AT_producer ("clang version 18.1.3") carries no language token,
+    # so parse_producer yields language="" and the toolchain keys by id; gcc's
+    # ("GNU C17 13.3.0") keys by "C". The language keys never intersect, but the
+    # compiler identity clearly changed — drift must still surface so a
+    # gcc↔clang rebuild isn't silently dropped (field-eval E3 / P07).
+    old = BuildEvidence(toolchains=[
+        Toolchain(id="toolchain://gnu-13.3.0-dwarf", compiler_id="GNU", version="13.3.0", language="C")])
+    new = BuildEvidence(toolchains=[
+        Toolchain(id="toolchain://clang-18.1.3-dwarf", compiler_id="Clang", version="18.1.3", language="")])
+    changes = diff_build_evidence(old, new)
+    assert any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
+
+
+def test_diff_no_toolchain_drift_when_identity_matches_despite_missing_language():
+    # Same compiler/version on both sides (both language-less) must not false-fire
+    # through the asymmetric-key fallback.
+    tc = Toolchain(id="toolchain://clang-18.1.3-dwarf", compiler_id="Clang", version="18.1.3", language="")
+    changes = diff_build_evidence(BuildEvidence(toolchains=[tc]), BuildEvidence(toolchains=[tc]))
+    assert not any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
+
+
 def test_diff_emits_toolchain_change_for_sysroot_option():
     old = BuildEvidence(build_options=[BuildOption("sysroot", "/a", abi_relevant=True)])
     new = BuildEvidence(build_options=[BuildOption("sysroot", "/b", abi_relevant=True)])
