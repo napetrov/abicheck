@@ -134,8 +134,13 @@ def effective_language(argv: list[str], source: str) -> str:
     (force C++) / ``/TC`` / ``/Tc<f>`` (force C) do the same. The last forcing
     token wins for a single-source TU. Falls back to :func:`detect_language` on
     the source path when nothing on the command line forces the language.
+
+    The scan is option-parser aware: operands consumed by another value-taking
+    flag (for example ``-MF -xc``) are skipped so filenames that begin with
+    language-option spellings cannot masquerade as real language overrides.
     """
     forced = ""
+    msvc = _is_msvc_command(argv)
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -144,12 +149,15 @@ def effective_language(argv: list[str], source: str) -> str:
             forced = "" if tok == "none" else _X_LANG_TO_NORMALIZED.get(tok, forced)
             i += 2
             continue
+        if arg in SOURCE_OPERAND_FLAGS:
+            i += 2  # skip the flag and the operand it consumes
+            continue
         if arg.startswith("-x") and len(arg) > 2:
             tok = arg[2:].lower()
             forced = "" if tok == "none" else _X_LANG_TO_NORMALIZED.get(tok, forced)
-        elif arg == "/TP" or arg[:3] == "/Tp":
+        elif msvc and (arg == "/TP" or arg[:3] == "/Tp"):
             forced = "CXX"
-        elif arg == "/TC" or arg[:3] == "/Tc":
+        elif msvc and (arg == "/TC" or arg[:3] == "/Tc"):
             forced = "C"
         i += 1
     return forced or detect_language(source)
@@ -178,9 +186,9 @@ def source_from_argv(argv: list[str]) -> str:
     from the start is safe (and handles ``cd dir && cc …`` recipes).
 
     Source recognition is dialect-aware: an MSVC/clang-cl command (``/c`` present
-    or a ``cl``/``clang-cl`` driver) treats every ``/``-prefixed token as an
-    option — including combined value-taking forms like ``/FIsrc/config.hpp`` —
-    so only bare, ``C:\\``-rooted, or ``/Tp``/``/Tc``-named tokens are sources.
+    or a ``cl``/``clang-cl`` driver) treats known ``/``-prefixed compiler flags
+    as options — including combined value-taking forms like ``/FIsrc/config.hpp``
+    — while still allowing POSIX absolute paths such as ``/work/src/foo.cc``.
     A GNU command treats ``/abs/path.cc`` as a Unix absolute source path.
     """
     msvc = _is_msvc_command(argv)
@@ -209,39 +217,84 @@ def source_from_argv(argv: list[str]) -> str:
 #: option, not a path). ``clang-cl`` mimics ``cl`` exactly.
 _MSVC_DRIVERS: frozenset[str] = frozenset({"cl", "cl.exe", "clang-cl", "clang-cl.exe"})
 
+_MSVC_COMBINED_OPTION_PREFIXES: tuple[str, ...] = (
+    "/fi",
+    "/fu",
+    "/fo",
+    "/fe",
+    "/fd",
+    "/fp",
+    "/yu",
+    "/yc",
+    "/std:",
+    "/external:",
+)
+
 
 def _is_msvc_command(argv: list[str]) -> bool:
     """True if *argv* uses MSVC/clang-cl option syntax (``/opt`` not paths).
 
     Detected either by the ``/c`` compile marker (GNU uses ``-c``) or by a
     ``cl``/``clang-cl`` driver basename anywhere in the leading tokens (the
-    driver may be a full path, e.g. ``C:\\VS\\bin\\cl.exe``).
+    driver may be a full path, e.g. ``C:\\VS\\bin\\cl.exe``), or by clang's
+    explicit ``--driver-mode=cl`` spelling.
     """
     if "/c" in argv:
         return True
-    for arg in argv:
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
         if arg in ("&&", ";"):
             break
+        if arg in SOURCE_OPERAND_FLAGS:
+            i += 2
+            continue
+        if arg == "--driver-mode" and i + 1 < len(argv):
+            if argv[i + 1].lower() == "cl":
+                return True
+            i += 2
+            continue
+        if arg.lower() == "--driver-mode=cl":
+            return True
         base = arg.replace("\\", "/").rsplit("/", 1)[-1].lower()
         if base in _MSVC_DRIVERS:
             return True
+        i += 1
     return False
 
 
 def _is_source_token(arg: str, msvc: bool) -> bool:
     """True if *arg* is a translation-unit source path, not a compiler option.
 
-    ``-``-prefixed tokens are always options. In an MSVC/clang-cl command every
-    ``/``-prefixed token is an option (``/c``, ``/FIsrc/config.hpp``,
-    ``/Fofoo.obj``) regardless of an embedded ``/``. In a GNU command a
-    ``/``-prefixed token with a source extension is a Unix absolute source path
-    (e.g. ``/work/src/foo.cc``) and is kept.
+    ``-``-prefixed tokens are always options. In an MSVC/clang-cl command known
+    ``/``-prefixed compiler flags (``/c``, ``/FIsrc/config.hpp``,
+    ``/Fofoo.obj``) are options, but POSIX-hosted clang-cl invocations may still
+    pass Unix absolute source paths (e.g. ``/work/src/foo.cc``), which are kept.
     """
     if not arg or arg.startswith("-"):
         return False
-    if arg.startswith("/") and msvc:
+    if arg.startswith("/") and msvc and _is_msvc_option_token(arg):
         return False  # MSVC/clang-cl option (handled before us for /Tp,/Tc)
     return bool(detect_language(arg))
+
+
+def _is_msvc_option_token(arg: str) -> bool:
+    lower = arg.lower()
+    if lower in {"/c", "/tp", "/tc", "/nologo", "/showincludes", "/wx", "/gr", "/gs"}:
+        return True
+    if arg.startswith(("/D", "/I")):
+        return True
+    if any(lower.startswith(prefix) for prefix in _MSVC_COMBINED_OPTION_PREFIXES):
+        return True
+    if lower.startswith("/w"):
+        suffix = lower[2:]
+        return suffix.isdigit() or suffix in {"all", "x"} or (
+            len(suffix) > 1 and suffix[0] in {"d", "e", "o"} and suffix[1:].isdigit()
+        )
+    if lower.startswith("/o"):
+        suffix = lower[2:]
+        return bool(suffix) and all(ch in "012bdfgitxys-" for ch in suffix)
+    return False
 
 
 def compile_unit_id(source: str, argv: list[str], output: str = "") -> str:
