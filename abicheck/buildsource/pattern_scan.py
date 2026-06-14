@@ -120,13 +120,20 @@ class _Rule:
     scan_strings: bool = False
 
 
+#: Hex-digit set used to tell a C++14 digit separator (`1'000`) from a
+#: char-literal opener in the comment/string blanker.
+_HEXDIGITS = frozenset("0123456789abcdefABCDEF")
+
 #: Matches the body *inside* a ``__attribute__((...))`` list up to (but not
-#: across) its closing ``))``: a run of non-paren chars or single-level nested
-#: paren groups (e.g. the ``(8)`` in ``aligned(8)``). Lazy, so it stops at the
-#: searched keyword. Because it can never consume an unbalanced ``)`` it cannot
-#: leak past the attribute into following code — so ``__attribute__((aligned(8)))
-#: int packed;`` does *not* match the packed rule.
-_ATTR_INNER = r"(?:[^()]|\([^()]*\))*?"
+#: across) its closing ``))``: a run of non-paren chars or nested paren groups
+#: **up to two levels deep** (e.g. ``(8)`` in ``aligned(8)`` or
+#: ``(sizeof(int))`` in ``aligned(sizeof(int))``). Lazy, so it stops at the
+#: searched keyword. The alternatives are first-char-disjoint (``[^()]`` vs
+#: ``\(``) at every level, so there is no catastrophic backtracking. Because it
+#: can never consume an unbalanced ``)`` it cannot leak past the attribute into
+#: following code — so ``__attribute__((aligned(8))) int packed;`` does *not*
+#: match the packed rule.
+_ATTR_INNER = r"(?:[^()]|\((?:[^()]|\([^()]*\))*\))*?"
 
 #: Layout-, vtable-, template-, and mangling-affecting constructs warrant
 #: escalation to the expensive semantic scan (S5); pure annotations
@@ -251,13 +258,19 @@ _RULES: tuple[_Rule, ...] = (
 #: starts the parameter list of ``template <...>`` / ``template<...>``). The
 #: ``(?!\s*<)`` lookahead is anchored right after ``template`` so it rejects the
 #: definition even with arbitrary whitespace/newlines before ``<`` (it is
-#: zero-width and cannot be defeated by ``\s+`` backtracking). The ``(?<![.>:])``
-#: guard rejects the dependent-name disambiguators ``x.template foo<...>()``,
-#: ``p->template ...``, and ``Alloc::template rebind<...>`` (allocator/traits
-#: code). The optional ``extern`` group selects the kind so the two never
-#: double-count the same span. This covers both class and function template
-#: instantiations (ADR-035 D2).
-_TEMPLATE_RE = re.compile(r"(?P<extern>\bextern\s+)?(?<![.>:])\btemplate\b(?!\s*<)\s+")
+#: zero-width and cannot be defeated by ``\s+`` backtracking). Dependent-name
+#: disambiguators (``x.template f<>()``, ``p->template ...``, ``A::template
+#: rebind<>``) are rejected separately in ``scan_text`` by walking back over
+#: whitespace to the preceding token — which fixed-width regex lookbehind cannot
+#: do when there is whitespace after ``::`` / ``.`` / ``->``. The optional
+#: ``extern`` group selects the kind so the two never double-count the same span.
+#: Covers both class and function template instantiations (ADR-035 D2).
+_TEMPLATE_RE = re.compile(r"(?P<extern>\bextern\s+)?\btemplate\b(?!\s*<)\s+")
+
+#: A ``template`` keyword preceded (ignoring whitespace) by one of these ends a
+#: ``.`` / ``->`` / ``::`` access — i.e. a dependent-name disambiguator, not an
+#: explicit instantiation.
+_TEMPLATE_DISAMBIGUATOR_PREV = frozenset(".:>")
 
 
 @dataclass(frozen=True)
@@ -432,9 +445,17 @@ def _blank_comments_and_strings(text: str, blank_strings: bool = True) -> str:
                 i += 1
                 state = "string"
             elif ch == "'":
-                out.append("'")
-                i += 1
-                state = "char"
+                # Distinguish a C++14 digit separator (`1'000`, `0xFF'FF`) from a
+                # char-literal opener: a separator sits between two hex digits.
+                # Misreading it as a literal would blank the rest of the file.
+                prev = text[i - 1] if i > 0 else ""
+                if prev in _HEXDIGITS and nxt in _HEXDIGITS:
+                    out.append("'")
+                    i += 1  # stay in code
+                else:
+                    out.append("'")
+                    i += 1
+                    state = "char"
             else:
                 out.append(ch)
                 i += 1
@@ -522,6 +543,17 @@ def scan_text(text: str, path: str = "") -> list[PatternFact]:
     # `extern` group so `extern template class X<int>;` is classified once.
     for m in _TEMPLATE_RE.finditer(blanked):
         is_extern = bool(m.group("extern"))
+        # Reject dependent-name disambiguators (`x.template f<>()`,
+        # `A::template rebind<>`): walk back over whitespace to the token before
+        # `template`; if it ends a `.`/`->`/`::` access it is not an
+        # instantiation. `extern template` is never a disambiguator.
+        if not is_extern:
+            kw_start = m.start()
+            j = kw_start - 1
+            while j >= 0 and blanked[j].isspace():
+                j -= 1
+            if j >= 0 and blanked[j] in _TEMPLATE_DISAMBIGUATOR_PREV:
+                continue
         line = _line_of(blanked, m.start())
         facts.append(
             PatternFact(

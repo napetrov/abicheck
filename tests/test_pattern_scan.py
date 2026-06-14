@@ -63,6 +63,10 @@ def _kinds(text: str) -> set[PatternKind]:
             "struct __attribute__((__packed__)) S { char a; int b; };",
             PatternKind.ATTRIBUTE_PACKED,
         ),
+        (
+            "struct __attribute__((aligned(sizeof(int)), packed)) S {};",
+            PatternKind.ATTRIBUTE_PACKED,
+        ),
         ("struct [[gnu::packed]] S { char a; int b; };", PatternKind.ATTRIBUTE_PACKED),
         (
             "template void api<int>();",
@@ -188,12 +192,39 @@ def test_template_definition_not_flagged_as_instantiation(definition: str) -> No
         "ptr->template bar<int>();",
         "typename Alloc::template rebind<U>::other a;",
         "Alloc::template rebind<U> r;",
+        "typename A<T>:: template rebind<int>::other o;",  # space after ::
+        "obj. template foo<int>();",  # space after .
+        "ptr-> template bar<int>();",  # space after ->
     ],
 )
 def test_dependent_template_disambiguator_not_flagged(disambiguator: str) -> None:
     # `x.template f<...>()`, `p->template ...`, and `Alloc::template rebind<...>`
-    # are dependent-name disambiguators, not explicit instantiations.
+    # are dependent-name disambiguators, not explicit instantiations — even with
+    # whitespace after the `.`/`->`/`::`.
     assert PatternKind.EXPLICIT_TEMPLATE_INSTANTIATION not in _kinds(disambiguator)
+
+
+@pytest.mark.parametrize(
+    "src,kind",
+    [
+        # C++14 digit separators must not be read as char-literal openers (which
+        # would blank the rest of the file and hide later constructs).
+        (
+            "constexpr auto n = 1'000;\nstruct B { virtual void f(); };",
+            PatternKind.VIRTUAL_METHOD,
+        ),
+        ("constexpr auto h = 0xFF'FF;\n#pragma pack(1)", PatternKind.PRAGMA_PACK),
+    ],
+)
+def test_digit_separator_does_not_hide_later_constructs(
+    src: str, kind: PatternKind
+) -> None:
+    assert kind in _kinds(src)
+
+
+def test_real_char_literal_still_blanks_its_contents() -> None:
+    # A genuine char literal must still hide an ABI keyword spelled inside it.
+    assert PatternKind.PRAGMA_PACK not in _kinds('const char* s = "#pragma pack";')
 
 
 def test_function_template_instantiation_escalates() -> None:
