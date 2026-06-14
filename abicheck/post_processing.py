@@ -770,14 +770,16 @@ class DemoteUnreachableInternalChurn:
 
 
 def _scheme_soname(snap: AbiSnapshot) -> str:
-    """Best-effort SONAME for the versioned-scheme cross-check.
+    """The *observed* ELF ``DT_SONAME`` for the versioned-scheme cross-check.
 
-    Prefers the recorded ELF ``DT_SONAME``; falls back to the snapshot's library
-    name (often the soname itself, e.g. ``libicui18n.so.75``) so the relink check
-    still works on snapshots dumped without ELF metadata.
+    Only an actual recorded SONAME is used — never the snapshot's ``library``
+    name, which for source-only or hand-authored snapshots is just the input name
+    and may differ from the runtime SONAME. Inferring a SONAME bump from a name
+    change would overstate the relink requirement (the report's main visible
+    finding under collapse), so absent ELF metadata yields "" and no relink note.
     """
     elf = getattr(snap, "elf", None)
-    return (getattr(elf, "soname", "") or snap.library or "").strip()
+    return (getattr(elf, "soname", "") or "").strip()
 
 
 class DetectVersionedSymbolScheme:

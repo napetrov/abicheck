@@ -496,6 +496,18 @@ def test_diff_no_toolchain_drift_for_version_asymmetry_same_compiler():
     assert not any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
 
 
+def test_diff_no_toolchain_drift_for_unknown_compiler_id():
+    # A toolchain may omit compiler_id (schema requires only id; adapters default
+    # it to ""). An unknown compiler on one side must not read as a swap against a
+    # known compiler on the other (Codex P2).
+    old = BuildEvidence(toolchains=[
+        Toolchain(id="t-unknown", compiler_id="", version="", language="")])
+    new = BuildEvidence(toolchains=[
+        Toolchain(id="t-gnu", compiler_id="GNU", version="13", language="")])
+    changes = diff_build_evidence(old, new)
+    assert not any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
+
+
 def test_diff_emits_toolchain_change_for_sysroot_option():
     old = BuildEvidence(build_options=[BuildOption("sysroot", "/a", abi_relevant=True)])
     new = BuildEvidence(build_options=[BuildOption("sysroot", "/b", abi_relevant=True)])

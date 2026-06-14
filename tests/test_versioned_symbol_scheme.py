@@ -303,22 +303,43 @@ def test_collapse_reports_version_rename_count_in_summary():
     assert "version-renames collapsed" in adv.description
 
 
+def _snap_with_soname(version: str, suffix: str, soname: str) -> AbiSnapshot:
+    from abicheck.elf_metadata import ElfMetadata
+    s = AbiSnapshot(library=f"libicuuc.so.{suffix}", version=version)
+    s.functions = [_fn(f"u_{b}_{suffix}", pt) for b, pt in _BASES.items()]
+    s.elf = ElfMetadata(soname=soname)
+    return s
+
+
 def test_soname_bump_surfaces_relink_signal_even_when_collapsed():
     # G15 (2): a versioned scheme normally bumps the SONAME too. The collapse must
-    # not hide that dependents have to relink against the new shared object.
+    # not hide that dependents have to relink against the new shared object. The
+    # signal is keyed off the *observed* ELF DT_SONAME, not the library name.
+    old = _snap_with_soname("75.1", "75", soname="libicui18n.so.75")
+    new = _snap_with_soname("78.3", "78", soname="libicui18n.so.78")
+    adv = _versioned_advisory(compare(old, new, collapse_versioned_symbols=True))
+    assert adv is not None
+    assert "SONAME" in adv.description and "relink" in adv.description
+    assert "libicui18n.so.75 -> libicui18n.so.78" in adv.description
+
+
+def test_no_soname_note_when_soname_unchanged():
+    # Same ELF SONAME on both sides → no spurious relink note.
+    old = _snap_with_soname("75.1", "75", soname="libicui18n.so.75")
+    new = _snap_with_soname("78.3", "78", soname="libicui18n.so.75")
+    adv = _versioned_advisory(compare(old, new, collapse_versioned_symbols=True))
+    assert adv is not None
+    assert "relink" not in adv.description
+
+
+def test_no_soname_note_inferred_from_library_name_without_elf():
+    # Codex P2: differently-named old/new snapshots with NO ELF metadata must not
+    # manufacture a SONAME-bump/relink note from the library *name* — that name is
+    # the input path, not an observed DT_SONAME (source-only / hand-authored JSON).
     old = AbiSnapshot(library="libicuuc.so.75", version="75.1")
     old.functions = [_fn(f"u_{b}_75", pt) for b, pt in _BASES.items()]
     new = AbiSnapshot(library="libicuuc.so.78", version="78.3")
     new.functions = [_fn(f"u_{b}_78", pt) for b, pt in _BASES.items()]
     adv = _versioned_advisory(compare(old, new, collapse_versioned_symbols=True))
     assert adv is not None
-    assert "SONAME" in adv.description and "relink" in adv.description
-    assert "libicuuc.so.75 -> libicuuc.so.78" in adv.description
-
-
-def test_no_soname_note_when_soname_unchanged():
-    # Same SONAME on both sides → no spurious relink note.
-    old, new = _snap("75.1", "75"), _snap("78.3", "78")  # both library="libicuuc.so"
-    adv = _versioned_advisory(compare(old, new, collapse_versioned_symbols=True))
-    assert adv is not None
-    assert "relink" not in adv.description
+    assert "relink" not in adv.description and "SONAME" not in adv.description

@@ -274,6 +274,8 @@ def _toolchain_compiler_versions(ev: BuildEvidence) -> dict[str, set[str]]:
     """
     out: dict[str, set[str]] = {}
     for tc in ev.toolchains:
+        if not tc.compiler_id:
+            continue  # unknown compiler (schema only requires id) — not an identity
         out.setdefault(tc.compiler_id, set())
         if tc.version:
             out[tc.compiler_id].add(tc.version)
@@ -282,7 +284,10 @@ def _toolchain_compiler_versions(ev: BuildEvidence) -> dict[str, set[str]]:
 
 def _toolchain_identity_display(ev: BuildEvidence) -> str:
     """Human-readable ``"compiler_id version"`` list for a finding's old/new."""
-    return ", ".join(sorted(f"{tc.compiler_id} {tc.version}".strip() for tc in ev.toolchains))
+    return ", ".join(sorted(
+        f"{tc.compiler_id} {tc.version}".strip()
+        for tc in ev.toolchains if tc.compiler_id
+    ))
 
 
 def _diff_toolchains(old: BuildEvidence, new: BuildEvidence) -> list[Change]:
