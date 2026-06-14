@@ -34,13 +34,16 @@ the work is organised.
 | 7 | ELF-only rename matching (`binary_fingerprint`, `diff_symbols._plausible_rename`) | O(removed × added) name-similarity scan; the name predicate re-demangled both names per pair. | Scan only the size-tolerance window via the existing size index; cache the per-name parse; cap the heuristic pass for mass-rename inputs. | `rename_churn` n=1000: **13.2 s → 2.1 s**, larger inputs bounded |
 | 8 | Affected-symbol enrichment type↔function/field mapping (`diff_filtering._build_type_to_funcs`, `_build_type_embed_index`) | `any(tname in ft ...)` nested inside the type loop and the function/field loop → O(types × functions × refs); quadratic when many distinct types churn (a header refactor or versioned upgrade). The original perf sweep only sampled these scenarios at n=500, so the exponent was never computed and the table mislabelled them "linear". | One Aho-Corasick `_SubstringMatcher` over the affected type names, built once and shared; each ref/field is matched in O(len) with **identical** substring semantics. | `typedef_churn` n=4000: **6.3 s → 0.73 s**; `union_churn` **9.1 s → 1.10 s**; `vtable_churn` **7.8 s → 1.03 s** (all now linear) |
 
-The one remaining super-linear path is the **opaque-handle size filter**
-(`diff_filtering._filter_opaque_size_changes`), O(candidates × functions). It is
-left as-is: it only triggers on the narrow "compatible struct growth of a
-pointer-only handle" pattern, so the candidate count is small for real
-libraries, and `type_churn` (which forces *every* struct into that pattern) is
-already down from 8.8 s to 1.4 s at 4000 functions as a side effect of the other
-fixes.
+The one remaining super-linear path is the **opaque-handle pointer-only check**
+(`diff_filtering._is_pointer_only_type`, reached from `_filter_opaque_size_changes`):
+for each opaque candidate it rescans every public function/variable with a
+word-boundary regex, so it is O(candidates × functions) with a regex per pair
+(`type_churn` n=4000: ~3.2 M regex searches, tail exponent ≈1.6). It is left
+as-is for now: it only triggers on the narrow "compatible struct growth of a
+pointer-only handle" pattern, so the candidate count is small for real libraries;
+`type_churn` forces *every* struct into that pattern as the worst case. (The
+enrichment cost that previously dominated `type_churn`/`opaque_filter` is gone
+with fix #8.)
 
 ## How to reproduce
 
@@ -132,9 +135,9 @@ reporting stages (see [Coverage beyond `compare()`](#coverage-beyond-compare)).
 | `pe_churn` / `macho_churn` | <0.05 s @ n=500 | ~1.0 (linear) |
 | `wide_struct` | 0.1–0.2 s @ n=500 | ~1.0 (linear) |
 | `typedef_churn` / `union_churn` / `vtable_churn` | 0.7–1.1 s @ n=4000 | ~1.0 (linear, after fix #8) |
-| `type_churn`   | 1.39 s @ n=4000 | ~1.7 (opaque filter residual) |
-| `enum_churn`   | 1.76 s @ n=2000 | ~1.7 (enum diff residual) |
-| `opaque_filter`| 1.97 s @ n=1000 (capped) | ~1.7 (the known O(candidates × functions) residual, now isolated) |
+| `enum_churn`   | 1.0 s @ n=4000 | ~1.0 (linear, after fix #8 — was ≈1.8) |
+| `type_churn`   | 1.13 s @ n=4000 | ~1.6 (`_is_pointer_only_type` O(candidates × functions), regex per pair) |
+| `opaque_filter`| 0.45 s @ n=1000 | ~1.2 (linear at tracked sizes after fix #8) |
 | `rename_churn` | 2.1 s @ n=1000, capped above | bounded |
 | `versioned_rename_churn` | 0.87 s @ n=8000 (16 k changes) | ~1.1–1.2 (mild) |
 | `nested_types` | 0.70 s @ n=400 | inherent for deep chains |
@@ -185,9 +188,9 @@ peak-memory tracking and PR-vs-base drift detection. Current status:
 | `compare()` post-processing | ✅ covered | Original PR #331 scenarios. |
 | Suppression audit | ✅ covered | `suppression_audit` scenario + `slow` test. O(rules × findings); linear in findings for a fixed ruleset. |
 | HTML / SARIF / JUnit reporting | ✅ covered | `report_html` / `report_sarif` / `report_junit` scenarios + `slow` tests; all linear. (`to_markdown`/`to_json` already guarded.) |
-| Enum / typedef / union / wide-struct / vtable diffing | ✅ covered | `enum_churn`, `typedef_churn`, `union_churn`, `wide_struct`, `vtable_churn`. Sweeping `typedef`/`union`/`vtable` across sizes (the original table only sampled n=500, so no exponent was ever computed) exposed a genuine **≈O(n²)** in the affected-symbol enrichment — see fix #8; they are linear after it. (`enum_churn` remains mildly super-linear ≈1.7.) |
+| Enum / typedef / union / wide-struct / vtable diffing | ✅ covered | `enum_churn`, `typedef_churn`, `union_churn`, `wide_struct`, `vtable_churn`. Sweeping `typedef`/`union`/`vtable`/`enum` across sizes (the original table only sampled n=500, so no exponent was ever computed) exposed a genuine **≈O(n²)** in the affected-symbol enrichment — see fix #8; all four are linear after it, and `opaque_filter` dropped from ≈1.7 to ≈1.2 as a side effect (its cost was the enrichment, not `_filter_opaque_size_changes`). |
 | PE/COFF & Mach-O diff arms | ✅ covered | `pe_churn` / `macho_churn` build `pe=`/`macho=` snapshots so `diff_platform`'s PE/Mach-O detectors run. |
-| Opaque-handle size filter | ✅ covered | `opaque_filter` isolates the known O(candidates × functions) residual #331 left in place (tail exponent ≈1.7) — now tracked directly rather than incidentally via `type_churn`. |
+| Opaque-handle pointer-only check | ✅ covered | The O(candidates × functions) residual is `_is_pointer_only_type` (regex per pair), surfaced by `type_churn` (≈1.6). `opaque_filter` itself is linear at tracked sizes after fix #8. |
 | **Versioned-symbol-scheme collapse (ICU/OpenSSL)** | ✅ covered | `versioned_rename_churn` reproduces the field-eval P08 ICU 75→78 shape (16 k removed/added churn findings + the scheme-collapse pass). Profiling it surfaced a per-finding name re-tokenization in the namespace detectors (`diff_namespaces._segments`), now fast-pathed for plain names. ~1.1–1.2 tail exponent; the residual is the post-processing detector fan-out, not the scheme recogniser. |
 | Severity categorization | ✅ covered | `severity` scenario over `categorize_changes`; linear. |
 | Peak memory (all scenarios) | ✅ covered | `tracemalloc` `peak_mb` column + `--max-memory-mb` gate (cold-cache pass). |
