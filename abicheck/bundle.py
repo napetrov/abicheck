@@ -1548,10 +1548,17 @@ def _import_is_external(
     An import is external — and therefore can never be a *dropped
     intra-bundle* dependency — when either:
 
-    1. its required symbol version is a system/toolchain namespace
-       (``GLIBC_``, ``GLIBCXX_``, ``CXXABI_``, ``GCC_``, …), or
-    2. that required version is declared (via ``.gnu.version_r``) against a
-       DT_NEEDED soname that does **not** resolve inside the bundle.
+    1. its required version is declared (via ``.gnu.version_r``) against a
+       DT_NEEDED soname that does **not** resolve inside the bundle, or
+    2. (fallback, no bundle-sibling verneed) its required symbol version is a
+       system/toolchain namespace (``GLIBC_``, ``GLIBCXX_``, ``CXXABI_``, …).
+
+    **Provider evidence takes precedence over the system-namespace shortcut.**
+    A release may itself vendor a runtime DSO (``libgomp.so.1``,
+    ``libstdc++.so.6``); if a sibling's verneed ties a ``GOMP_4.0``/``GLIBCXX_*``
+    label to that *bundled* soname and the vendored runtime dropped the export,
+    the sibling is unresolved at load — so the bundle-sibling check must run
+    before the system-prefix shortcut, otherwise the finding would be hidden.
 
     Unversioned imports (``version == ""``) return ``False`` so an
     unversioned internal sibling import still produces a finding. This is the
@@ -1561,22 +1568,15 @@ def _import_is_external(
     version = consumer.version
     if not version:
         return False
-    if _looks_system_version(version):
-        return True
-    # Provider evidence: which library does .gnu.version_r say this version
-    # comes from? GNU version names are scoped per verneed provider, not
-    # globally unique — the same label (e.g. ``FOO_1.0``) can be required from
-    # both an intra-bundle sibling and an external soname. We only treat the
-    # import as external when the version is required from an external soname
-    # *and not also* from an intra-bundle sibling. If any intra sibling
-    # advertises the label, the provider evidence is ambiguous (the import may
-    # be the dropped sibling symbol) so we keep the finding.
-    #
-    # ``is_intra_bundle_provider`` matches by exact soname *and* filename stem,
-    # so a SONAME-major bump (``libcore.so.1`` → ``libcore.so.2``) where a
-    # sibling still NEEDs the old soname is still recognised as intra-bundle —
-    # otherwise dropping ``core_op@LIBCORE_1.0`` across the bump would be hidden
-    # even though the release fails to load.
+    # Provider evidence first. GNU version names are scoped per verneed
+    # provider, not globally unique — the same label (e.g. ``FOO_1.0`` or even
+    # ``GOMP_4.0``) can be required from both a bundle sibling and an external
+    # soname. ``is_intra_bundle_provider`` matches by exact soname *and*
+    # filename stem, so a SONAME-major bump (``libcore.so.1`` → ``libcore.so.2``)
+    # where a sibling still NEEDs the old soname is still recognised as
+    # intra-bundle. If any verneed soname for this label resolves inside the
+    # bundle the import is intra (keep the finding); only when every verneed
+    # soname for the label resolves *outside* the bundle is it external.
     external_match = False
     for soname, versions in consumer_meta.versions_required.items():
         if version not in versions:
@@ -1584,7 +1584,12 @@ def _import_is_external(
         if snapshot.is_intra_bundle_provider(soname):
             return False  # required from a bundle sibling — keep the finding
         external_match = True
-    return external_match
+    if external_match:
+        return True
+    # No verneed evidence ties this label to a bundle sibling (or none was
+    # parsed). Fall back to the system-namespace heuristic for the common
+    # libc/libstdc++/libgomp case where the runtime is *not* vendored.
+    return _looks_system_version(version)
 
 
 _ELF_MAGIC = b"\x7fELF"

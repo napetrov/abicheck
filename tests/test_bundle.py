@@ -419,6 +419,56 @@ class TestIntraDepRemoved:
         assert len(intra_removed) == 1
         assert intra_removed[0].symbol == "core_op"
 
+    def test_vendored_runtime_dropping_system_versioned_symbol_still_fires(
+        self,
+    ) -> None:
+        # The release VENDORS the runtime DSO (libgomp.so.1) and a sibling's
+        # verneed ties GOMP_4.0 to that bundled soname. If the vendored runtime
+        # drops the export the sibling is unresolved at load — provider
+        # evidence must win over the system-version-namespace shortcut, which
+        # would otherwise classify GOMP_parallel@GOMP_4.0 as external.
+        new = _snapshot(
+            {
+                "libgomp.so": _meta(soname="libgomp.so.1", exports=["other_gomp"]),
+                "libalgo.so": _meta(
+                    soname="libalgo.so.1",
+                    needed=["libgomp.so.1"],
+                    imports=["GOMP_parallel"],
+                    import_versions={"GOMP_parallel": "GOMP_4.0"},
+                    versions_required={"libgomp.so.1": ["GOMP_4.0"]},
+                ),
+            }
+        )
+        result = compare_bundle(new, new, per_library_results=[])
+        intra_removed = [
+            f
+            for f in result.bundle_findings
+            if f.kind == ChangeKind.BUNDLE_INTRA_DEP_REMOVED
+        ]
+        assert len(intra_removed) == 1
+        assert intra_removed[0].symbol == "GOMP_parallel"
+
+    def test_non_vendored_system_version_with_external_verneed_skipped(self) -> None:
+        # Counterpart: the runtime is NOT vendored — GOMP_4.0 verneed points at
+        # an external libgomp.so.1, so the import stays external (no finding).
+        new = _snapshot(
+            {
+                "libcore.so": _meta(soname="libcore.so.1", exports=["dummy"]),
+                "libalgo.so": _meta(
+                    soname="libalgo.so.1",
+                    needed=["libcore.so.1", "libgomp.so.1"],
+                    imports=["GOMP_parallel"],
+                    import_versions={"GOMP_parallel": "GOMP_4.0"},
+                    versions_required={"libgomp.so.1": ["GOMP_4.0"]},
+                ),
+            }
+        )
+        result = compare_bundle(new, new, per_library_results=[])
+        assert not any(
+            f.kind == ChangeKind.BUNDLE_INTRA_DEP_REMOVED
+            for f in result.bundle_findings
+        )
+
 
 # ---------------------------------------------------------------------------
 # bundle_intra_dep_signature_changed
