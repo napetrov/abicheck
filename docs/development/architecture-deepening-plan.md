@@ -423,7 +423,7 @@ parity-changing work last.
 C4  detector auto-discovery        ✅ done (PR #395)
 C9  relocate confidence            ✅ done (PR #395)
 C1  name classification            ✅ done (PR #395)
-C2  report view-model              (big locality win; output-change risk)
+C2  report view-model              ◐ increment-1 done (model + ADR-035; markdown routed, byte-identical)
 C7  CLI → service                  (exit-code-sensitive)
 C3  binary-format registry         (parallelisable; needs integration lane)
 C10 split model.py                 ◐ stage-1 done (name predicates moved)
@@ -443,7 +443,7 @@ parity is contractual and benefits from a stabilised shared layer underneath it.
 | ID | Title | Status | PR |
 |----|-------|--------|----|
 | C1 | Name classification module | Done | #395 |
-| C2 | Report view-model | Proposed | — |
+| C2 | Report view-model (increment-1: ReportModel + canonical severity, ADR-035) | Increment-1 done | #395 |
 | C3 | Binary-format handler registry | Proposed | — |
 | C4 | Detector auto-discovery | Done | #395 |
 | C5 | Synthetic detectors → registry | Deferred (not a clean win) | — |
