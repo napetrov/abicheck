@@ -24,7 +24,18 @@ from .checker_policy import HasKind
 
 # Re-exported under its historical name; the implementation (and the prefix
 # tables it relies on) now lives in the canonical name_classification module.
+# Listed in __all__ so the re-export is explicit (not an implicit re-export).
 from .name_classification import symbol_origin as classify_symbol_origin
+
+__all__ = [
+    "classify_symbol_origin",
+    "SurfaceBreakdown",
+    "surface_breakdown",
+    "ReportSummary",
+    "CompatibilityMetrics",
+    "compatibility_metrics",
+    "build_summary",
+]
 
 
 @dataclass(frozen=True)

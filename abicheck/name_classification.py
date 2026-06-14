@@ -46,6 +46,21 @@ checks and is left as a follow-up.
 
 from __future__ import annotations
 
+__all__ = [
+    "ITANIUM_RTTI_PREFIXES",
+    "RTTI_DATA_PREFIXES",
+    "LOCAL_RTTI_PREFIXES",
+    "INTERNAL_NAMESPACE_COMPONENTS",
+    "is_rtti_symbol",
+    "is_local_rtti_symbol",
+    "has_internal_namespace_component",
+    "symbol_origin",
+]
+
+# This module has no intra-package imports on purpose: it sits at the bottom of
+# the dependency graph so any module can import it without risking a cycle. Keep
+# it dependency-free.
+
 # Generic RTTI artifact prefixes (Itanium ABI): vtables, VTT, typeinfo
 # objects/names, and virtual/covariant thunks. Churn in these mirrors churn in
 # their owning type rather than representing independent public-API breaks.
@@ -83,7 +98,12 @@ INTERNAL_NAMESPACE_COMPONENTS: tuple[str, ...] = (
 
 
 def is_rtti_symbol(name: str) -> bool:
-    """Return True if *name* is a generic Itanium RTTI artifact."""
+    """Return True if *name* is a generic Itanium RTTI artifact.
+
+    Used by :func:`symbol_origin`; also exposed as a building block for the
+    planned report view-model (C2) and the ``model.py`` split (C10), which will
+    route their RTTI checks through this module rather than re-deriving prefixes.
+    """
     return name.startswith(ITANIUM_RTTI_PREFIXES)
 
 
@@ -93,7 +113,11 @@ def is_local_rtti_symbol(name: str) -> bool:
 
 
 def has_internal_namespace_component(name: str) -> bool:
-    """Return True if *name* contains a conventional internal-namespace component."""
+    """Return True if *name* contains a conventional internal-namespace component.
+
+    Used by :func:`symbol_origin`; also exposed as a building block for the
+    planned report view-model (C2) and the ``model.py`` split (C10).
+    """
     return any(comp in name for comp in INTERNAL_NAMESPACE_COMPONENTS)
 
 
