@@ -312,9 +312,12 @@ def _diff_toolchains(old: BuildEvidence, new: BuildEvidence) -> list[Change]:
     # DW_AT_producer carries no language token, so parse_producer yields
     # language="" and the toolchain keys by id, while gcc keys by "C"/"CXX".
     # The per-language loop above then shares no key and misses an obvious
-    # gcc↔clang swap. When no per-language drift fired but the compiler
-    # *identities* differ, surface the change once.
-    if not changes:
+    # gcc↔clang swap. Gate strictly to that case: only when the two sides share
+    # *no* language key at all. If any key overlaps, the per-language loop is
+    # authoritative and a record present on only one side is missing evidence,
+    # not a swap (Codex P2). When no key is shared and the compiler *identities*
+    # differ, surface the change once.
+    if not changes and not (set(old_fp) & set(new_fp)):
         old_c = _toolchain_compiler_versions(old)
         new_c = _toolchain_compiler_versions(new)
         # A compiler-id swap (gcc↔clang) is unambiguous drift. A version change

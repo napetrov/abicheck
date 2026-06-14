@@ -332,6 +332,20 @@ def test_no_soname_note_when_soname_unchanged():
     assert "relink" not in adv.description
 
 
+def test_collapse_with_soname_bump_does_not_call_it_unnecessary():
+    # Codex P2: collapsing the rename pairs makes has_breaking read False, which
+    # would let the SONAME-bump policy emit SONAME_BUMP_UNNECESSARY for the very
+    # bump the relink advisory says is required. The two must stay consistent: a
+    # collapsed versioned scheme justifies the bump.
+    old = _snap_with_soname("75.1", "75", soname="libicui18n.so.75")
+    new = _snap_with_soname("78.3", "78", soname="libicui18n.so.78")
+    result = compare(old, new, collapse_versioned_symbols=True)
+    kinds = {(c.kind.value if hasattr(c.kind, "value") else c.kind) for c in result.changes}
+    adv = _versioned_advisory(result)
+    assert adv is not None and "relink" in adv.description
+    assert "soname_bump_unnecessary" not in kinds, kinds
+
+
 def test_no_soname_note_inferred_from_library_name_without_elf():
     # Codex P2: differently-named old/new snapshots with NO ELF metadata must not
     # manufacture a SONAME-bump/relink note from the library *name* — that name is

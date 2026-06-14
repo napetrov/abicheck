@@ -508,6 +508,19 @@ def test_diff_no_toolchain_drift_for_unknown_compiler_id():
     assert not any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
 
 
+def test_diff_no_toolchain_drift_for_partial_evidence_with_shared_key():
+    # old has C=GNU + CXX=Clang; new has only C=GNU. The shared C toolchain is
+    # identical and the missing CXX record is absent evidence, not a swap — the
+    # no-shared-key fallback must not fire (Codex P2).
+    old = BuildEvidence(toolchains=[
+        Toolchain(id="c", compiler_id="GNU", version="13", language="C"),
+        Toolchain(id="cxx", compiler_id="Clang", version="18", language="CXX")])
+    new = BuildEvidence(toolchains=[
+        Toolchain(id="c", compiler_id="GNU", version="13", language="C")])
+    changes = diff_build_evidence(old, new)
+    assert not any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
+
+
 def test_diff_emits_toolchain_change_for_sysroot_option():
     old = BuildEvidence(build_options=[BuildOption("sysroot", "/a", abi_relevant=True)])
     new = BuildEvidence(build_options=[BuildOption("sysroot", "/b", abi_relevant=True)])
