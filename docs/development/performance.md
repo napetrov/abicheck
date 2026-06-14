@@ -74,6 +74,7 @@ reporting stages — see [Coverage beyond `compare()`](#coverage-beyond-compare)
 | `macho_churn` | `compare()` | Mach-O export diffing (`diff_platform` Mach-O arm) |
 | `var_churn` | `compare()` | Public-surface classification |
 | `rename_churn` | `compare()` | ELF-only fingerprint rename matching |
+| `versioned_rename_churn` | `compare()` | Versioned-symbol-scheme collapse + churn (ICU/OpenSSL `u_*_NN`) |
 | `nested_types` | `compare()` | Transitive type-ancestor closure |
 | `opaque_filter` | `compare()` | Opaque-handle size filter (the known O(candidates × functions) residual) |
 | `suppression_audit` | `SuppressionList.audit()` | Rule-vs-finding matching (O(rules × findings)) |
@@ -133,6 +134,7 @@ reporting stages (see [Coverage beyond `compare()`](#coverage-beyond-compare)).
 | `enum_churn`   | 1.76 s @ n=2000 | ~1.7 (enum diff residual) |
 | `opaque_filter`| 1.97 s @ n=1000 (capped) | ~1.7 (the known O(candidates × functions) residual, now isolated) |
 | `rename_churn` | 2.1 s @ n=1000, capped above | bounded |
+| `versioned_rename_churn` | 0.87 s @ n=8000 (16 k changes) | ~1.1–1.2 (mild) |
 | `nested_types` | 0.70 s @ n=400 | inherent for deep chains |
 | `suppression_audit` | 0.09 s @ n=2000 (fixed 40-rule set) | ~1.0 (linear in findings) |
 | `severity` | <0.01 s @ n=1000 | ~1.0 (linear) |
@@ -184,6 +186,7 @@ peak-memory tracking and PR-vs-base drift detection. Current status:
 | Enum / typedef / union / wide-struct / vtable diffing | ✅ covered | `enum_churn`, `typedef_churn`, `union_churn`, `wide_struct`, `vtable_churn`. (`enum_churn` is mildly super-linear ≈1.7; the rest are linear.) |
 | PE/COFF & Mach-O diff arms | ✅ covered | `pe_churn` / `macho_churn` build `pe=`/`macho=` snapshots so `diff_platform`'s PE/Mach-O detectors run. |
 | Opaque-handle size filter | ✅ covered | `opaque_filter` isolates the known O(candidates × functions) residual #331 left in place (tail exponent ≈1.7) — now tracked directly rather than incidentally via `type_churn`. |
+| **Versioned-symbol-scheme collapse (ICU/OpenSSL)** | ✅ covered | `versioned_rename_churn` reproduces the field-eval P08 ICU 75→78 shape (16 k removed/added churn findings + the scheme-collapse pass). Profiling it surfaced a per-finding name re-tokenization in the namespace detectors (`diff_namespaces._segments`), now fast-pathed for plain names. ~1.1–1.2 tail exponent; the residual is the post-processing detector fan-out, not the scheme recogniser. |
 | Severity categorization | ✅ covered | `severity` scenario over `categorize_changes`; linear. |
 | Peak memory (all scenarios) | ✅ covered | `tracemalloc` `peak_mb` column + `--max-memory-mb` gate (cold-cache pass). |
 | **Historical / PR-vs-base regression** | ✅ covered | `--baseline`/`--regress-tolerance` + the `regression` workflow job measure the base branch and PR head on the same runner and flag scenarios that got slower by more than the tolerance — catching *gradual* drift the per-run exponent misses. See [Baseline regression](#baseline-regression). |
