@@ -120,6 +120,158 @@ authority rule (L0–L2 stay authoritative for `BREAKING`).
   + protocol design). Recommended order is 1 → 2 → 3 → 4; Phase 4's plugin is an
   optimization and can trail.
 
+## API & CLI surface (proposed)
+
+Concrete definition of the new functionality. All additive; nothing here changes
+existing `dump`/`compare`/`collect` signatures.
+
+### CLI — `abicheck scan`
+
+One orchestrator command (new `cli_scan.py`). Three modes via the existing
+exit-code contract (ADR-009); `scan` with no source flags degrades to the
+always-on tier over L0–L2.
+
+```text
+abicheck scan [OPTIONS]
+
+Inputs
+  --binary PATH                 library/artifact to scan (repeatable for bundles)
+  --headers PATH                public header file or dir (repeatable)
+  --public-header[-dir] PATH    provenance roots (ADR-015), passthrough to dump
+  --compile-db PATH             compile_commands.json → unlocks L3 + targeted L4/L5
+  --build-info PATH             build dir / pack dir (passthrough to collect)
+  --sources PATH                source tree → inline L3/L4/L5
+  --baseline REF|PATH           baseline snapshot/registry ref to diff against
+  --inputs DIR                  ingest a Flow-2 abicheck_inputs/ pack (D5)
+
+Scope / escalation
+  --mode [pr|pr-deep|baseline|audit]      default pr (D9 asymmetry)
+  --source-scan-level [S0..S6|auto]       cap/force depth (auto = risk-driven)
+  --changed-path PATH                     repeatable; seeds risk score + POI (D7)
+  --since GITREF                          derive changed paths from a git range
+  --budget DURATION   (e.g. 15m)          wall-clock ceiling
+  --max-tus N                             targeted-AST TU cap
+  --partial-ok / --no-partial-ok          default on; partial result is success
+  --estimate                              dry-run: print per-level cost, do nothing
+  --audit                                 single-release hygiene lint, no baseline (D8)
+
+Policy / output
+  --risk-rules PATH               override risk_rules block
+  --crosscheck KEY=LEVEL          repeatable (info|warning|error) (D4/D6)
+  --format [text|json|markdown|sarif|junit]
+  --report PATH
+  -o, --output PATH               write merged snapshot/result
+```
+
+Behaviour: `scan` resolves inputs → `dump`s L0–L2 → runs the always-on tier →
+computes a risk score + POI set → escalates L3/L4/L5 within budget → (if
+`--baseline`) `compare`s → emits one `ScanResult`. `--estimate` stops after the
+cost probe; `--audit` runs intra-version (ignores `--baseline`).
+
+Convenience subcommands (thin wrappers, same engine):
+`abicheck scan estimate …` ≡ `--estimate`; `abicheck scan audit …` ≡ `--audit`.
+
+### Python API — `abicheck/service.py`
+
+```python
+@dataclass(frozen=True)
+class ScanRequest:
+    binaries: list[Path]
+    headers: list[Path] = field(default_factory=list)
+    compile_db: Path | None = None
+    sources: Path | None = None
+    inputs_pack: Path | None = None
+    baseline: str | Path | None = None
+    mode: ScanMode = ScanMode.PR            # PR | PR_DEEP | BASELINE | AUDIT
+    level_cap: SourceScanLevel | None = None  # S0..S6; None = auto
+    changed_paths: list[str] = field(default_factory=list)
+    budget: Budget = Budget()               # total_timeout, max_tus, partial_ok
+    risk_rules: RiskRules | None = None
+    crosschecks: dict[str, Severity] = field(default_factory=dict)
+
+@dataclass(frozen=True)
+class CostEstimate:
+    level: SourceScanLevel
+    tus: int
+    est_seconds: float
+    cache_hit_rate: float
+    note: str
+
+@dataclass(frozen=True)
+class LevelResult:
+    level: SourceScanLevel
+    coverage: LayerCoverage            # reuse buildsource.model
+    facts: int
+    elapsed_s: float
+    skipped_reason: str | None = None
+
+@dataclass(frozen=True)
+class ScanResult:
+    diff: DiffResult | None            # None in --audit (no baseline)
+    findings: list[DiffResult]         # incl. new crosscheck ChangeKinds (D4)
+    levels: list[LevelResult]          # per-tier coverage (D3/D10)
+    confidence: dict[str, str]         # provider-agreement matrix (§6.8)
+    estimate: list[CostEstimate]       # projected vs. actual
+    verdict: Verdict
+    exit_code: int
+
+def run_scan(req: ScanRequest) -> ScanResult: ...
+def estimate_scan(req: ScanRequest) -> list[CostEstimate]: ...   # no scanning
+def run_audit(req: ScanRequest) -> ScanResult: ...               # mode=AUDIT
+```
+
+### Per-level provider protocol — `abicheck/buildsource/`
+
+Every level (`pattern_scan`, `preprocessor`, L3 build, L4 replay, L5 graph,
+`crosscheck`) implements one interface, modelled on the ADR-032 `DataExtractor`,
+so levels are independently runnable (ADR-033 D1) and external/build-emitted
+providers (D5) drop in unchanged:
+
+```python
+class SourceLevelProvider(Protocol):
+    level: SourceScanLevel
+    def capabilities(self) -> ProviderCapabilities: ...
+    def estimate(self, ctx: ScanContext) -> CostEstimate: ...
+    def run(self, ctx: ScanContext, poi: PointsOfInterest) -> LevelFacts: ...
+
+@dataclass(frozen=True)
+class ScanContext:                      # shared, read-only inputs to every level
+    snapshot: AbiSnapshot               # L0–L2 already parsed
+    compile_db: Path | None
+    changed_paths: list[str]
+    budget: Budget
+    cache: SourceFactCache
+```
+
+`PointsOfInterest` (new `buildsource/poi.py`) is the D7 work-list — a set of
+`(symbol|entity|tu, reason)` computed from L0/L1/L2 deltas + risk score, consumed
+by `source_replay` scope selection and `crosscheck`.
+
+### MCP tools — `abicheck/mcp_server.py`
+
+Three agent tools wrapping the service API (ADR-021b security model):
+`abicheck_scan(request) -> ScanResult`, `abicheck_audit(request) -> ScanResult`,
+`abicheck_estimate(request) -> [CostEstimate]`. Same `ScanRequest`/`ScanResult`
+schema as the Python API — one contract, three front-ends (CLI, MCP, library).
+
+### Config — `.abicheck.yml` (additive)
+
+```yaml
+source:
+  budgets: { total_timeout: 15m, max_targeted_tus: 80, partial_ok: true }
+  levels:  { S0: always, S1: always, S2: always, S3: always,
+             S4: triggered, S5: triggered, S6: budgeted }
+risk_rules:
+  public_headers: { paths: ["include/**","public/**"], weight: 50 }
+  build_abi_flags:{ paths: ["CMakeLists.txt","cmake/**","BUILD"], weight: 40 }
+  docs_only:      { paths: ["docs/**","*.md"], weight: -100 }
+crosschecks:
+  exported_not_public: warning
+  header_build_context_mismatch: error
+  private_header_leak: warning
+  odr_type_variant: error
+```
+
 ## Use-case tracking
 
 Six new `planned` entries are registered in `usecase-registry.yaml` under gap
