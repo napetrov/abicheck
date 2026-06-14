@@ -299,7 +299,7 @@ source:
              source: triggered, graph: budgeted } # L4 replay, L5 graph
 risk_rules:
   public_headers: { paths: ["include/**","public/**"], weight: 50 }
-  build_abi_flags:{ paths: ["CMakeLists.txt","cmake/**","BUILD"], weight: 40 }
+  build_abi_flags: { paths: ["CMakeLists.txt","cmake/**","BUILD"], weight: 40 }
   docs_only:      { paths: ["docs/**","*.md"], weight: -100 }
 crosschecks:
   exported_not_public: warning
