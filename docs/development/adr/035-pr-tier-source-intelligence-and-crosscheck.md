@@ -281,6 +281,11 @@ a finding after the fact, the POI set is computed up front and handed to
 effect: a large project pays L4/L5 cost only on the handful of entities the
 binary/header evidence already flagged.
 
+**Floor:** the POI set **always** includes the directly-changed files/TUs
+unconditionally — the risk score only *adds* further candidates, it can never
+*remove* a changed TU. So a mis-weighted `risk_rules` profile (D3) can broaden
+the scan but cannot drop an obviously-relevant changed translation unit.
+
 ### D8. Single-release audit mode (no baseline required)
 
 The D2 pattern facts and the D4 cross-checks are **intra-version** — they need
