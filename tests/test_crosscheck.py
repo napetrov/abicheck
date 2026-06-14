@@ -245,6 +245,26 @@ def test_exported_not_public_skips_msvc_constructor_exports():
     assert _findings_of(res, ChangeKind.EXPORTED_NOT_PUBLIC) == []
 
 
+def test_exported_not_public_skips_rtti_and_vtable_exports():
+    # A public polymorphic class exports _ZTV/_ZTI/_ZTS; castxml records it as a
+    # RecordType (not a Function/Variable), so these compiler artifacts must be
+    # exempt, not reported as undocumented (Codex review).
+    snap = _snap(elf=_elf("_Z3fooi", "_ZTV6Widget", "_ZTI6Widget", "_ZTS6Widget"))
+    snap.functions = [
+        Function(
+            name="foo",
+            mangled="_Z3fooi",
+            return_type="void",
+            origin=ScopeOrigin.PUBLIC_HEADER,
+        ),
+    ]
+    snap.types = [
+        RecordType(name="Widget", kind="struct", origin=ScopeOrigin.PUBLIC_HEADER),
+    ]
+    res = run_crosschecks(snap)
+    assert _findings_of(res, ChangeKind.EXPORTED_NOT_PUBLIC) == []
+
+
 def test_exported_not_public_clean_when_everything_declared():
     snap = _snap(elf=_elf("_Z3fooi"))
     snap.functions = [
@@ -410,6 +430,25 @@ def test_public_not_exported_skips_header_constants():
             mangled="kMax",
             type="int",
             value="42",
+            is_const=True,
+            origin=ScopeOrigin.PUBLIC_HEADER,
+        ),
+    ]
+    res = run_crosschecks(snap)
+    assert _findings_of(res, ChangeKind.PUBLIC_NOT_EXPORTED) == []
+
+
+def test_public_not_exported_skips_parsed_const_constant_no_value():
+    # castxml stores a const/constexpr initializer in snapshot.constants, leaving
+    # Variable.value None — the constant still emits no symbol and must not be
+    # flagged as a missing export (Codex review).
+    snap = _snap(elf=_elf())
+    snap.variables = [
+        Variable(
+            name="kMax",
+            mangled="_ZL4kMax",
+            type="int",
+            value=None,
             is_const=True,
             origin=ScopeOrigin.PUBLIC_HEADER,
         ),

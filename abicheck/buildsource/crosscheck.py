@@ -238,7 +238,7 @@ def _check_exported_not_public(
 
     findings: list[Change] = []
     for sym in sorted(exported):
-        if sym in public_syms or _is_cxx_structor(sym):
+        if sym in public_syms or _is_cxx_implementation_symbol(sym):
             continue
         decl: Function | Variable | None = decl_by_sym.get(sym)
         where = ""
@@ -515,6 +515,23 @@ _MANGLE_SIGILS = ("_Z", "?")
 #: encodings — used to skip structor exports castxml cannot reliably mangle.
 _STRUCTOR_RE = re.compile(r"_ZN.*?[CD][0-4]E")
 
+#: Compiler-generated C++ ABI artifacts that belong to a class, not to a
+#: free function/variable: vtables/typeinfo/VTT/thunks (Itanium ``_ZTV``/``_ZTI``/
+#: ``_ZTS``/``_ZTT``/``_ZTh``/``_ZTv``/``_ZTc``) and MSVC ``??_`` vftable/vbtable/
+#: RTTI/deleting-dtor names. castxml records the owning class as a ``RecordType``
+#: (not a ``Function``/``Variable``), so these would never be in the documented
+#: symbol set and must be exempted from ``exported_not_public`` (Codex review).
+_CXX_ARTIFACT_PREFIXES = (
+    "_ZTV",
+    "_ZTI",
+    "_ZTS",
+    "_ZTT",
+    "_ZTh",
+    "_ZTv",
+    "_ZTc",
+    "??_",
+)
+
 
 def _bare_name_exports(decl: Function | Variable) -> bool:
     """Whether *decl* legitimately exports under its bare (un-mangled) name.
@@ -538,14 +555,17 @@ def _looks_mangled(decl: Function | Variable) -> bool:
     return decl.mangled.startswith(_MANGLE_SIGILS)
 
 
-def _is_cxx_structor(symbol: str) -> bool:
-    """Whether *symbol* is a C++ constructor/destructor mangling.
+def _is_cxx_implementation_symbol(symbol: str) -> bool:
+    """Whether *symbol* is a compiler-generated C++ class artifact, not free surface.
 
-    Covers both Itanium (``_ZN…C1Ev`` / ``…D1Ev``) and MSVC (``??0…`` ctor /
-    ``??1…`` dtor) spellings, since castxml leaves members unmangled on the
-    header side under both ABIs and the structor would not match a public class's
-    decls — flagging it would false-positive (Codex review).
+    Covers constructors/destructors (Itanium ``_ZN…C1Ev``/``…D1Ev``, MSVC
+    ``??0…``/``??1…``) — which castxml leaves unmangled on the header side — and
+    vtable/typeinfo/thunk artifacts (``_CXX_ARTIFACT_PREFIXES``), which belong to
+    a ``RecordType`` rather than a function/variable. Both classes of symbol would
+    otherwise false-positive in ``exported_not_public`` (Codex review).
     """
+    if symbol.startswith(_CXX_ARTIFACT_PREFIXES):
+        return True
     if symbol.startswith("_ZN") and _STRUCTOR_RE.match(symbol):
         return True
     return symbol.startswith(("??0", "??1"))
@@ -635,10 +655,14 @@ def _has_export_obligation(fn: Function) -> bool:
 def _var_has_export_obligation(var: Variable) -> bool:
     """Whether *var* is genuine extern data that must export a symbol.
 
-    Header constants (a ``const``/``constexpr`` variable carrying a compile-time
-    ``value``) are inlined and emit no symbol, so they are excluded. Not gated on
-    ``visibility`` — same export-table-derived-visibility reason as
-    :func:`_has_export_obligation` (Codex review).
+    ``const``/``constexpr`` header constants are excluded: at namespace scope a
+    ``const`` variable has internal linkage in C++ (and a ``constexpr`` is
+    ``const``), so it is inlined into consumers and emits no exported symbol. The
+    exclusion keys off ``is_const`` alone — castxml stores the initializer in
+    ``snapshot.constants`` rather than ``Variable.value``, so ``value`` is often
+    ``None`` for a real parsed constant and must not be required (Codex review).
+    Not gated on ``visibility`` — same export-table-derived-visibility reason as
+    :func:`_has_export_obligation`.
     """
     if var.access != AccessLevel.PUBLIC:
         return False
@@ -648,7 +672,7 @@ def _var_has_export_obligation(var: Variable) -> bool:
         return False
     if not _looks_mangled(var):
         return False
-    if var.is_const and var.value is not None:
+    if var.is_const:
         return False
     if _looks_templated(var.name):
         return False
