@@ -175,8 +175,9 @@ not the basic flow.
                                        deterministic. auto = risk-driven (opt-in,
                                        local/dev). See the level table below.
   --depth [headers|build|source|full|graph]
-                                       same target expressed on the L-axis
-                                       (1:1 with --source-method); pick one.
+                                       coarse L-axis selector → representative S
+                                       (lossy: can't reach S2/S3). --source-method
+                                       is precise and wins if both given.
   --since GITREF                       focus the scan on files changed vs a git
                                        ref (e.g. origin/main); else scans broadly
   --changed-path PATH                  same focusing, listed by hand (repeatable)
@@ -242,31 +243,36 @@ depth (S0…S6) was reached and into which L-layer it landed; never a bare
 ### Selecting the level: `--source-method` (S) and/or `--depth` (L)
 
 The level is an **explicit, exact target you choose** — not a ceiling, not
-auto-picked. Pick whichever axis you think in; they describe the same run:
+auto-picked. Two related knobs, **not 1:1**:
 
 ```text
-  --source-method [s0|s1|s2|s3|s4|s5|s6]   run source analysis AT this method
-  --depth [headers|build|source|full|graph]   express the target as an L ceiling
+  --source-method [s0|s1|s2|s3|s4|s5|s6]   precise: run source analysis AT this method
+  --depth [headers|build|source|full|graph]   coarse: pick by L-layer (maps to a
+                                               representative S; can't express every S)
 ```
 
-`--source-method sN` means *reach level N* for the in-scope files — deterministic:
-same inputs → same scan, every CI run. It is not a "max that may do less"; it
-always reaches N (the only way it falls short is a genuinely missing tool, e.g. no
-clang, which is **reported**, not silently downgraded). The two knobs map 1:1, so
-you never need both:
+`--source-method sN` is the **precise** knob — *reach exactly method N* for the
+in-scope files, deterministic (same inputs → same scan). It is not a "max that may
+do less"; it always reaches N (only a genuinely missing tool, e.g. no clang, makes
+it fall short, and that is **reported**, not silently downgraded).
 
-| `--source-method` | equivalent `--depth` | populates (L) |
-|---|---|---|
-| s0 | (classify only) | — |
-| s1 | build | L3 |
-| s2 | build (+macros/includes) | L3, L5 structural |
-| s3 | (pre-scan) | pre-scan facts |
-| s4 | graph | L5 semantic edges |
-| s5 | source | L4 (scoped) + L5 edges |
-| s6 | full | L4 full-scope |
+`--depth` is a **coarse convenience** for users who think in evidence layers. The
+S→L map is **lossy**, so `--depth` resolves to a *representative* S per layer and
+**cannot reach some methods**: `--depth build` runs S1 (not S2 — preprocessor
+macros/includes), and S3 (lexical pre-scan, always on anyway) has no `--depth`
+form. To pin S2 or force S3 you must use `--source-method`.
 
-If both are given and disagree, the engine takes the **higher** (more evidence),
-deterministically — never the lower. There is no `min()`/cap behaviour.
+| If you pass… | runs S | populates (L) | precise S only via `--source-method`? |
+|---|---|---|---|
+| `--depth headers` | — | L2 | — |
+| `--depth build` | S1 | L3 | S2 needs `--source-method s2` |
+| `--depth graph` | S4 | L5 edges | — |
+| `--depth source` | S5 | L4 scoped + L5 edges | — |
+| `--depth full` | S6 | L4 full-scope | — |
+| `--source-method s0..s6` | exactly that | per S | this *is* the precise knob |
+
+`--source-method` is authoritative: if both are given, it wins (it can express
+things `--depth` cannot). There is no `min()`/cap behaviour.
 
 ### Determinism for CI (no time-bound, no auto by default)
 
@@ -296,9 +302,10 @@ class ScanRequest:
     inputs_pack: Path | None = None
     baseline: str | Path | None = None
     mode: ScanMode = ScanMode.PR            # PR | PR_DEEP | BASELINE | AUDIT (fixed preset)
-    # Pick the level on either axis (1:1); SourceMethod.AUTO = opt-in risk-driven.
+    # source_method is precise (S-axis); depth is a coarse L-axis selector (lossy
+    # S→L: can't express S2/S3). source_method wins if both set. AUTO = opt-in.
     source_method: SourceMethod | None = None   # S0..S6 | AUTO; None = use mode preset
-    depth: EvidenceLayer | None = None          # same target on the L-axis; None = use mode preset
+    depth: EvidenceLayer | None = None          # coarse L target; None = use mode preset
     changed_paths: list[str] = field(default_factory=list)
     budget: Budget = Budget()               # total_timeout, max_tus, partial_ok
     risk_rules: RiskRules | None = None
