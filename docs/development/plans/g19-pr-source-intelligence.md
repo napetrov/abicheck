@@ -208,11 +208,11 @@ Convenience subcommands (thin wrappers, same engine):
 
 ### The two axes: L-layers (evidence) and S-methods (source analysis)
 
-Per ADR-035 D1 these are orthogonal. **L** = where the evidence lives + authority
-(the user-facing depth/`--depth` axis). **S** = the six cost-ordered *source-
-analysis methods* that produce L3–L5 evidence (the internal provider ladder + the
-reporting granularity). Source analysis is genuinely six graduated techniques, not
-one AST step; each S-method runs and its output lands in an L-layer:
+Per ADR-035 D1 these are orthogonal, and **both are user-selectable**. **L** =
+where the evidence lives + authority (`--depth`). **S** = the six cost-ordered
+*source-analysis methods* that produce L3–L5 evidence (`--source-method`), also
+the granularity at which coverage is reported. Source analysis is genuinely six
+graduated techniques, not one AST step; each S-method runs and lands in an L-layer:
 
 | Provider | S-method | How collected | Compiler? | Produces (L) | Default PR | Scope |
 |---|---|---|---|---|---|---|
