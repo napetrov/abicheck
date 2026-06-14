@@ -136,3 +136,7 @@ def test_model_reexports_are_the_same_objects() -> None:
     assert model.is_compiler_internal_type is is_compiler_internal_type
     assert model.is_abi_surface_type_name is is_abi_surface_type_name
     assert model.is_cxx_runtime_library is is_cxx_runtime_library
+    # The constant was public on model before C10; keep it importable there.
+    from abicheck.name_classification import COMPILER_INTERNAL_TYPES
+
+    assert model.COMPILER_INTERNAL_TYPES is COMPILER_INTERNAL_TYPES

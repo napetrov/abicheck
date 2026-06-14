@@ -27,6 +27,9 @@ from typing import TYPE_CHECKING
 # re-export idiom mypy recognises, so ``from .model import is_non_abi_surface_type``
 # keeps type-checking cleanly for the ~9 detector modules that use it.
 from .name_classification import (
+    COMPILER_INTERNAL_TYPES as COMPILER_INTERNAL_TYPES,
+)
+from .name_classification import (
     is_abi_surface_type_name as is_abi_surface_type_name,
 )
 from .name_classification import (

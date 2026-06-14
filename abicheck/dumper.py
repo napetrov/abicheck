@@ -996,8 +996,12 @@ def _elf_classify_symbols(
     return exported_dynamic, exported_dynamic_funcs, exported_dynamic_objects, exported_dynamic_tls
 
 
-def _elf_lang_to_profile(lang: str | None) -> str | None:
-    """Convert a ``--lang`` flag value to an internal language-profile string."""
+def _lang_to_profile(lang: str | None) -> str | None:
+    """Convert a ``--lang`` flag value to an internal language-profile string.
+
+    Shared by the ELF/PE/Mach-O snapshot builders (C3) — previously this logic
+    was a helper for ELF but copy-pasted inline for the other two formats.
+    """
     if lang is None:
         return None
     lu = lang.upper()
@@ -1166,7 +1170,7 @@ def _dump_elf(
         _elf_classify_symbols(elf_meta, exported_dynamic, library_name=so_path.name)
     )
     dwarf_meta, dwarf_adv = _resolve_debug_metadata(so_path, debug_format)
-    profile_hint = _elf_lang_to_profile(lang)
+    profile_hint = _lang_to_profile(lang)
 
     # ADR-003: Updated fallback chain
     # --dwarf-only → force DWARF mode regardless of headers
@@ -1256,13 +1260,7 @@ def _dump_macho(
         if exp.name and _is_abi_relevant_symbol(exp.name)
     }
 
-    profile_hint: str | None = None
-    if lang is not None:
-        lu = lang.upper()
-        if lu == "C":
-            profile_hint = "c"
-        elif lu in ("C++", "CPP"):
-            profile_hint = "cpp"
+    profile_hint = _lang_to_profile(lang)
 
     if not headers:
         warnings.warn(
@@ -1382,13 +1380,7 @@ def _dump_pe(
     }
     exported_static: set[str] = set(exported_dynamic)
 
-    profile_hint: str | None = None
-    if lang is not None:
-        lu = lang.upper()
-        if lu == "C":
-            profile_hint = "c"
-        elif lu in ("C++", "CPP"):
-            profile_hint = "cpp"
+    profile_hint = _lang_to_profile(lang)
 
     if not headers:
         warnings.warn(
