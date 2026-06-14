@@ -8,8 +8,8 @@
 
 ## Context
 
-A field proposal ("Source scans в abicheck: уровни глубины, инструменты,
-кросс-чеки и интеграция с билдом") argues that source-aware analysis should
+A field proposal ("Source scans in abicheck: depth levels, tooling,
+cross-checks, and build integration") argues that source-aware analysis should
 not be an all-or-nothing "dump every translation unit's AST" mode run only at
 release/nightly. Instead it proposes a configurable ladder of source scans
 (`S0..S6`) with per-level cost, a risk-scored escalation policy, cross-source
