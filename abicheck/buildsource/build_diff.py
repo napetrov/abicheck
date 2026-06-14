@@ -321,9 +321,11 @@ def _diff_toolchains(old: BuildEvidence, new: BuildEvidence) -> list[Change]:
     if not changes and not shared_keys:
         old_c = _toolchain_compiler_versions(old)
         new_c = _toolchain_compiler_versions(new)
-        # A compiler-id swap (gcc↔clang) is unambiguous drift. A version change
-        # counts only when *both* sides expose a version for a shared compiler —
-        # a missing version is unknown, not a change (Codex P2).
+        # NB: the outer gate keyed on a shared *language* key; here "shared"
+        # means a shared *compiler-id*. A compiler-id swap (gcc↔clang) is
+        # unambiguous drift. A version change counts only when *both* sides
+        # expose a version for a shared compiler — a missing version is unknown,
+        # not a change (Codex P2).
         compiler_swap = bool(old_c) and bool(new_c) and set(old_c) != set(new_c)
         version_drift = any(
             old_c[cid] and new_c[cid] and old_c[cid] != new_c[cid]

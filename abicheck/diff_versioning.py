@@ -301,16 +301,14 @@ def check_soname_bump_policy(
 
     has_breaking = any(_is_effectively_breaking(c) for c in changes)
 
-    # A collapsed versioned-symbol scheme (opt-in preset) reclassifies the
-    # rename churn as compatible and drops it from the kept set, so `has_breaking`
-    # reads False — but the symbols *were* renamed, which is exactly why the
-    # SONAME bumped and dependents must relink. Treat such a bump as justified so
-    # the report never contradicts itself with both a relink advisory and
-    # SONAME_BUMP_UNNECESSARY for the same DT_SONAME (Codex P2).
-    collapsed_versioned_scheme = any(
-        c.kind is ChangeKind.VERSIONED_SYMBOL_SCHEME_DETECTED and c.caused_count > 0
-        for c in changes
-    )
+    # NOTE: a *collapsed* versioned-symbol scheme (opt-in preset) drops its
+    # rename churn from `changes`, so `has_breaking` reads False even though the
+    # SONAME bump is justified (the symbols were renamed). That case is handled
+    # one layer up in `checker._apply_soname_policy`, which strips a
+    # SONAME_BUMP_UNNECESSARY emitted here when
+    # `PipelineContext.versioned_scheme_soname_relink_required` is set — a signal
+    # that survives the advisory being suppressed. Keeping it there means this
+    # pure policy needs no knowledge of the collapse preset.
 
     # A SONAME is considered "bumped" only when both old and new have a
     # non-empty SONAME and they differ.  If the new SONAME is empty the
@@ -341,7 +339,7 @@ def check_soname_bump_policy(
             )
         )
 
-    if not has_breaking and not collapsed_versioned_scheme and soname_bumped:
+    if not has_breaking and soname_bumped:
         result.append(
             Change(
                 kind=ChangeKind.SONAME_BUMP_UNNECESSARY,

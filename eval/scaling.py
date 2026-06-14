@@ -50,7 +50,9 @@ import time
 from pathlib import Path
 
 # The harness lives in eval/ alongside runner.py; reuse its clone/configure
-# helpers and shared paths rather than duplicating the toolchain plumbing.
+# helpers and shared paths rather than duplicating the toolchain plumbing. The
+# `runner._*` helpers below are private but intentionally shared between the two
+# eval entry points — keep them in sync if runner's clone/configure API changes.
 _EVAL_DIR = Path(__file__).resolve().parent
 if str(_EVAL_DIR) not in sys.path:
     sys.path.insert(0, str(_EVAL_DIR))
@@ -308,7 +310,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="C1 parallel-L4 scaling harness")
     ap.add_argument(
         "--jobs",
-        default="1,2,4",
+        default=",".join(str(j) for j in DEFAULT_JOBS),
         help="comma-separated ABICHECK_L4_JOBS levels (must include 1)",
     )
     ap.add_argument(
