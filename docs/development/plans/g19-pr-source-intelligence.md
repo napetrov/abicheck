@@ -132,41 +132,66 @@ One orchestrator command (new `cli_scan.py`). Three modes via the existing
 exit-code contract (ADR-009); `scan` with no source flags degrades to the
 always-on tier over L0–L2.
 
+**The common case is four flags** — current build (binary + headers + sources)
+vs a baseline dump:
+
+```bash
+abicheck scan --binary new/libfoo.so --headers new/include --sources . \
+              --baseline old/libfoo.abi.json
+```
+
+That is the whole basic flow. abicheck **auto-discovers** `compile_commands.json`
+inside `--sources` (or `--build-info`); if it finds one the source tier is
+high-fidelity (real flags/macros), if not it scans with defaults. Everything
+below is optional tuning with sane defaults — for CI scaling and large repos,
+not the basic flow.
+
+**Core flags**
+
 ```text
-abicheck scan [OPTIONS]
+  --binary PATH        library/artifact to scan (repeatable for bundles)
+  --headers PATH       public header file or dir (repeatable)
+  --sources PATH       source tree (compile DB auto-discovered within it)
+  --baseline PATH      previous build's dump (or built lib) to diff against
+```
 
-Inputs
-  --binary PATH                 library/artifact to scan (repeatable for bundles)
-  --headers PATH                public header file or dir (repeatable)
-  --public-header[-dir] PATH    provenance roots (ADR-015), passthrough to dump
-  --compile-db PATH             compile_commands.json → unlocks L3 + targeted L4/L5
-  --build-info PATH             build dir / pack dir (passthrough to collect)
-  --sources PATH                source tree → inline L3/L4/L5
-  --baseline REF|PATH           baseline snapshot/registry ref to diff against
-  --inputs DIR                  ingest a Flow-2 abicheck_inputs/ pack (D5)
+**Optional — inputs**
 
-Scope / escalation
-  --mode [pr|pr-deep|baseline|audit]      default pr (D9 asymmetry)
+```text
+  --public-header[-dir] PATH  provenance roots (ADR-015), passthrough to dump
+  --compile-db PATH           explicit compile_commands.json (only if not under --sources)
+  --build-info PATH           build dir / pack dir instead of a raw source tree
+  --baseline REGISTRY-REF     a baseline-registry name (ADR-022), e.g. libfoo@1.5,
+                              instead of a file — for teams using the registry
+  --inputs DIR                ingest a Flow-2 abicheck_inputs/ pack (D5)
+```
+
+**Optional — scope / escalation (defaults are fine for small/medium repos)**
+
+```text
+  --mode [pr|pr-deep|baseline|audit]   default pr (D9 asymmetry)
   --depth [auto|headers|build|source|full|graph]
-                                          cap evidence depth on the L-axis, in
-                                          increasing depth: headers=L2, build=L3,
-                                          source=L4 scoped, full=L4 full-scope,
-                                          graph=L5. auto = risk-driven. No S0..S6
-                                          selector per ADR-035 D1.
-  --changed-path PATH                     repeatable; seeds risk score + POI (D7)
-  --since GITREF                          derive changed paths from a git range
-  --budget DURATION   (e.g. 15m)          wall-clock ceiling
-  --max-tus N                             targeted-AST TU cap
-  --partial-ok / --no-partial-ok          default on; partial result is success
-  --estimate                              dry-run: print per-level cost, do nothing
-  --audit                                 single-release hygiene lint, no baseline (D8)
+                                       ceiling on how deep to go; default auto
+                                       (risk picks). headers=L2, build=L3,
+                                       source=L4, full=L4 full-scope, graph=L5.
+  --since GITREF                       focus the scan on files changed vs a git
+                                       ref (e.g. origin/main); else scans broadly
+  --changed-path PATH                  same focusing, listed by hand (repeatable)
+  --budget DURATION (e.g. 15m)         CI time ceiling; report what got covered
+  --max-tus N                          targeted-AST TU cap
+  --partial-ok / --no-partial-ok       default on; partial result is success
+  --estimate                           dry-run: print per-layer cost, scan nothing
+  --audit                              single-build hygiene lint, no baseline (D8)
+```
 
-Policy / output
-  --risk-rules PATH               override risk_rules block
-  --crosscheck KEY=LEVEL          repeatable (info|warning|error) (D4/D6)
+**Optional — policy / output**
+
+```text
+  --risk-rules PATH        override the risk_rules block
+  --crosscheck KEY=LEVEL   repeatable (info|warning|error) (D4/D6)
   --format [text|json|markdown|sarif|junit]
   --report PATH
-  -o, --output PATH               write merged snapshot/result
+  -o, --output PATH        write the merged snapshot/result
 ```
 
 Behaviour: `scan` resolves inputs → `dump`s L0–L2 → runs the always-on tier →
