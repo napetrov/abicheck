@@ -107,7 +107,6 @@ class DetectorRegistry:
         """
         if self._discovered:
             return
-        self._discovered = True
         import abicheck
 
         for info in sorted(
@@ -115,6 +114,9 @@ class DetectorRegistry:
         ):
             if info.name.startswith("diff_"):
                 importlib.import_module(f"abicheck.{info.name}")
+        # Set only after a full successful pass, so a mid-loop import error does
+        # not leave discovery permanently half-done on a retry.
+        self._discovered = True
 
     def detector(
         self,
