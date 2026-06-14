@@ -333,8 +333,10 @@ Designed as a progressive ramp — value at step 1 with zero build integration,
 deeper signal as the maintainer opts in:
 
 1. **Zero-config** — `abicheck scan --binary libfoo.so --headers include/` runs
-   L0–L2 + the always-on tier and the single-release audit (D8). No compile DB,
-   no compiler, immediate hygiene findings.
+   L0/L1 + the always-on lexical tier (S3) and the single-release audit (D8) with
+   no compile DB and no compiler. L2 header-AST (castxml) is added when castxml is
+   present, otherwise reported as skipped — it is not part of the no-compiler
+   promise. Immediate hygiene findings either way.
 2. **Add a compile DB** — `--compile-db build/compile_commands.json` unlocks L3
    and POI-targeted L4/L5 (D7). Still one command.
 3. **Pick a depth** — `abicheck scan --estimate` prints projected per-level cost

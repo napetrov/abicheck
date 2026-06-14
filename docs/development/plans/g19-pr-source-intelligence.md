@@ -26,9 +26,11 @@ authority rule (L0–L2 stay authoritative for `BREAKING`).
   `public_not_exported`, `header_build_context_mismatch`, `private_header_leak`
   surfaced as correctly-partitioned `RISK`/`API_BREAK` `ChangeKind`s with
   provider-corroborated confidence (ADR-035 D4).
-- **G19.3** Risk-scored escalation + `scan` command: a numeric score selects
-  evidence depth within a budget; one coverage/confidence-annotated report;
-  partial results are first-class (ADR-035 D3).
+- **G19.3** Deterministic `scan` command: the level is the pinned `--mode` preset
+  or an explicit `--source-method`/`--depth`; the numeric risk score selects depth
+  **only** under `--source-method auto` (opt-in), and `--budget` is a failure guard
+  on the chosen level (never shrinks scope). One coverage/confidence-annotated
+  report; partial results are first-class (ADR-035 D3).
 - **G19.4** Build-integrated extraction: a documented dump/facts artifact
   protocol (Flow 2) ingestible via `merge`, plus a Clang-plugin and
   compiler-wrapper provider under the ADR-032 model, normalized facts canonical
@@ -60,11 +62,14 @@ authority rule (L0–L2 stay authoritative for `BREAKING`).
 - Add the ADR-035 D4 `ChangeKind`s (RISK/API_BREAK only) following the four-step
   procedure in `/CLAUDE.md`; record corroborating providers → `LayerConfidence`.
 
-### Phase 3 — Risk score + budgeted `scan` orchestrator (G19.3)
-- Promote `source_replay.recommend_collect_mode()` to a scored function driven by
-  a `risk_rules` config block; thresholds map to existing collect-modes.
+### Phase 3 — Deterministic `scan` orchestrator (G19.3)
 - New `abicheck/cli_scan.py` (sibling-module registration per `/CLAUDE.md`):
-  classify → always-on tier → escalate within budget → single coverage report.
+  classify → always-on tier → run the **pinned** level (`--mode` preset or
+  explicit `--source-method`/`--depth`), POI-focused → single coverage report.
+- Promote `source_replay.recommend_collect_mode()` to a scored function driven by
+  a `risk_rules` config block — used **only** for `--source-method auto` (opt-in)
+  and POI focusing, never to silently change a pinned CI run. `--budget` is a
+  failure guard on the chosen level, not an escalation driver.
 
 ### Phase 3b — Evidence-directed focusing + API/estimate (G19.5, G19.7)
 - POI builder: from L0/L1/L2 deltas + risk score, produce a work-list consumed by
@@ -129,8 +134,9 @@ existing `dump`/`compare`/`collect` signatures.
 ### CLI — `abicheck scan`
 
 One orchestrator command (new `cli_scan.py`). Three modes via the existing
-exit-code contract (ADR-009); `scan` with no source flags degrades to the
-always-on tier over L0–L2.
+exit-code contract (ADR-009); `scan` with no source flags degrades to L0/L1 +
+the always-on lexical tier (L2 header-AST added only when castxml is present,
+else reported as skipped — not part of the no-compiler path).
 
 **The common case is four flags** — current build (binary + headers + sources)
 vs a baseline dump:
