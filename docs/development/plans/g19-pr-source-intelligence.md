@@ -318,7 +318,7 @@ class ScanRequest:
     source_method: SourceMethod | None = None   # S0..S6 | AUTO; None = use mode preset
     depth: EvidenceLayer | None = None          # coarse L target; None = use mode preset
     changed_paths: list[str] = field(default_factory=list)
-    budget: Budget = Budget()               # total_timeout, max_tus, partial_ok
+    budget: Budget = field(default_factory=Budget)  # total_timeout, max_tus, partial_ok
     risk_rules: RiskRules | None = None
     crosschecks: dict[str, Severity] = field(default_factory=dict)
 
