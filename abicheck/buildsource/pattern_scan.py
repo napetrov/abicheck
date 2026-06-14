@@ -168,7 +168,10 @@ _RULES: tuple[_Rule, ...] = (
         # identifier named `visibility` is not mistaken for the attribute.
         re.compile(
             r"__attribute__\s*\(\s*\(" + _ATTR_INNER + r"\bvisibility\b"
-            r"|\[\[\s*gnu::visibility"
+            # C++ branch: allow other attributes before `gnu::visibility`,
+            # e.g. `[[nodiscard, gnu::visibility("default")]]`; `[^]]*` stays
+            # within the `[[...]]` brackets.
+            r"|\[\[[^]]*gnu::visibility"
         ),
         False,
         "explicit symbol visibility annotation",
@@ -200,9 +203,18 @@ _RULES: tuple[_Rule, ...] = (
         PatternKind.CALLING_CONVENTION,
         PatternCategory.CALLING_CONVENTION,
         re.compile(
+            # MSVC-style keywords and Windows API macros.
             r"\b(?:__cdecl|__stdcall|__fastcall|__thiscall|__vectorcall"
             r"|_cdecl|_stdcall|_fastcall|WINAPI|APIENTRY|CALLBACK"
             r"|STDMETHODCALLTYPE)\b"
+            # GNU/Clang attribute spellings (the documented ELF way to change
+            # calling convention), e.g. `__attribute__((ms_abi))`,
+            # `((sysv_abi))`, `((stdcall))`, `((regparm(3)))`.
+            r"|__attribute__\s*\(\s*\("
+            + _ATTR_INNER
+            + r"\b(?:__)?(?:ms_abi|sysv_abi|stdcall|cdecl|fastcall|thiscall"
+            r"|regparm|pcs|aarch64_vector_pcs|preserve_all|preserve_most"
+            r"|vectorcall)(?:__)?\b"
         ),
         False,
         "explicit calling convention affects the symbol/ABI",

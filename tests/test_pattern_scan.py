@@ -83,6 +83,26 @@ def _kinds(text: str) -> set[PatternKind]:
         ('extern "C" void c_api(void);', PatternKind.EXTERN_C),
         ("int __stdcall winproc(void);", PatternKind.CALLING_CONVENTION),
         ("int WINAPI WinMain(void);", PatternKind.CALLING_CONVENTION),
+        (
+            "void __attribute__((ms_abi)) f(void);",
+            PatternKind.CALLING_CONVENTION,
+        ),
+        (
+            "void __attribute__((sysv_abi)) f(void);",
+            PatternKind.CALLING_CONVENTION,
+        ),
+        (
+            "void __attribute__((stdcall)) f(void);",
+            PatternKind.CALLING_CONVENTION,
+        ),
+        (
+            "void __attribute__((regparm(3))) f(int);",
+            PatternKind.CALLING_CONVENTION,
+        ),
+        (
+            '[[nodiscard, gnu::visibility("default")]] int f();',
+            PatternKind.ATTRIBUTE_VISIBILITY,
+        ),
         ("inline namespace v1 { struct S {}; }", PatternKind.INLINE_NAMESPACE),
         ("struct Base { virtual void f(); };", PatternKind.VIRTUAL_METHOD),
         ("void* operator new(size_t n);", PatternKind.OPERATOR_NEW_DELETE),
@@ -134,6 +154,13 @@ def test_identifier_named_packed_not_flagged(src: str) -> None:
 )
 def test_identifier_named_visibility_not_flagged(src: str) -> None:
     assert PatternKind.ATTRIBUTE_VISIBILITY not in _kinds(src)
+
+
+def test_non_cc_attribute_not_flagged_as_calling_convention() -> None:
+    # A plain attribute without a calling-convention keyword must not flag.
+    assert PatternKind.CALLING_CONVENTION not in _kinds(
+        "void __attribute__((noreturn)) f(void);"
+    )
 
 
 @pytest.mark.parametrize(
