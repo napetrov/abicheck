@@ -229,19 +229,22 @@ graduated techniques, not one AST step; each S-method runs and lands in an L-lay
 |---|---|---|---|---|---|---|
 | classify (D0/D3) | S0 | git diff → risk tags/score | no | — (drives focus) | always | changed |
 | pre-scan patterns (D2) | S3 | regex/Tree-sitter over changed+public | no | pre-scan → L2/L5 | always | changed+public |
-| L2 headers | — | castxml (headers) / DWARF (binary) | castxml for header-AST | L2 | when castxml present (else skipped, reported); DWARF L2 if debug info | public surface |
+| L2 headers | — | castxml over public headers | castxml for header-AST | L2 | when castxml present (else skipped, reported) | public surface |
+| L1 debug info | — | DWARF / PDB / dSYM from binary | no | L1 | when debug info present | binary artifact |
 | L3 build | S1 | parse `compile_commands.json` / CMake / Ninja / Bazel | no | L3 | always (cheap) | whole build |
 | preprocessor (D2) | S2 | `clang -E` macros / `-MM` includes | (cpp) | L3→L5 | when DB present | changed+public |
 | L5 graph (structural) | S2 fold | fold L3 → target/file/option nodes | no | L5 | when L3 ran | whole build |
 | L4 source | S5 / S6 | clang/castxml parse actual TUs | yes | L4 | triggered (S5); baseline (S6) | **POI-scoped** (S5) / all (S6) |
-| L5 graph (semantic) | S4 / S5 | clangd-index / call `clang -ast-dump` / Kythe/CodeQL | yes | L5 | budgeted | POI / changed |
+| L5 graph (semantic) | S4 / S5 | clangd-index / call `clang -ast-dump` / Kythe/CodeQL | yes | L5 | pinned scope or skipped for missing tools | POI / changed |
 
 The L5 graph is **not** fully built by default — only the cheap S2 structural fold
-is; the S4/S5 semantic edges are budget-gated. S6 (full AST) is baseline/manual,
-never the default PR.
+is. When `--depth graph` or an S4/S5 method is pinned, semantic edges run to the
+pinned scope or fail on budget overflow; budgets never reduce the graph scope. S6
+(full AST) is baseline/manual, never the default PR.
 
 **Reporting is mandatory and explicit (4a):** every run — not just partial ones —
-prints a table stating, for each layer **and the S-method that produced it**,
+prints a table stating, for each layer **and the S-method that produced it when
+there is one**,
 `collected` / `skipped (reason)` + how much (TUs/files) + cache-hit rate, plus the
 confidence per evidence source. A reader always sees exactly which source-analysis
 depth (S0…S6) was reached and into which L-layer it landed; never a bare
@@ -295,7 +298,8 @@ machine or the clock:
 - POI focusing (D7) only selects *which* in-scope TUs get the chosen method; for a
   fixed diff it is deterministic, so it does not affect CI consistency.
 
-`.abicheck.yml` mirror: `source.method: s5` (exact level; `auto` only if opted in).
+`.abicheck.yml` mirror: `source.method: s5` (exact level; `auto` only if opted in)
+and `source.depth: graph` (coarse L-axis selector).
 
 ### Python API — `abicheck/service.py`
 
@@ -320,7 +324,7 @@ class ScanRequest:
 
 @dataclass(frozen=True)
 class CostEstimate:
-    method: SourceMethod               # S-axis: S0..S6
+    method: SourceMethod | None        # S-axis: S0..S6; None for intrinsic L0-L2
     layer: EvidenceLayer               # L-axis it populates: L2_HEADER..L5_SOURCE_GRAPH
     tus: int
     est_seconds: float
@@ -329,7 +333,7 @@ class CostEstimate:
 
 @dataclass(frozen=True)
 class LayerResult:
-    method: SourceMethod               # which S-method ran
+    method: SourceMethod | None        # which S-method ran; None for intrinsic L0-L2
     layer: EvidenceLayer               # which L-layer it populated
     coverage: LayerCoverage            # reuse buildsource.model
     facts: int
@@ -361,11 +365,12 @@ the authority axis), and **`SourceMethod` is the S-axis** (`S0..S6` + `AUTO`) �
 *distinct* enum, not banned and not collapsed onto `EvidenceLayer` (the S→L map is
 lossy: S1≠S2 both touch L3, S3 has no L). A provider declares both the method it
 implements and the layer it populates, so a request that pins `source_method=S2`
-runs the right provider:
+runs the right provider. Intrinsic artifact/header providers set `method = None`
+because L0/L1/L2 evidence is not produced by an S-method:
 
 ```python
 class LayerProvider(Protocol):
-    method: SourceMethod                 # S-axis: which source-analysis method
+    method: SourceMethod | None          # S-axis method, or None for intrinsic L0-L2
     layer: EvidenceLayer                 # L-axis: which evidence layer it populates
     def capabilities(self) -> ProviderCapabilities: ...
     def estimate(self, ctx: ScanContext) -> CostEstimate: ...
@@ -395,9 +400,11 @@ schema as the Python API — one contract, three front-ends (CLI, MCP, library).
 
 ```yaml
 source:
+  method: s5     # exact S-axis selector; may be auto only when opt-in is intended
+  depth: source  # coarse L-axis selector; method wins if both are set
   budgets: { total_timeout: 15m, max_targeted_tus: 80, partial_ok: true }
   layers:  { headers: always, build: always,     # L2 pre-scan, L3 build
-             source: triggered, graph: budgeted } # L4 replay, L5 graph
+             source: triggered, graph: triggered } # L4 replay, L5 graph; budget overflow fails
 risk_rules:
   public_headers: { paths: ["include/**","public/**"], weight: 50 }
   build_abi_flags: { paths: ["CMakeLists.txt","cmake/**","BUILD"], weight: 40 }
