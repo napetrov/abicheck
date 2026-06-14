@@ -202,26 +202,35 @@ cost probe; `--audit` runs intra-version (ignores `--baseline`).
 Convenience subcommands (thin wrappers, same engine):
 `abicheck scan estimate …` ≡ `--estimate`; `abicheck scan audit …` ≡ `--audit`.
 
-### How each layer is collected (and whether it always runs)
+### The two axes: L-layers (evidence) and S-methods (source analysis)
 
-Each L-layer uses a different method; the expensive ones are scoped or gated, so
-not everything runs on every PR. The L5 graph is **not** fully built by default —
-only the cheap structural fold is, the semantic edges are budget-gated.
+Per ADR-035 D1 these are orthogonal. **L** = where the evidence lives + authority
+(the user-facing depth/`--depth` axis). **S** = the six cost-ordered *source-
+analysis methods* that produce L3–L5 evidence (the internal provider ladder + the
+reporting granularity). Source analysis is genuinely six graduated techniques, not
+one AST step; each S-method runs and its output lands in an L-layer:
 
-| Layer | How collected | Compiler? | Default PR | Scope |
-|---|---|---|---|---|
-| pre-scan (D2) | regex/lexical over changed+public files | no | always | changed+public |
-| L2 headers | castxml / DWARF (existing) | no | always | public surface |
-| L3 build | parse `compile_commands.json` / CMake / Ninja / Bazel | no | always (cheap) | whole build |
-| L5 graph (structural) | fold L3 → target/file/option nodes | no | when L3 ran | whole build |
-| L4 source | clang/castxml parse actual TUs | yes | triggered | **POI-scoped** |
-| L5 graph (semantic edges) | include `clang -MM` + call `clang -ast-dump` / Kythe/CodeQL | yes | budgeted | POI / changed |
+| Provider | S-method | How collected | Compiler? | Produces (L) | Default PR | Scope |
+|---|---|---|---|---|---|---|
+| classify (D0/D3) | S0 | git diff → risk tags/score | no | — (drives focus) | always | changed |
+| pre-scan patterns (D2) | S3 | regex/Tree-sitter over changed+public | no | pre-scan → L2/L5 | always | changed+public |
+| L2 headers | — | castxml / DWARF (existing) | no | L2 | always | public surface |
+| L3 build | S1 | parse `compile_commands.json` / CMake / Ninja / Bazel | no | L3 | always (cheap) | whole build |
+| preprocessor (D2) | S2 | `clang -E` macros / `-MM` includes | (cpp) | L3→L5 | when DB present | changed+public |
+| L5 graph (structural) | S2 fold | fold L3 → target/file/option nodes | no | L5 | when L3 ran | whole build |
+| L4 source | S5 / S6 | clang/castxml parse actual TUs | yes | L4 | triggered (S5); baseline (S6) | **POI-scoped** (S5) / all (S6) |
+| L5 graph (semantic) | S4 / S5 | clangd-index / call `clang -ast-dump` / Kythe/CodeQL | yes | L5 | budgeted | POI / changed |
+
+The L5 graph is **not** fully built by default — only the cheap S2 structural fold
+is; the S4/S5 semantic edges are budget-gated. S6 (full AST) is baseline/manual,
+never the default PR.
 
 **Reporting is mandatory and explicit (4a):** every run — not just partial ones —
-prints a per-layer table stating, for each layer, `collected` / `skipped (reason)`
-+ how much (TUs/files) + cache-hit rate, plus the confidence per evidence source.
-A reader always sees exactly which depth was reached; there is never a bare
-"source scan ran" without the layer breakdown.
+prints a table stating, for each layer **and the S-method that produced it**,
+`collected` / `skipped (reason)` + how much (TUs/files) + cache-hit rate, plus the
+confidence per evidence source. A reader always sees exactly which source-analysis
+depth (S0…S6) was reached and into which L-layer it landed; never a bare
+"source scan ran".
 
 ### Python API — `abicheck/service.py`
 

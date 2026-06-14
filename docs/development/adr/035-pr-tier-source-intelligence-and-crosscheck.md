@@ -75,15 +75,41 @@ concentrates:
 
 ## Decision
 
-### D1. Keep the L0–L5 numbering; do not adopt a parallel `S0..S6` scale
+### D1. Two orthogonal axes: L = evidence layer, S = source-analysis method
 
-The proposal's source ladder is folded into the existing L-layers per the
-mapping table above. A second numbering axis would fork the docs/ADR set
-(ADR-028…033) and confuse the evidence model for no capability gain. New work
-is described as *extensions of named layers*, and the **authority rule
-(ADR-028 D3) is preserved**: L0/L1/L2 artifact evidence stays authoritative for
-`BREAKING` verdicts; everything added here emits `RISK` or `API_BREAK` findings
-that explain, localize, and add confidence — never a standalone shipped break.
+There are **two different things** the proposal and abicheck talk about, and they
+must not be conflated:
+
+- **L0–L5 — evidence layers (the *what* + authority).** Where a fact comes from
+  (binary / debug / header / build / source-ABI / graph) and how much it is
+  trusted. L0–L2 stay authoritative for `BREAKING`; L3–L5 only `RISK`/`API_BREAK`
+  (ADR-028 D3). This is the user-facing depth axis and the authority axis.
+- **S0–S6 — source-analysis methods (the *how*).** Six distinct, cost-ordered
+  *techniques* for analyzing source, from a diff classifier up to a full AST.
+  These are **not** evidence layers and **not** a competing authority/selector
+  axis — they are the **pipeline of methods that produce the L3–L5 evidence**,
+  and the granularity at which coverage is reported.
+
+So the S-scale is kept as a real, named concept (source analysis is genuinely six
+graduated methods, not one "parse the AST" step), but it is *orthogonal* to L: an
+S-method runs and its output lands in an L-layer. The earlier worry — exposing
+`S0..S6` as a parallel CLI/config selector that forks the evidence model — is
+avoided by keeping the **user knob and authority on the L-axis** while S describes
+the internal provider ladder and the reporting breakdown. Mapping:
+
+| S-method | What it does | Tool | Produces (L) | Cost |
+|---|---|---|---|---|
+| **S0** diff classifier | changed-file → risk tags/score | git diff | — (drives D3/D7) | `<1%` |
+| **S1** compile-DB / flags | ABI-affecting build context | parse `compile_commands.json` etc. | **L3** | `<1%` |
+| **S2** preprocessor / includes | macro values, include/leak graph | `clang -E`/`-MM` | **L3→L5** | 1–10% |
+| **S3** lexical pattern scan | ABI-risk constructs, no semantics | regex / Tree-sitter | pre-scan facts (→L2/L5) | `<1–5%` |
+| **S4** symbol/reference index | decls/refs/inheritance/call graph | clangd-index / Kythe / CodeQL | **L5** | 5–30% |
+| **S5** targeted semantic AST | layouts, instantiations, body hashes | clang/castxml on selected TUs | **L4** (+L5 edges) | 5–40% |
+| **S6** full AST | whole-project semantic facts | clang/castxml all TUs | **L4** full-scope | 20–80% |
+
+The **authority rule (ADR-028 D3) is preserved**: whatever S-method produced a
+fact, an L3–L5 fact never alone decides a shipped `BREAKING` verdict — it
+explains, localizes, and adds confidence.
 
 ### D2. Add an always-on, compiler-free PR pre-scan tier (extends L2/L5)
 
