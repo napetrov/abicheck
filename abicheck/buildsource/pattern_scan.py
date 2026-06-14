@@ -152,9 +152,11 @@ _RULES: tuple[_Rule, ...] = (
         PatternKind.PRAGMA_PACK,
         PatternCategory.LAYOUT,
         # Macro-friendly pragma spelling, e.g. `_Pragma("pack(push, 1)")`.
-        # This intentionally runs on string-preserved text because the pragma
-        # payload is syntactically a string literal.
-        re.compile(r'_Pragma\s*\(\s*"(?:[^"\\]|\\.)*\bpack\b'),
+        # Runs on string-preserved text (the payload is a string literal) and
+        # requires `pack` to be the payload's *directive token* (first token
+        # after the quote), so non-pack pragmas that merely mention the word —
+        # `_Pragma("GCC diagnostic ignored \"-Wpragma-pack\"")` — don't match.
+        re.compile(r'_Pragma\s*\(\s*"\s*pack\b'),
         True,
         "explicit struct packing changes record layout",
         scan_strings=True,
@@ -476,7 +478,9 @@ def _raw_string_end(text: str, quote_index: int) -> int:
             break
     if prefix_start < 0:
         return -1
-    if prefix_start > 0 and (text[prefix_start - 1].isalnum() or text[prefix_start - 1] == "_"):
+    if prefix_start > 0 and (
+        text[prefix_start - 1].isalnum() or text[prefix_start - 1] == "_"
+    ):
         return -1
     if prefix != "R" and not prefix.endswith("R"):
         return -1

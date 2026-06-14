@@ -112,7 +112,10 @@ def _kinds(text: str) -> set[PatternKind]:
         ("struct Base { virtual void f(); };", PatternKind.VIRTUAL_METHOD),
         ("struct Derived : Base { void f() override; };", PatternKind.VIRTUAL_METHOD),
         ("struct Derived : Base { void f() final; };", PatternKind.VIRTUAL_METHOD),
-        ("struct Derived : Base { void f() final override; };", PatternKind.VIRTUAL_METHOD),
+        (
+            "struct Derived : Base { void f() final override; };",
+            PatternKind.VIRTUAL_METHOD,
+        ),
         (
             "struct Derived : Base { void f() & noexcept override; };",
             PatternKind.VIRTUAL_METHOD,
@@ -319,9 +322,49 @@ def test_raw_string_contents_not_flagged() -> None:
 
 
 def test_raw_string_contents_not_flagged_by_string_preserving_rules() -> None:
-    src = r'''const char* s = R"abi(_Pragma("pack(push, 1)") extern "C")abi";'''
+    src = r"""const char* s = R"abi(_Pragma("pack(push, 1)") extern "C")abi";"""
     assert PatternKind.PRAGMA_PACK not in _kinds(src)
     assert PatternKind.EXTERN_C not in _kinds(src)
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        '_Pragma("GCC diagnostic ignored \\"-Wpragma-pack\\"")',
+        '_Pragma("message(\\"pack\\")")',
+    ],
+)
+def test_non_pack_pragma_not_flagged(src: str) -> None:
+    # `_Pragma` whose payload merely mentions `pack` (not as the directive
+    # token) must not emit a PRAGMA_PACK layout fact.
+    assert PatternKind.PRAGMA_PACK not in _kinds(src)
+
+
+def test_unterminated_string_at_eof_does_not_crash() -> None:
+    # An unterminated string literal reaching EOF must be handled (the blanker
+    # stays in string state to the end) and a preceding construct still fires.
+    facts = scan_text('struct alignas(4) S {};\nconst char* s = "oops')
+    assert PatternKind.ALIGNAS in {f.kind for f in facts}
+
+
+def test_raw_string_edge_cases_fall_back_to_normal_string() -> None:
+    # _raw_string_end returns -1 (not a raw string) for: an alnum char before
+    # the prefix, no opening paren near the quote, a whitespace delimiter, and a
+    # missing close sequence — exercising each guard.
+    from abicheck.buildsource.pattern_scan import _raw_string_end
+
+    assert _raw_string_end('aR"(x)"', 2) == -1  # `a` before the `R` prefix
+    assert _raw_string_end('R"' + "x" * 30, 1) == -1  # no `(` near the quote
+    assert _raw_string_end('R"de lim(x)de lim"', 1) == -1  # space in delimiter
+    assert _raw_string_end('R"d(unterminated', 1) == -1  # no closing `)d"`
+    s = 'R"d(body)d"'
+    assert _raw_string_end(s, 1) == len(s) - 1  # well-formed → closing offset
+
+
+def test_snippet_out_of_range_returns_empty() -> None:
+    from abicheck.buildsource.pattern_scan import _snippet
+
+    assert _snippet(["only one line"], 5) == ""
 
 
 # ── Escalation triggers + categories ─────────────────────────────────────────
