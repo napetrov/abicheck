@@ -301,6 +301,15 @@ def check_soname_bump_policy(
 
     has_breaking = any(_is_effectively_breaking(c) for c in changes)
 
+    # NOTE: a *collapsed* versioned-symbol scheme (opt-in preset) drops its
+    # rename churn from `changes`, so `has_breaking` reads False even though the
+    # SONAME bump is justified (the symbols were renamed). That case is handled
+    # one layer up in `checker._apply_soname_policy`, which strips a
+    # SONAME_BUMP_UNNECESSARY emitted here when
+    # `PipelineContext.versioned_scheme_soname_relink_required` is set — a signal
+    # that survives the advisory being suppressed. Keeping it there means this
+    # pure policy needs no knowledge of the collapse preset.
+
     # A SONAME is considered "bumped" only when both old and new have a
     # non-empty SONAME and they differ.  If the new SONAME is empty the
     # library *dropped* its SONAME — that is not a bump.

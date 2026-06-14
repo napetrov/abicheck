@@ -75,6 +75,10 @@ class PipelineContext:
     kept: list[Change] = field(default_factory=list)
     # ADR-024: findings filtered out as not-public (full audit trail).
     out_of_surface: list[Change] = field(default_factory=list)
+    # Set when collapsed version-rename churn was paired with an observed
+    # SONAME change. The late SONAME policy should not call that bump
+    # unnecessary after this step has moved the matched removals out of kept.
+    versioned_scheme_soname_relink_required: bool = False
 
 
 class PipelineStep(Protocol):
@@ -769,6 +773,19 @@ class DemoteUnreachableInternalChurn:
         return changes
 
 
+def _scheme_soname(snap: AbiSnapshot) -> str:
+    """The *observed* ELF ``DT_SONAME`` for the versioned-scheme cross-check.
+
+    Only an actual recorded SONAME is used — never the snapshot's ``library``
+    name, which for source-only or hand-authored snapshots is just the input name
+    and may differ from the runtime SONAME. Inferring a SONAME bump from a name
+    change would overstate the relink requirement (the report's main visible
+    finding under collapse), so absent ELF metadata yields "" and no relink note.
+    """
+    elf = getattr(snap, "elf", None)
+    return (getattr(elf, "soname", "") or "").strip()
+
+
 class DetectVersionedSymbolScheme:
     """Emit one advisory ``versioned_symbol_scheme_detected`` finding when most
     removed symbols reappear as added symbols differing only by a version token
@@ -794,11 +811,35 @@ class DetectVersionedSymbolScheme:
         advisory, matched = analyze_versioned_scheme(changes)
         if advisory is None:
             return changes
+        # G15: cross-check the version token against the SONAME. A versioned
+        # scheme normally bumps the SONAME too (libicui18n.so.75 -> .78); the
+        # rename churn is cosmetic, but a new SONAME still means dependents must
+        # **relink** against the new shared object. Surface that relink signal on
+        # the advisory so the collapse never hides it.
+        old_so, new_so = _scheme_soname(ctx.old), _scheme_soname(ctx.new)
+        if old_so and new_so and old_so != new_so:
+            ctx.versioned_scheme_soname_relink_required = True
+            advisory.description += (
+                f" The SONAME also changed ({old_so} -> {new_so}): a new shared-object "
+                "version, so dependents must relink against the new library even though "
+                "the symbol churn is a version-rename."
+            )
         if ctx.suppression is not None and ctx.suppression.is_suppressed(advisory):
             ctx.suppressed.append(advisory)
         else:
             changes.append(advisory)
         if ctx.collapse_versioned_symbols and matched:
+            # G15: report the collapse count in the summary. caused_count is the
+            # number of old-side version-rename pairs reclassified as compatible;
+            # the reporter renders it ("N version-renames collapsed").
+            old_side_kinds = (
+                ChangeKind.FUNC_REMOVED, ChangeKind.FUNC_REMOVED_ELF_ONLY,
+                ChangeKind.VAR_REMOVED, ChangeKind.FUNC_LIKELY_RENAMED,
+            )
+            advisory.caused_count = sum(1 for c in matched if c.kind in old_side_kinds)
+            advisory.description += (
+                f" [{advisory.caused_count} version-renames collapsed as compatible]"
+            )
             matched_ids = {id(c) for c in matched}
             ctx.suppressed.extend(matched)
             kept = [c for c in changes if id(c) not in matched_ids]

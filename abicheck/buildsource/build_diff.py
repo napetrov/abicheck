@@ -260,11 +260,42 @@ def _toolchain_fingerprints(ev: BuildEvidence) -> dict[str, str]:
     return out
 
 
+def _toolchain_compiler_versions(ev: BuildEvidence) -> dict[str, set[str]]:
+    """Map ``compiler_id`` → set of its *known* (non-empty) version strings.
+
+    Deliberately excludes ``target_triple`` and treats a missing version as
+    *unknown*, not as a distinct value: the fallback below compares evidence from
+    heterogeneous sources (a CMake File API side that records target/version vs a
+    DWARF-producer side where ``parse_producer`` may leave either empty), so
+    keying on those would flag the *same* compiler as drift purely because one
+    side lacks metadata. The fallback therefore fires only on a real compiler-id
+    swap or a both-versions-known version change; target/sysroot changes route
+    through the build-option path (``_TOOLCHAIN_OPTION_KEYS``) instead.
+    """
+    out: dict[str, set[str]] = {}
+    for tc in ev.toolchains:
+        if not tc.compiler_id:
+            continue  # unknown compiler (schema only requires id) — not an identity
+        out.setdefault(tc.compiler_id, set())
+        if tc.version:
+            out[tc.compiler_id].add(tc.version)
+    return out
+
+
+def _toolchain_identity_display(ev: BuildEvidence) -> str:
+    """Human-readable ``"compiler_id version"`` list for a finding's old/new."""
+    return ", ".join(sorted(
+        f"{tc.compiler_id} {tc.version}".strip()
+        for tc in ev.toolchains if tc.compiler_id
+    ))
+
+
 def _diff_toolchains(old: BuildEvidence, new: BuildEvidence) -> list[Change]:
     old_fp = _toolchain_fingerprints(old)
     new_fp = _toolchain_fingerprints(new)
     changes: list[Change] = []
-    for lang in sorted(set(old_fp) & set(new_fp)):
+    shared_keys = set(old_fp) & set(new_fp)
+    for lang in sorted(shared_keys):
         if old_fp[lang] != new_fp[lang]:
             changes.append(
                 Change(
@@ -276,6 +307,39 @@ def _diff_toolchains(old: BuildEvidence, new: BuildEvidence) -> list[Change]:
                     ),
                     old_value=old_fp[lang],
                     new_value=new_fp[lang],
+                )
+            )
+    # Fallback for asymmetric language keys (field-eval E3 / P07): clang's
+    # DW_AT_producer carries no language token, so parse_producer yields
+    # language="" and the toolchain keys by id, while gcc keys by "C"/"CXX".
+    # The per-language loop above then shares no key and misses an obvious
+    # gcc↔clang swap. Gate strictly to that case: only when the two sides share
+    # *no* language key at all. If any key overlaps, the per-language loop is
+    # authoritative and a record present on only one side is missing evidence,
+    # not a swap (Codex P2). When no key is shared and the compiler *identities*
+    # differ, surface the change once.
+    if not changes and not shared_keys:
+        old_c = _toolchain_compiler_versions(old)
+        new_c = _toolchain_compiler_versions(new)
+        # NB: the outer gate keyed on a shared *language* key; here "shared"
+        # means a shared *compiler-id*. A compiler-id swap (gcc↔clang) is
+        # unambiguous drift. A version change counts only when *both* sides
+        # expose a version for a shared compiler — a missing version is unknown,
+        # not a change (Codex P2).
+        compiler_swap = bool(old_c) and bool(new_c) and set(old_c) != set(new_c)
+        version_drift = any(
+            old_c[cid] and new_c[cid] and old_c[cid] != new_c[cid]
+            for cid in set(old_c) & set(new_c)
+        )
+        if compiler_swap or version_drift:
+            old_disp, new_disp = _toolchain_identity_display(old), _toolchain_identity_display(new)
+            changes.append(
+                Change(
+                    kind=ChangeKind.TOOLCHAIN_VERSION_CHANGED,
+                    symbol="toolchain",
+                    description=f"Toolchain identity changed: {old_disp!r} -> {new_disp!r}",
+                    old_value=old_disp,
+                    new_value=new_disp,
                 )
             )
     return changes

@@ -33,6 +33,7 @@ from __future__ import annotations
 import collections
 
 from abicheck.checker import Verdict, compare
+from abicheck.checker_policy import ChangeKind
 from abicheck.model import AbiSnapshot, Function, Param, Visibility
 
 # A handful of distinct C entry points, each carrying the library major version
@@ -227,3 +228,152 @@ def test_likely_renamed_versioned_pairs_collapse():
             for b in ("a", "b", "c", "d")]
     adv, matched = analyze_versioned_scheme(rows)
     assert adv is not None and len(matched) == 4
+
+
+# --- G15 token vocabulary: libc++, Abseil, libstdc++ --------------------------
+# The recogniser operates on the *demangled* name, so these pin the token logic
+# against each ecosystem's versioned-namespace stamp via a controlled demangle
+# map (mirroring test_cpp_inline_namespace_scheme_detected). A real demangler is
+# deliberately not used: some platforms' demanglers omit the libc++ inline
+# namespace (macOS llvm demangles _ZNSt3__1...E to `std::...`, dropping __1), so
+# a real-name test would be demangler-dependent rather than testing our logic.
+
+
+def _scheme_from_demangle_map(monkeypatch, dem, removed, added):
+    import abicheck.versioned_symbol_scheme as vs
+    monkeypatch.setattr(vs, "demangle", lambda s: dem.get(s))
+    monkeypatch.setattr(vs, "demangle_batch", lambda names: {})
+    from abicheck.checker_types import Change, ChangeKind
+    rows = [Change(kind=ChangeKind.FUNC_REMOVED, symbol=s, description="") for s in removed]
+    rows += [Change(kind=ChangeKind.FUNC_ADDED, symbol=s, description="") for s in added]
+    return vs.analyze_versioned_scheme(rows)
+
+
+def _ns_scheme(monkeypatch, ns_old, ns_new):
+    """Build a 3-symbol removed/added scheme under inline namespaces ns_old→ns_new."""
+    dem, rem, add = {}, [], []
+    for leaf in ("alpha", "beta", "gamma"):
+        om, nm = f"_Zold_{leaf}", f"_Znew_{leaf}"
+        dem[om] = f"{ns_old}::{leaf}()"
+        dem[nm] = f"{ns_new}::{leaf}()"
+        rem.append(om)
+        add.append(nm)
+    return _scheme_from_demangle_map(monkeypatch, dem, rem, add)
+
+
+def test_libcxx_inline_namespace_scheme_collapses(monkeypatch):
+    # libc++ stamps every symbol with std::__1:: (bumped to std::__2:: on an ABI rev).
+    adv, matched = _ns_scheme(monkeypatch, "std::__1", "std::__2")
+    assert adv is not None
+    assert len(matched) == 6  # 3 removed + 3 added
+
+
+def test_abseil_lts_namespace_scheme_collapses(monkeypatch):
+    # Abseil's inline namespace is lts_<date> (absl::lts_20240722:: -> lts_20250127::).
+    adv, matched = _ns_scheme(monkeypatch, "absl::lts_20240722", "absl::lts_20250127")
+    assert adv is not None
+    assert len(matched) == 6
+
+
+def test_libstdcxx_versioned_namespace_scheme_collapses(monkeypatch):
+    # libstdc++ built --enable-symvers=gnu-versioned-namespace uses std::__7::,
+    # bumped to std::__8:: across a release.
+    adv, matched = _ns_scheme(monkeypatch, "std::__7", "std::__8")
+    assert adv is not None
+    assert len(matched) == 6
+
+
+# --- G15: SONAME cross-check + collapse-count reporting ------------------------
+
+
+def _versioned_advisory(result):
+    for c in result.changes:
+        if (c.kind.value if hasattr(c.kind, "value") else c.kind) == "versioned_symbol_scheme_detected":
+            return c
+    return None
+
+
+def test_collapse_reports_version_rename_count_in_summary():
+    # G15 (3): when the preset collapses the rename pairs, the advisory carries
+    # the collapse count so the summary can show "N version-renames collapsed".
+    old, new = _snap("75.1", "75"), _snap("78.3", "78")
+    collapsed = compare(old, new, collapse_versioned_symbols=True)
+    adv = _versioned_advisory(collapsed)
+    assert adv is not None
+    assert adv.caused_count == len(_BASES)
+    assert "version-renames collapsed" in adv.description
+
+
+def _snap_with_soname(version: str, suffix: str, soname: str) -> AbiSnapshot:
+    from abicheck.elf_metadata import ElfMetadata
+    s = AbiSnapshot(library=f"libicuuc.so.{suffix}", version=version)
+    s.functions = [_fn(f"u_{b}_{suffix}", pt) for b, pt in _BASES.items()]
+    s.elf = ElfMetadata(soname=soname)
+    return s
+
+
+def test_soname_bump_surfaces_relink_signal_even_when_collapsed():
+    # G15 (2): a versioned scheme normally bumps the SONAME too. The collapse must
+    # not hide that dependents have to relink against the new shared object. The
+    # signal is keyed off the *observed* ELF DT_SONAME, not the library name.
+    old = _snap_with_soname("75.1", "75", soname="libicui18n.so.75")
+    new = _snap_with_soname("78.3", "78", soname="libicui18n.so.78")
+    result = compare(old, new, collapse_versioned_symbols=True)
+    adv = _versioned_advisory(result)
+    kinds = {c.kind for c in result.changes}
+    assert adv is not None
+    assert "SONAME" in adv.description and "relink" in adv.description
+    assert "libicui18n.so.75 -> libicui18n.so.78" in adv.description
+    assert ChangeKind.SONAME_BUMP_UNNECESSARY not in kinds
+
+
+def test_no_soname_note_when_soname_unchanged():
+    # Same ELF SONAME on both sides → no spurious relink note.
+    old = _snap_with_soname("75.1", "75", soname="libicui18n.so.75")
+    new = _snap_with_soname("78.3", "78", soname="libicui18n.so.75")
+    adv = _versioned_advisory(compare(old, new, collapse_versioned_symbols=True))
+    assert adv is not None
+    assert "relink" not in adv.description
+
+
+def test_collapse_with_soname_bump_does_not_call_it_unnecessary():
+    # Codex P2: collapsing the rename pairs makes has_breaking read False, which
+    # would let the SONAME-bump policy emit SONAME_BUMP_UNNECESSARY for the very
+    # bump the relink advisory says is required. The two must stay consistent: a
+    # collapsed versioned scheme justifies the bump.
+    old = _snap_with_soname("75.1", "75", soname="libicui18n.so.75")
+    new = _snap_with_soname("78.3", "78", soname="libicui18n.so.78")
+    result = compare(old, new, collapse_versioned_symbols=True)
+    kinds = {(c.kind.value if hasattr(c.kind, "value") else c.kind) for c in result.changes}
+    adv = _versioned_advisory(result)
+    assert adv is not None and "relink" in adv.description
+    assert "soname_bump_unnecessary" not in kinds, kinds
+
+
+def test_collapse_with_suppressed_advisory_still_justifies_soname_bump():
+    # Codex P2: even when a suppression matches the versioned-scheme advisory (so
+    # it never reaches `changes`), a collapse + real SONAME bump must not emit
+    # SONAME_BUMP_UNNECESSARY — the relink-required state is carried on the
+    # context, set before the advisory is suppressed.
+    from abicheck.suppression import Suppression, SuppressionList
+    old = _snap_with_soname("75.1", "75", soname="libicui18n.so.75")
+    new = _snap_with_soname("78.3", "78", soname="libicui18n.so.78")
+    supp = SuppressionList([Suppression(
+        symbol_pattern=".*", change_kind="versioned_symbol_scheme_detected")])
+    result = compare(old, new, collapse_versioned_symbols=True, suppression=supp)
+    kinds = {(c.kind.value if hasattr(c.kind, "value") else c.kind) for c in result.changes}
+    assert "versioned_symbol_scheme_detected" not in kinds  # advisory suppressed
+    assert "soname_bump_unnecessary" not in kinds, kinds
+
+
+def test_no_soname_note_inferred_from_library_name_without_elf():
+    # Codex P2: differently-named old/new snapshots with NO ELF metadata must not
+    # manufacture a SONAME-bump/relink note from the library *name* — that name is
+    # the input path, not an observed DT_SONAME (source-only / hand-authored JSON).
+    old = AbiSnapshot(library="libicuuc.so.75", version="75.1")
+    old.functions = [_fn(f"u_{b}_75", pt) for b, pt in _BASES.items()]
+    new = AbiSnapshot(library="libicuuc.so.78", version="78.3")
+    new.functions = [_fn(f"u_{b}_78", pt) for b, pt in _BASES.items()]
+    adv = _versioned_advisory(compare(old, new, collapse_versioned_symbols=True))
+    assert adv is not None
+    assert "relink" not in adv.description and "SONAME" not in adv.description

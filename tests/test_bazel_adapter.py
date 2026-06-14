@@ -20,6 +20,7 @@ so no live ``bazel`` is required, plus the live-query gating and CLI wiring.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from click.testing import CliRunner
 
@@ -612,4 +613,32 @@ def test_collect_evidence_bazel_link_only_pack_preserved(tmp_path):
     pack = BuildSourcePack.load(out)
     assert pack.build_evidence is not None
     assert len(pack.build_evidence.link_units) == 1
+    assert any(e.name == "bazel" and e.status == "ok" for e in pack.manifest.extractors)
+
+
+# A real `bazel aquery --output=jsonproto` capture from a minimal cc_library
+# (field-eval E2 / P21). Hand-built fixtures can drift from what bazel actually
+# emits; this pins the adapter against a genuine export.
+_REAL_AQUERY = Path(__file__).resolve().parent / "fixtures" / "bazel" / "cc_library_aquery.jsonproto.json"
+
+
+def test_bazel_real_aquery_export_yields_nonempty_l3():
+    ev = BazelAdapter(aquery=_REAL_AQUERY.read_text(encoding="utf-8")).collect()
+    # A real cc_library aquery carries CppCompile + CppLink/CppArchive actions,
+    # so the normalized L3 has at least one compile unit and a link unit.
+    assert len(ev.compile_units) >= 1, ev.diagnostics
+    assert len(ev.link_units) >= 1, ev.diagnostics
+    # The compile unit records a real C++ source and compiler argv.
+    cu = ev.compile_units[0]
+    assert cu.argv, cu
+    assert any(s.endswith((".cc", ".cpp", ".c")) for s in [cu.source] if s)
+
+
+def test_collect_real_bazel_aquery_pack_has_l3(tmp_path):
+    out = tmp_path / "pack"
+    result = CliRunner().invoke(main, ["collect", "--bazel-aquery", str(_REAL_AQUERY), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    pack = BuildSourcePack.load(out)
+    assert pack.build_evidence is not None
+    assert len(pack.build_evidence.compile_units) >= 1
     assert any(e.name == "bazel" and e.status == "ok" for e in pack.manifest.extractors)

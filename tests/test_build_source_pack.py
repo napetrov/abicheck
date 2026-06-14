@@ -449,6 +449,78 @@ def test_diff_emits_toolchain_version_changed():
     assert any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
 
 
+def test_diff_surfaces_toolchain_swap_with_asymmetric_language_keys():
+    # clang's DW_AT_producer ("clang version 18.1.3") carries no language token,
+    # so parse_producer yields language="" and the toolchain keys by id; gcc's
+    # ("GNU C17 13.3.0") keys by "C". The language keys never intersect, but the
+    # compiler identity clearly changed — drift must still surface so a
+    # gcc↔clang rebuild isn't silently dropped (field-eval E3 / P07).
+    old = BuildEvidence(toolchains=[
+        Toolchain(id="toolchain://gnu-13.3.0-dwarf", compiler_id="GNU", version="13.3.0", language="C")])
+    new = BuildEvidence(toolchains=[
+        Toolchain(id="toolchain://clang-18.1.3-dwarf", compiler_id="Clang", version="18.1.3", language="")])
+    changes = diff_build_evidence(old, new)
+    assert any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
+
+
+def test_diff_no_toolchain_drift_when_identity_matches_despite_missing_language():
+    # Same compiler/version on both sides (both language-less) must not false-fire
+    # through the asymmetric-key fallback.
+    tc = Toolchain(id="toolchain://clang-18.1.3-dwarf", compiler_id="Clang", version="18.1.3", language="")
+    changes = diff_build_evidence(BuildEvidence(toolchains=[tc]), BuildEvidence(toolchains=[tc]))
+    assert not any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
+
+
+def test_diff_no_toolchain_drift_for_target_asymmetry_same_compiler():
+    # Mixed evidence: CMake File API records a target_triple, DWARF producer
+    # leaves it empty. Same compiler+version must NOT report drift just because
+    # one side lacks target metadata (Codex P2: target asymmetry false positive).
+    old = BuildEvidence(toolchains=[
+        Toolchain(id="t-cmake", compiler_id="Clang", version="18.1.3",
+                  language="", target_triple="x86_64-linux-gnu")])
+    new = BuildEvidence(toolchains=[
+        Toolchain(id="t-dwarf", compiler_id="Clang", version="18.1.3", language="")])
+    changes = diff_build_evidence(old, new)
+    assert not any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
+
+
+def test_diff_no_toolchain_drift_for_version_asymmetry_same_compiler():
+    # One side identifies the compiler but exposes no parseable version (valid:
+    # Toolchain.version may be ""), the other has it. Same compiler must NOT
+    # report drift purely because version metadata is missing (Codex P2).
+    old = BuildEvidence(toolchains=[
+        Toolchain(id="t-cmake", compiler_id="GNU", version="", language="")])
+    new = BuildEvidence(toolchains=[
+        Toolchain(id="t-dwarf", compiler_id="GNU", version="13.3.0", language="")])
+    changes = diff_build_evidence(old, new)
+    assert not any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
+
+
+def test_diff_no_toolchain_drift_for_unknown_compiler_id():
+    # A toolchain may omit compiler_id (schema requires only id; adapters default
+    # it to ""). An unknown compiler on one side must not read as a swap against a
+    # known compiler on the other (Codex P2).
+    old = BuildEvidence(toolchains=[
+        Toolchain(id="t-unknown", compiler_id="", version="", language="")])
+    new = BuildEvidence(toolchains=[
+        Toolchain(id="t-gnu", compiler_id="GNU", version="13", language="")])
+    changes = diff_build_evidence(old, new)
+    assert not any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
+
+
+def test_diff_no_toolchain_drift_for_partial_evidence_with_shared_key():
+    # old has C=GNU + CXX=Clang; new has only C=GNU. The shared C toolchain is
+    # identical and the missing CXX record is absent evidence, not a swap — the
+    # no-shared-key fallback must not fire (Codex P2).
+    old = BuildEvidence(toolchains=[
+        Toolchain(id="c", compiler_id="GNU", version="13", language="C"),
+        Toolchain(id="cxx", compiler_id="Clang", version="18", language="CXX")])
+    new = BuildEvidence(toolchains=[
+        Toolchain(id="c", compiler_id="GNU", version="13", language="C")])
+    changes = diff_build_evidence(old, new)
+    assert not any(c.kind is ChangeKind.TOOLCHAIN_VERSION_CHANGED for c in changes)
+
+
 def test_diff_emits_toolchain_change_for_sysroot_option():
     old = BuildEvidence(build_options=[BuildOption("sysroot", "/a", abi_relevant=True)])
     new = BuildEvidence(build_options=[BuildOption("sysroot", "/b", abi_relevant=True)])
