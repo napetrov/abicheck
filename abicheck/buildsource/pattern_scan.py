@@ -62,7 +62,9 @@ SOURCE_SUFFIXES: frozenset[str] = frozenset(
         ".hxx",
         ".h++",
         ".inl",
+        ".inc",
         ".ipp",
+        ".tpp",
         ".tcc",
         ".c",
         ".cc",
@@ -246,12 +248,15 @@ _RULES: tuple[_Rule, ...] = (
 #: ``template void api<int>();``) or a forward ``extern template`` declaration
 #: in one pass. The distinguisher from a template *definition* is that the
 #: ``template`` keyword is followed by a declaration token, not ``<`` (which
-#: starts the parameter list of ``template <...>`` / ``template<...>``); the
-#: ``(?<![.>])`` guard rejects the dependent-name disambiguator ``x.template
-#: foo<...>()`` / ``p->template ...``. The optional ``extern`` group selects the
-#: kind so the two never double-count the same span. This covers both class and
-#: function template instantiations (ADR-035 D2).
-_TEMPLATE_RE = re.compile(r"\b(?P<extern>extern\s+)?(?<![.>])template\s+(?!<)")
+#: starts the parameter list of ``template <...>`` / ``template<...>``). The
+#: ``(?!\s*<)`` lookahead is anchored right after ``template`` so it rejects the
+#: definition even with arbitrary whitespace/newlines before ``<`` (it is
+#: zero-width and cannot be defeated by ``\s+`` backtracking). The ``(?<![.>])``
+#: guard rejects the dependent-name disambiguator ``x.template foo<...>()`` /
+#: ``p->template ...``. The optional ``extern`` group selects the kind so the
+#: two never double-count the same span. This covers both class and function
+#: template instantiations (ADR-035 D2).
+_TEMPLATE_RE = re.compile(r"(?P<extern>\bextern\s+)?(?<![.>])\btemplate\b(?!\s*<)\s+")
 
 
 @dataclass(frozen=True)

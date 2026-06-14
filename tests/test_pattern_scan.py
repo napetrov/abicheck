@@ -169,6 +169,9 @@ def test_non_cc_attribute_not_flagged_as_calling_convention() -> None:
         "template <typename T> class Foo {};",
         "template<typename T> void f(T x);",
         "template <class T, class U> struct Pair {};",
+        "template  <typename T> class Foo {};",  # two spaces before `<`
+        "template\n<typename T> class Foo {};",  # newline before `<`
+        "template\n  <typename T> struct S {};",  # newline + spaces
     ],
 )
 def test_template_definition_not_flagged_as_instantiation(definition: str) -> None:
@@ -312,6 +315,14 @@ def test_iter_source_files_filters_by_suffix(tmp_path: Path) -> None:
     (tmp_path / "data.bin").write_bytes(b"\x00\x01")
     found = {p.name for p in iter_source_files([tmp_path])}
     assert found == {"a.hpp", "b.cpp"}
+
+
+@pytest.mark.parametrize("name", ["detail.tpp", "Config.inc"])
+def test_iter_source_files_includes_tpp_and_inc(tmp_path: Path, name: str) -> None:
+    # These are header-like extensions the repo already recognizes elsewhere.
+    (tmp_path / name).write_text("#pragma pack(1)\nstruct S { int x; };")
+    found = {p.name for p in iter_source_files([tmp_path])}
+    assert name in found
 
 
 def test_iter_source_files_changed_scope(tmp_path: Path) -> None:
