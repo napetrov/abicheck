@@ -883,6 +883,72 @@ def _has_public_pointer_factory(
     return False
 
 
+def _opaque_usage_index(
+    candidates: set[str],
+    snap: AbiSnapshot,
+    bare_re_cache: dict[str, re.Pattern[str]],
+    factory_re_cache: dict[str, re.Pattern[str]],
+) -> tuple[set[str], set[str]]:
+    """Single pass over the public surface → ``(used_by_value, has_pointer_factory)``.
+
+    ``_filter_opaque_size_changes`` previously called ``_is_pointer_only_type`` and
+    ``_has_public_pointer_factory`` *per candidate*, each rescanning every public
+    function/variable with a word-boundary regex — O(candidates × functions) with
+    a regex per pair (``type_churn`` n=4000: ~3.2 M regex searches). This walks the
+    surface once and uses an Aho-Corasick prefilter (:class:`_SubstringMatcher`)
+    to narrow each type string to the candidates that actually occur in it; the
+    *decision* is still made by the same ``_type_used_by_value`` / factory regex
+    oracle, so the result is identical — the prefilter only drops pairs that could
+    never match.
+    """
+    used_by_value: set[str] = set()
+    has_factory: set[str] = set()
+    if not candidates:
+        return used_by_value, has_factory
+    ac = _SubstringMatcher(candidates)
+
+    def _bare(c: str) -> re.Pattern[str]:
+        r = bare_re_cache.get(c)
+        if r is None:
+            r = re.compile(r"\b" + re.escape(c) + r"\b")
+            bare_re_cache[c] = r
+        return r
+
+    def _factory(c: str) -> re.Pattern[str]:
+        r = factory_re_cache.get(c)
+        if r is None:
+            r = re.compile(r"\b" + re.escape(c) + r"\s*\*")
+            factory_re_cache[c] = r
+        return r
+
+    def _scan_by_value(text: str | None) -> None:
+        if not text:
+            return
+        for c in ac.find(text):
+            if c not in used_by_value and _type_used_by_value(text, _bare(c)):
+                used_by_value.add(c)
+
+    for f in snap.functions:
+        if f.visibility not in _PUBLIC_VIS:
+            continue
+        rt = f.return_type or ""
+        # Pointer factory: a public function returning ``T*`` (never ``T&``).
+        if rt and "&" not in rt:
+            for c in ac.find(rt):
+                if c not in has_factory and _factory(c).search(rt):
+                    has_factory.add(c)
+        _scan_by_value(f.return_type)
+        for p in f.params:
+            _scan_by_value(p.type)
+
+    for v in snap.variables:
+        if v.visibility not in _PUBLIC_VIS:
+            continue
+        _scan_by_value(v.type)
+
+    return used_by_value, has_factory
+
+
 def _filter_opaque_size_changes(
     changes: list[Change], old: AbiSnapshot, new: AbiSnapshot
 ) -> tuple[list[Change], list[Change]]:
@@ -921,29 +987,36 @@ def _filter_opaque_size_changes(
         ChangeKind.STRUCT_ALIGNMENT_CHANGED,
     }
 
-    opaque_types: set[str] = set()
-    # Shared regex caches so patterns are compiled once across all candidate types.
+    # Candidate types: a size change whose change set is a *compatible append*
+    # only (the narrow case62 rule). Resolve this cheaply first so the usage
+    # index below is built over the small candidate set, not every changed type.
+    candidates = {
+        t
+        for t in size_change_types
+        if ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE in by_type[t]
+        and not (by_type[t] & forbidden)
+    }
+
+    # One pass per snapshot instead of a per-candidate full rescan: opaque ⟺
+    # the type is never used by value in either snapshot *and* has a pointer
+    # factory (T*) in both (the case07 regression guard). Shared regex caches so
+    # each candidate's patterns compile once across both snapshots.
     _bare_re_cache: dict[str, re.Pattern[str]] = {}
     _factory_re_cache: dict[str, re.Pattern[str]] = {}
-    for t in size_change_types:
-        kinds = by_type[t]
-        if ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE not in kinds:
-            continue
-        if kinds & forbidden:
-            continue
-        if not (
-            _is_pointer_only_type(t, old, _bare_re_cache)
-            and _is_pointer_only_type(t, new, _bare_re_cache)
-        ):
-            continue
-        # Narrow guard to avoid case07-style regressions:
-        # opaque handles are typically created by factory APIs returning T*.
-        if not (
-            _has_public_pointer_factory(t, old, _factory_re_cache)
-            and _has_public_pointer_factory(t, new, _factory_re_cache)
-        ):
-            continue
-        opaque_types.add(t)
+    old_byval, old_factory = _opaque_usage_index(
+        candidates, old, _bare_re_cache, _factory_re_cache
+    )
+    new_byval, new_factory = _opaque_usage_index(
+        candidates, new, _bare_re_cache, _factory_re_cache
+    )
+    opaque_types: set[str] = {
+        t
+        for t in candidates
+        if t not in old_byval
+        and t not in new_byval
+        and t in old_factory
+        and t in new_factory
+    }
 
     if not opaque_types:
         return changes, []

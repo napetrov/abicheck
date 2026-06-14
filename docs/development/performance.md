@@ -32,18 +32,15 @@ the work is organised.
 | 5 | Type-spelling fallback (`diff_type_spellings`) | Rebuilt a `set(...)` inside a comprehension → O(n²). | Hoist the set once. | folded into `add_remove` win |
 | 6 | Affected-symbol enrichment / ancestor closure (`diff_filtering`) | Transitive ancestor function **lists** accumulated duplicates, then re-sorted per change → effectively cubic on nested type graphs. | Use sets (dedup on union); sort once. | `nested_types` n=200: **>60 s → 0.16 s** |
 | 7 | ELF-only rename matching (`binary_fingerprint`, `diff_symbols._plausible_rename`) | O(removed × added) name-similarity scan; the name predicate re-demangled both names per pair. | Scan only the size-tolerance window via the existing size index; cache the per-name parse; cap the heuristic pass for mass-rename inputs. | `rename_churn` n=1000: **13.2 s → 2.1 s**, larger inputs bounded |
-| 8 | Affected-symbol enrichment type↔function/field mapping (`diff_filtering._build_type_to_funcs`, `_build_type_embed_index`) | `any(tname in ft ...)` nested inside the type loop and the function/field loop → O(types × functions × refs); quadratic when many distinct types churn (a header refactor or versioned upgrade). The original perf sweep only sampled these scenarios at n=500, so the exponent was never computed and the table mislabelled them "linear". | One Aho-Corasick `_SubstringMatcher` over the affected type names, built once and shared; each ref/field is matched in O(len) with **identical** substring semantics. | `typedef_churn` n=4000: **6.3 s → 0.73 s**; `union_churn` **9.1 s → 1.10 s**; `vtable_churn` **7.8 s → 1.03 s** (all now linear) |
+| 8 | Affected-symbol enrichment type↔function/field mapping (`diff_filtering._build_type_to_funcs`, `_build_type_embed_index`) | `any(tname in ft ...)` nested inside the type loop and the function/field loop → O(types × functions × refs); quadratic when many distinct types churn (a header refactor or versioned upgrade). The original perf sweep only sampled these scenarios at n=500, so the exponent was never computed and the table mislabelled them "linear". | One Aho-Corasick `_SubstringMatcher` over the affected type names, built once and shared; each ref/field is matched in O(len) with **identical** substring semantics. | `typedef_churn` n=4000: **6.3 s → 0.73 s**; `union_churn` **9.1 s → 1.10 s**; `vtable_churn` **7.8 s → 1.03 s**; `enum_churn` **≈1.8 → 1.0**; `opaque_filter` **≈1.7 → 1.2** (all now linear) |
+| 9 | Opaque-handle pointer-only / factory check (`diff_filtering._is_pointer_only_type`, `_has_public_pointer_factory` via `_filter_opaque_size_changes`) | Each opaque candidate rescanned every public function/variable with a word-boundary regex → O(candidates × functions), a regex per pair (`type_churn` n=4000: ~3.2 M searches). | One indexed pass per snapshot (`_opaque_usage_index`): an Aho-Corasick prefilter narrows each type string to the candidates present, then the **same** regex oracle decides — so the verdict is unchanged (verified by a fuzz test vs the per-candidate functions). | `type_churn` n=4000: **1.13 s → 0.38 s** (≈1.6 → linear) |
 
-The one remaining super-linear path is the **opaque-handle pointer-only check**
-(`diff_filtering._is_pointer_only_type`, reached from `_filter_opaque_size_changes`):
-for each opaque candidate it rescans every public function/variable with a
-word-boundary regex, so it is O(candidates × functions) with a regex per pair
-(`type_churn` n=4000: ~3.2 M regex searches, tail exponent ≈1.6). It is left
-as-is for now: it only triggers on the narrow "compatible struct growth of a
-pointer-only handle" pattern, so the candidate count is small for real libraries;
-`type_churn` forces *every* struct into that pattern as the worst case. (The
-enrichment cost that previously dominated `type_churn`/`opaque_filter` is gone
-with fix #8.)
+With fixes #8 and #9 the compare pipeline has **no remaining quadratic path** at
+the tracked sizes — every scenario is linear (tail exponent ≈1.0–1.3) except the
+inherently deep `nested_types` chain. The opaque-handle pointer-only check
+(`_is_pointer_only_type`) used to be O(candidates × functions) with a
+word-boundary regex per pair (`type_churn` n=4000: ~3.2 M regex searches, ≈1.6);
+fix #9 replaced the per-candidate rescan with one indexed pass.
 
 ## How to reproduce
 
@@ -78,7 +75,7 @@ reporting stages — see [Coverage beyond `compare()`](#coverage-beyond-compare)
 | `macho_churn` | `compare()` | Mach-O export diffing (`diff_platform` Mach-O arm) |
 | `var_churn` | `compare()` | Public-surface classification |
 | `rename_churn` | `compare()` | ELF-only fingerprint rename matching |
-| `versioned_rename_churn` | `compare()` | Versioned-symbol-scheme collapse + churn (ICU/OpenSSL `u_*_NN`) |
+| `versioned_rename_churn` | `compare()` (collapse on) | Versioned-symbol-scheme detection **and** collapse over `2×n` churn (ICU/OpenSSL `u_*_NN`) |
 | `nested_types` | `compare()` | Transitive type-ancestor closure |
 | `opaque_filter` | `compare()` | Opaque-handle size filter (the known O(candidates × functions) residual) |
 | `suppression_audit` | `SuppressionList.audit()` | Rule-vs-finding matching (O(rules × findings)) |
@@ -136,7 +133,7 @@ reporting stages (see [Coverage beyond `compare()`](#coverage-beyond-compare)).
 | `wide_struct` | 0.1–0.2 s @ n=500 | ~1.0 (linear) |
 | `typedef_churn` / `union_churn` / `vtable_churn` | 0.7–1.1 s @ n=4000 | ~1.0 (linear, after fix #8) |
 | `enum_churn`   | 1.0 s @ n=4000 | ~1.0 (linear, after fix #8 — was ≈1.8) |
-| `type_churn`   | 1.13 s @ n=4000 | ~1.6 (`_is_pointer_only_type` O(candidates × functions), regex per pair) |
+| `type_churn`   | 0.38 s @ n=4000 | ~1.0 (linear, after fix #9 — was ≈1.6) |
 | `opaque_filter`| 0.45 s @ n=1000 | ~1.2 (linear at tracked sizes after fix #8) |
 | `rename_churn` | 2.1 s @ n=1000, capped above | bounded |
 | `versioned_rename_churn` | 0.87 s @ n=8000 (16 k changes) | ~1.1–1.2 (mild) |
@@ -190,7 +187,7 @@ peak-memory tracking and PR-vs-base drift detection. Current status:
 | HTML / SARIF / JUnit reporting | ✅ covered | `report_html` / `report_sarif` / `report_junit` scenarios + `slow` tests; all linear. (`to_markdown`/`to_json` already guarded.) |
 | Enum / typedef / union / wide-struct / vtable diffing | ✅ covered | `enum_churn`, `typedef_churn`, `union_churn`, `wide_struct`, `vtable_churn`. Sweeping `typedef`/`union`/`vtable`/`enum` across sizes (the original table only sampled n=500, so no exponent was ever computed) exposed a genuine **≈O(n²)** in the affected-symbol enrichment — see fix #8; all four are linear after it, and `opaque_filter` dropped from ≈1.7 to ≈1.2 as a side effect (its cost was the enrichment, not `_filter_opaque_size_changes`). |
 | PE/COFF & Mach-O diff arms | ✅ covered | `pe_churn` / `macho_churn` build `pe=`/`macho=` snapshots so `diff_platform`'s PE/Mach-O detectors run. |
-| Opaque-handle pointer-only check | ✅ covered | The O(candidates × functions) residual is `_is_pointer_only_type` (regex per pair), surfaced by `type_churn` (≈1.6). `opaque_filter` itself is linear at tracked sizes after fix #8. |
+| Opaque-handle pointer-only check | ✅ covered | Was the O(candidates × functions) residual (`_is_pointer_only_type`, regex per pair, surfaced by `type_churn` ≈1.6); fix #9 linearized it via `_opaque_usage_index` (one indexed pass). Both `type_churn` and `opaque_filter` are now linear. |
 | **Versioned-symbol-scheme collapse (ICU/OpenSSL)** | ✅ covered | `versioned_rename_churn` reproduces the field-eval P08 ICU 75→78 shape (16 k removed/added churn findings + the scheme-collapse pass). Profiling it surfaced a per-finding name re-tokenization in the namespace detectors (`diff_namespaces._segments`), now fast-pathed for plain names. ~1.1–1.2 tail exponent; the residual is the post-processing detector fan-out, not the scheme recogniser. |
 | Severity categorization | ✅ covered | `severity` scenario over `categorize_changes`; linear. |
 | Peak memory (all scenarios) | ✅ covered | `tracemalloc` `peak_mb` column + `--max-memory-mb` gate (cold-cache pass). |
@@ -201,19 +198,18 @@ peak-memory tracking and PR-vs-base drift detection. Current status:
 
 ### Recommended next steps (in priority order)
 
-1. **Wire a budget gate on the linear scenarios** now that they're stable —
-   e.g. `--max-exponent 1.4` on the linear scenarios and a `--max-memory-mb`
-   ceiling — while leaving the known super-linear scenarios (`type_churn`,
-   `enum_churn`, `opaque_filter`, `nested_types`) non-gating. Likewise, drop
-   `continue-on-error` from the `regression` job once its tolerance has proven
-   stable across a few PRs.
+1. **Wire a budget gate** now that every `compare()` scenario is linear (fixes
+   #8/#9) — e.g. `--max-exponent 1.4` across the board (only the inherently deep
+   `nested_types` chain stays exempt) and a `--max-memory-mb` ceiling. Likewise,
+   drop `continue-on-error` from the `regression` job once its tolerance has
+   proven stable across a few PRs.
 2. **Extend the dump/parse guard to DWARF/PE/PDB** — the ELF symbol-table parse
    is now covered (`tests/test_perf_dump_scaling.py`), but the DWARF/castxml and
    PE/PDB parsers need a committed large real binary or a synthetic byte-stream
    generator behind the `integration` marker.
-3. **Optimise the super-linear residuals** — `opaque_filter`
-   (`_filter_opaque_size_changes`, O(candidates × functions)) and `enum_churn`
-   are tracked at ≈1.7 but not yet linearised.
+3. ~~**Optimise the super-linear residuals**~~ — done: fix #8 linearized the
+   enrichment (typedef/union/vtable/enum/opaque), fix #9 the opaque pointer-only
+   check (`type_churn`). No quadratic `compare()` path remains at tracked sizes.
 
 ## Baseline regression
 
