@@ -73,6 +73,10 @@ def _kinds(text: str) -> set[PatternKind]:
             'void f() __attribute__((visibility("hidden")));',
             PatternKind.ATTRIBUTE_VISIBILITY,
         ),
+        (
+            'void f() __attribute__((aligned(8), visibility("hidden")));',
+            PatternKind.ATTRIBUTE_VISIBILITY,
+        ),
         ('[[gnu::visibility("default")]] void f();', PatternKind.ATTRIBUTE_VISIBILITY),
         ("__declspec(dllexport) int api(void);", PatternKind.DECLSPEC_DLLEXPORT),
         ("__declspec(dllimport) int api(void);", PatternKind.DECLSPEC_DLLIMPORT),
@@ -267,6 +271,44 @@ def test_iter_source_files_changed_scope(tmp_path: Path) -> None:
         p.name for p in iter_source_files([inc], changed_paths=["include/public.h"])
     }
     assert found == {"public.h"}
+
+
+def test_iter_source_files_includes_extensionless_headers(tmp_path: Path) -> None:
+    inc = tmp_path / "include" / "mylib"
+    inc.mkdir(parents=True)
+    (inc / "Core").write_text("struct S { virtual void f(); };")  # extensionless
+    (inc / "notes.md").write_text("# docs")
+    found = {p.name for p in iter_source_files([tmp_path / "include"])}
+    assert "Core" in found
+    assert "notes.md" not in found
+
+
+def test_iter_source_files_extensionless_changed_scope(tmp_path: Path) -> None:
+    inc = tmp_path / "include" / "mylib"
+    inc.mkdir(parents=True)
+    (inc / "Core").write_text("struct S { virtual void f(); };")
+    found = iter_source_files(
+        [tmp_path / "include"], changed_paths=["include/mylib/Core"]
+    )
+    assert [p.name for p in found] == ["Core"]
+
+
+def test_iter_source_files_explicit_file_honored_regardless_of_suffix(
+    tmp_path: Path,
+) -> None:
+    f = tmp_path / "PublicHeader"  # extensionless, passed directly
+    f.write_text("struct S { virtual void f(); };")
+    found = iter_source_files([f])
+    assert found == [f]
+
+
+def test_scan_files_finds_constructs_in_extensionless_header(tmp_path: Path) -> None:
+    inc = tmp_path / "include"
+    inc.mkdir()
+    (inc / "Core").write_text("#pragma pack(1)\nstruct S { int x; };")
+    res = scan_files([inc], changed_paths=["include/Core"])
+    assert res.files_scanned == 1
+    assert PatternKind.PRAGMA_PACK in {f.kind for f in res.facts}
 
 
 def test_iter_source_files_changed_scope_bare_name(tmp_path: Path) -> None:

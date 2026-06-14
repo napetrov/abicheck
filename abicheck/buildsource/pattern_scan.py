@@ -153,8 +153,11 @@ _RULES: tuple[_Rule, ...] = (
     _Rule(
         PatternKind.ATTRIBUTE_VISIBILITY,
         PatternCategory.VISIBILITY,
+        # Match `visibility` anywhere in the attribute list (including after a
+        # nested arg, e.g. `__attribute__((aligned(8), visibility("hidden")))`)
+        # by scanning to the statement boundary, not the first `)`.
         re.compile(
-            r"__attribute__\s*\(\s*\([^)]*\bvisibility\b"
+            r"__attribute__\s*\(\s*\([^;{]*\bvisibility\b"
             r"|\[\[\s*gnu::visibility"
         ),
         False,
@@ -512,12 +515,27 @@ def scan_text(text: str, path: str = "") -> list[PatternFact]:
     return facts
 
 
+def _is_scannable(path: Path) -> bool:
+    """True if a directory-walked file should be lexically scanned.
+
+    Known C/C++ suffixes plus **extensionless** files: many C++ libraries ship
+    extensionless public headers (``include/mylib/Core``), and the D2 scope is
+    "changed + public headers", not "files with a C/C++ extension". Files with a
+    different, explicit extension (``.md``, ``.txt``, ``.bin``) are skipped.
+    """
+    suffix = path.suffix.lower()
+    return suffix in SOURCE_SUFFIXES or suffix == ""
+
+
 def iter_source_files(
     roots: Iterable[str | Path],
     changed_paths: Iterable[str] | None = None,
 ) -> list[Path]:
     """Collect C/C++ source/header files under ``roots`` (files or directories).
 
+    A ``root`` that is a **file** is honored regardless of suffix — the caller
+    pointed at it directly. A ``root`` that is a **directory** is walked and
+    filtered by :func:`_is_scannable` (known suffixes + extensionless headers).
     When ``changed_paths`` is given, the result is intersected with it (by
     suffix-matching the path tail), implementing the ADR-035 D2 "changed +
     public" scope: callers pass public roots and the PR's changed paths. The
@@ -531,13 +549,13 @@ def iter_source_files(
     for root in roots:
         rp = Path(root)
         if rp.is_file():
-            candidates = [rp]
+            candidates = [(rp, True)]  # explicit file: honor regardless of suffix
         elif rp.is_dir():
-            candidates = [p for p in rp.rglob("*") if p.is_file()]
+            candidates = [(p, False) for p in rp.rglob("*") if p.is_file()]
         else:
             continue
-        for cand in candidates:
-            if cand.suffix.lower() not in SOURCE_SUFFIXES:
+        for cand, explicit in candidates:
+            if not explicit and not _is_scannable(cand):
                 continue
             if changed_suffixes is not None and not _path_changed(
                 cand, changed_suffixes
