@@ -43,6 +43,7 @@ from abicheck.buildsource.pack import BuildSourcePack
 from abicheck.buildsource.source_graph import SourceGraphSummary
 from abicheck.checker_policy import ChangeKind, Confidence, Verdict
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol
+from abicheck.macho_metadata import MachoExport, MachoMetadata
 from abicheck.model import (
     AbiSnapshot,
     AccessLevel,
@@ -126,6 +127,26 @@ def test_exported_not_public_covers_variables():
     assert len(_findings_of(res, ChangeKind.EXPORTED_NOT_PUBLIC)) == 1
 
 
+def test_exported_not_public_flags_elf_only_visibility_symbol():
+    # Real export-only symbols carry Visibility.ELF_ONLY (not PUBLIC) — the
+    # provenance pass only tags EXPORT_ONLY for ELF_ONLY-visibility decls, so the
+    # check must not require PUBLIC visibility (Codex review).
+    snap = _snap(elf=_elf("_Z6secretv"))
+    snap.functions = [
+        Function(
+            name="secret",
+            mangled="_Z6secretv",
+            return_type="void",
+            visibility=Visibility.ELF_ONLY,
+            origin=ScopeOrigin.EXPORT_ONLY,
+        ),
+    ]
+    res = run_crosschecks(snap)
+    assert [c.symbol for c in _findings_of(res, ChangeKind.EXPORTED_NOT_PUBLIC)] == [
+        "_Z6secretv"
+    ]
+
+
 def test_exported_not_public_clean_when_everything_declared():
     snap = _snap(elf=_elf("_Z3fooi"))
     snap.functions = [
@@ -177,6 +198,7 @@ def test_public_not_exported_flags_missing_symbol():
         lambda f: setattr(f, "is_inline", True),
         lambda f: setattr(f, "is_pure_virtual", True),
         lambda f: setattr(f, "is_deleted", True),
+        lambda f: setattr(f, "is_static", True),
         lambda f: setattr(f, "visibility", Visibility.HIDDEN),
         lambda f: setattr(f, "access", AccessLevel.PRIVATE),
         lambda f: setattr(f, "mangled", ""),
@@ -228,6 +250,33 @@ def test_public_not_exported_uses_pe_exports():
     ]
     res = run_crosschecks(snap)
     assert len(_findings_of(res, ChangeKind.PUBLIC_NOT_EXPORTED)) == 1
+
+
+def test_public_not_exported_normalizes_macho_underscore():
+    # The dumper stores Function.mangled without the Mach-O leading underscore,
+    # but the export table keeps it. A `foo` decl whose `_foo` is exported must
+    # be treated as present, not flagged (Codex review).
+    snap = _snap(macho=MachoMetadata(exports=[MachoExport(name="_foo")]))
+    snap.functions = [
+        Function(
+            name="foo",
+            mangled="foo",
+            return_type="void",
+            is_extern_c=True,
+            origin=ScopeOrigin.PUBLIC_HEADER,
+        ),
+        # `bar` is declared but not exported even after normalization → flagged.
+        Function(
+            name="bar",
+            mangled="bar",
+            return_type="void",
+            is_extern_c=True,
+            origin=ScopeOrigin.PUBLIC_HEADER,
+        ),
+    ]
+    res = run_crosschecks(snap)
+    hits = _findings_of(res, ChangeKind.PUBLIC_NOT_EXPORTED)
+    assert [c.symbol for c in hits] == ["bar"]
 
 
 # --------------------------------------------------------------------------- #
@@ -303,6 +352,27 @@ def test_private_header_leak_flags_public_api_exposing_private_type():
     assert len(hits) == 1
     assert hits[0].caused_by_type == "Impl"
     assert hits[0].confidence == Confidence.MEDIUM
+
+
+def test_private_header_leak_skips_pimpl_with_public_forward_decl():
+    # Opaque-handle/PIMPL: `class Impl;` is forward-declared in a public header
+    # and defined in a private one. The type IS on the public surface, so a
+    # public API taking `Impl *` is not a leak (Codex review).
+    snap = _snap(elf=_elf("_Z3usev"))
+    snap.functions = [
+        Function(
+            name="use",
+            mangled="_Z3usev",
+            return_type="Impl *",
+            origin=ScopeOrigin.PUBLIC_HEADER,
+        ),
+    ]
+    snap.types = [
+        RecordType(name="Impl", kind="struct", origin=ScopeOrigin.PUBLIC_HEADER),
+        RecordType(name="Impl", kind="struct", origin=ScopeOrigin.PRIVATE_HEADER),
+    ]
+    res = run_crosschecks(snap)
+    assert _findings_of(res, ChangeKind.PRIVATE_HEADER_LEAK) == []
 
 
 def test_private_header_leak_matches_namespaced_param_type():

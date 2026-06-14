@@ -204,6 +204,12 @@ def _check_exported_not_public(
     construction, present in the binary's export table but in no public header.
     The classification only runs when a public-header set was supplied, so the
     check skips cleanly on an ELF-only / no-header snapshot.
+
+    Gating on ``origin == EXPORT_ONLY`` alone (not visibility) is deliberate: the
+    provenance pass only sets that origin for ``Visibility.ELF_ONLY`` symbols
+    (``provenance.tag_provenance``), so a real exported-but-undocumented symbol
+    carries ELF_ONLY visibility — requiring ``PUBLIC`` here would miss every one
+    of them (Codex review).
     """
     providers = [PROVIDER_BINARY_EXPORTS, PROVIDER_PUBLIC_HEADER_AST]
     if not _origin_resolvable(snapshot):
@@ -211,7 +217,7 @@ def _check_exported_not_public(
 
     findings: list[Change] = []
     for fn in snapshot.functions:
-        if fn.visibility == Visibility.PUBLIC and fn.origin == ScopeOrigin.EXPORT_ONLY:
+        if fn.origin == ScopeOrigin.EXPORT_ONLY:
             findings.append(
                 _change(
                     ChangeKind.EXPORTED_NOT_PUBLIC,
@@ -225,10 +231,7 @@ def _check_exported_not_public(
                 )
             )
     for var in snapshot.variables:
-        if (
-            var.visibility == Visibility.PUBLIC
-            and var.origin == ScopeOrigin.EXPORT_ONLY
-        ):
+        if var.origin == ScopeOrigin.EXPORT_ONLY:
             findings.append(
                 _change(
                     ChangeKind.EXPORTED_NOT_PUBLIC,
@@ -492,13 +495,24 @@ def _origin_resolvable(snapshot: AbiSnapshot) -> bool:
 
 
 def _exported_symbol_names(snapshot: AbiSnapshot) -> set[str] | None:
-    """The binary's exported symbol names, or ``None`` if no export table exists."""
+    """The binary's exported symbol names, or ``None`` if no export table exists.
+
+    Mach-O names are normalized the same way the dumper normalizes
+    ``Function.mangled`` (strip the platform's single leading underscore:
+    ``_foo`` → ``foo``, ``__Z...`` → ``_Z...``) so the comparison set matches the
+    header-side mangled spelling instead of flagging every C/C++ symbol as
+    missing (Codex review).
+    """
     if snapshot.elf is not None:
         return {s.name for s in snapshot.elf.symbols if s.name}
     if snapshot.pe is not None:
         return {e.name for e in snapshot.pe.exports if e.name}
     if snapshot.macho is not None:
-        return {e.name for e in snapshot.macho.exports if e.name}
+        return {
+            e.name[1:] if e.name.startswith("_") else e.name
+            for e in snapshot.macho.exports
+            if e.name
+        }
     return None
 
 
@@ -514,6 +528,11 @@ def _has_export_obligation(fn: Function) -> bool:
     if fn.access != AccessLevel.PUBLIC:
         return False
     if fn.origin != ScopeOrigin.PUBLIC_HEADER:
+        return False
+    # ``static`` free functions have internal linkage and emit no dynamic
+    # symbol, so a static header helper must not be read as a missing export
+    # (Codex review).
+    if fn.is_static:
         return False
     if fn.is_inline or fn.is_pure_virtual or fn.is_deleted:
         return False
@@ -635,16 +654,36 @@ def _referenced_private_types(
     return sorted(hit)
 
 
+#: Origins that put a type *on* the public surface, so a same-named private
+#: definition is the legitimate opaque-handle/PIMPL pattern, not a leak.
+_PUBLIC_TYPE_ORIGINS = frozenset({ScopeOrigin.PUBLIC_HEADER, ScopeOrigin.GENERATED})
+
+
 def _private_type_names(snapshot: AbiSnapshot) -> dict[str, str]:
-    """Map matchable token → canonical name for records/enums in private headers.
+    """Map matchable token → canonical name for records/enums *only* in private headers.
 
     Each private type contributes its canonical name and (when namespaced) its
     trailing segment, both pointing at the canonical name so a match on either
     spelling collapses to one finding.
+
+    A type that *also* has a public-header (or generated) declaration is excluded
+    — the common opaque-handle/PIMPL pattern forward-declares ``class Impl;`` in a
+    public header and defines it privately, so a public API taking ``Impl *`` is
+    not a leak (Codex review).
     """
+    public_names: set[str] = set()
+    for rec in snapshot.types:
+        if rec.origin in _PUBLIC_TYPE_ORIGINS and rec.name:
+            public_names.add(rec.name)
+    for en in snapshot.enums:
+        if en.origin in _PUBLIC_TYPE_ORIGINS and en.name:
+            public_names.add(en.name)
+
     names: dict[str, str] = {}
 
     def _register(name: str) -> None:
+        if name in public_names:
+            return
         names[name] = name
         if "::" in name:
             names.setdefault(name.rsplit("::", 1)[1], name)
