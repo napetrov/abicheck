@@ -46,28 +46,58 @@ if TYPE_CHECKING:
     from .checker_types import Change, DiffResult
 
 
-# Canonical verdict → presentation-vocabulary maps (ADR-036). Each output
-# channel used to re-encode this mapping privately (reporter, sarif, pr_comment),
-# so they agreed only by luck and could drift. They now all source it here.
+# ── Canonical cross-axis presentation mapping (ADR-036) ──────────────────────
+#
+# All output channels share ONE authoritative table mapping the canonical
+# verdict to each channel's vocabulary. The axes are deliberately distinct (they
+# answer different questions and have different origins) — the point of this
+# table is that the *mapping between them* lives in exactly one place, so they
+# can be related and verified rather than re-encoded per renderer.
+#
+#   verdict                | native label | SARIF level | breaking boundary
+#   -----------------------|--------------|-------------|------------------
+#   BREAKING               | breaking     | error       | yes
+#   API_BREAK              | api_break    | error       | yes
+#   COMPATIBLE_WITH_RISK   | risk         | warning     | no
+#   COMPATIBLE             | compatible   | note        | no
+#
+# Two further axes are intentionally NOT verdict-derived and keep their own
+# single-source mappings (see ADR-036):
+#   * ABICC display severity (High/Medium/Low) — kind-based, ABICC parity,
+#     in ``report_classifications.severity``.
+#   * symbol origin (rtti/internal/public) — name-based, in
+#     ``name_classification.symbol_origin``.
+# The SARIF *level* here is the override-path mapping; SARIF additionally uses a
+# finer per-kind level for non-overridden findings (``policy_for(kind).severity``).
 
-# Native report severity label (JSON `severity`, PR-comment input, text report).
-VERDICT_TO_SEVERITY_LABEL: dict[Verdict, str] = {
-    Verdict.BREAKING: "breaking",
-    Verdict.API_BREAK: "api_break",
-    Verdict.COMPATIBLE_WITH_RISK: "risk",
-    Verdict.COMPATIBLE: "compatible",
+
+@dataclass(frozen=True)
+class VerdictPresentation:
+    """How one canonical verdict presents in each verdict-derived channel axis."""
+
+    severity_label: str  # native JSON/text label + PR-comment input
+    sarif_level: str  # SARIF level on the override path
+    breaking_boundary: bool  # error/failure side of the gate?
+
+
+VERDICT_PRESENTATION: dict[Verdict, VerdictPresentation] = {
+    Verdict.BREAKING: VerdictPresentation("breaking", "error", True),
+    Verdict.API_BREAK: VerdictPresentation("api_break", "error", True),
+    Verdict.COMPATIBLE_WITH_RISK: VerdictPresentation("risk", "warning", False),
+    Verdict.COMPATIBLE: VerdictPresentation("compatible", "note", False),
 }
 
-# SARIF result level.
-VERDICT_TO_SARIF_LEVEL: dict[Verdict, str] = {
-    Verdict.BREAKING: "error",
-    Verdict.API_BREAK: "error",
-    Verdict.COMPATIBLE_WITH_RISK: "warning",
-    Verdict.COMPATIBLE: "note",
-}
-
-# Fallback label for a verdict not in the map (defensive; should not occur).
+# Fallback label for a verdict not in the table (defensive; should not occur).
 UNKNOWN_SEVERITY_LABEL = "unknown"
+
+# Back-compat projections derived from the single table above, so the existing
+# import names in reporter/sarif keep working without a second source of truth.
+VERDICT_TO_SEVERITY_LABEL: dict[Verdict, str] = {
+    v: p.severity_label for v, p in VERDICT_PRESENTATION.items()
+}
+VERDICT_TO_SARIF_LEVEL: dict[Verdict, str] = {
+    v: p.sarif_level for v, p in VERDICT_PRESENTATION.items()
+}
 
 
 @dataclass(frozen=True)
@@ -112,14 +142,12 @@ class ReportModel:
 
         This is the verdict axis used by the JSON/text reports and consumed by
         the PR comment. SARIF keeps a finer per-kind level (see
-        :data:`VERDICT_TO_SARIF_LEVEL`, used only on the A4 override path); the
-        cross-channel invariant is the *breaking boundary* and override
-        propagation, not identical vocabulary — see ADR-036 and
-        ``tests/test_report_integrity.py``.
+        :data:`VERDICT_PRESENTATION`, the override path); the cross-channel
+        invariant is the *breaking boundary* and override propagation, not
+        identical vocabulary — see ADR-036 and ``tests/test_report_integrity.py``.
         """
-        return VERDICT_TO_SEVERITY_LABEL.get(
-            self.verdict_of(change), UNKNOWN_SEVERITY_LABEL
-        )
+        pres = VERDICT_PRESENTATION.get(self.verdict_of(change))
+        return pres.severity_label if pres else UNKNOWN_SEVERITY_LABEL
 
     def is_breaking_boundary(self, change: Change) -> bool:
         """True if *change* is on the breaking side of the gate (BREAKING/API_BREAK).
@@ -128,7 +156,8 @@ class ReportModel:
         must read as error/failure in SARIF/JUnit and breaking in JSON/text;
         one not here must never read as error/failure.
         """
-        return self.verdict_of(change) in (Verdict.BREAKING, Verdict.API_BREAK)
+        pres = VERDICT_PRESENTATION.get(self.verdict_of(change))
+        return pres.breaking_boundary if pres else False
 
     @classmethod
     def from_result(

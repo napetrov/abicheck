@@ -32,7 +32,12 @@ with each other and, worse, with the gate/exit code.
 1. **Introduce a `ReportModel`** (`abicheck/report_model.py`) — a render-ready
    value object built once from a `DiffResult`: the (optionally `show_only`-
    filtered) change set, the four verdict-axis buckets, and the headline
-   summary. Renderers become thin projections over it.
+   summary. Renderers become thin projections over it. The verdict→vocabulary
+   projections (native label, SARIF override level, breaking boundary) live in a
+   **single authoritative `VERDICT_PRESENTATION` table**; the legacy
+   `VERDICT_TO_SEVERITY_LABEL` / `VERDICT_TO_SARIF_LEVEL` dicts are *derived* from
+   it so there is exactly one source of truth, asserted internally consistent by
+   `tests/test_report_integrity.py`.
 
 2. **Canonical report severity = the verdict axis**, specifically each finding's
    `result._effective_verdict_for_change(c)` (which already honours PolicyFile

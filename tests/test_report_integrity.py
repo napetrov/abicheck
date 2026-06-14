@@ -40,6 +40,7 @@ from abicheck.junit_report import _is_failure
 from abicheck.model import AbiSnapshot, Function, Visibility
 from abicheck.report_model import (
     UNKNOWN_SEVERITY_LABEL,
+    VERDICT_PRESENTATION,
     VERDICT_TO_SARIF_LEVEL,
     VERDICT_TO_SEVERITY_LABEL,
     ReportModel,
@@ -73,6 +74,22 @@ def _result():
 def test_canonical_maps_cover_every_reportable_verdict(verdict: Verdict) -> None:
     assert verdict in VERDICT_TO_SEVERITY_LABEL
     assert verdict in VERDICT_TO_SARIF_LEVEL
+
+
+def test_single_table_is_the_source_of_truth() -> None:
+    # The back-compat projections must be derived from VERDICT_PRESENTATION, not
+    # a second hand-maintained copy.
+    assert VERDICT_TO_SEVERITY_LABEL == {v: p.severity_label for v, p in VERDICT_PRESENTATION.items()}
+    assert VERDICT_TO_SARIF_LEVEL == {v: p.sarif_level for v, p in VERDICT_PRESENTATION.items()}
+
+
+def test_presentation_internally_consistent() -> None:
+    # breaking_boundary must agree with both the label and the SARIF level within
+    # the one table — no row can say "breaking" on one axis and "compatible" on
+    # another.
+    for pres in VERDICT_PRESENTATION.values():
+        assert pres.breaking_boundary == (pres.severity_label in ("breaking", "api_break"))
+        assert pres.breaking_boundary == (pres.sarif_level == "error")
 
 
 def test_pr_comment_buckets_cover_canonical_labels() -> None:
