@@ -46,6 +46,30 @@ if TYPE_CHECKING:
     from .checker_types import Change, DiffResult
 
 
+# Canonical verdict → presentation-vocabulary maps (ADR-035). Each output
+# channel used to re-encode this mapping privately (reporter, sarif, pr_comment),
+# so they agreed only by luck and could drift. They now all source it here.
+
+# Native report severity label (JSON `severity`, PR-comment input, text report).
+VERDICT_TO_SEVERITY_LABEL: dict[Verdict, str] = {
+    Verdict.BREAKING: "breaking",
+    Verdict.API_BREAK: "api_break",
+    Verdict.COMPATIBLE_WITH_RISK: "risk",
+    Verdict.COMPATIBLE: "compatible",
+}
+
+# SARIF result level.
+VERDICT_TO_SARIF_LEVEL: dict[Verdict, str] = {
+    Verdict.BREAKING: "error",
+    Verdict.API_BREAK: "error",
+    Verdict.COMPATIBLE_WITH_RISK: "warning",
+    Verdict.COMPATIBLE: "note",
+}
+
+# Fallback label for a verdict not in the map (defensive; should not occur).
+UNKNOWN_SEVERITY_LABEL = "unknown"
+
+
 @dataclass(frozen=True)
 class ReportModel:
     """Classified, filtered, summarised view of a :class:`DiffResult`.
@@ -78,6 +102,33 @@ class ReportModel:
         risk = [c for c in changes if ev(c) == Verdict.COMPATIBLE_WITH_RISK]
         compatible = [c for c in changes if ev(c) == Verdict.COMPATIBLE]
         return breaking, source_breaks, risk, compatible
+
+    def verdict_of(self, change: Change) -> Verdict:
+        """Canonical per-finding verdict (policy + ADR-027 A4 overrides)."""
+        return self.result._effective_verdict_for_change(change)
+
+    def severity_label(self, change: Change) -> str:
+        """Canonical native severity label for *change* (breaking/api_break/…).
+
+        This is the verdict axis used by the JSON/text reports and consumed by
+        the PR comment. SARIF keeps a finer per-kind level (see
+        :data:`VERDICT_TO_SARIF_LEVEL`, used only on the A4 override path); the
+        cross-channel invariant is the *breaking boundary* and override
+        propagation, not identical vocabulary — see ADR-035 and
+        ``tests/test_report_integrity.py``.
+        """
+        return VERDICT_TO_SEVERITY_LABEL.get(
+            self.verdict_of(change), UNKNOWN_SEVERITY_LABEL
+        )
+
+    def is_breaking_boundary(self, change: Change) -> bool:
+        """True if *change* is on the breaking side of the gate (BREAKING/API_BREAK).
+
+        The one classification fact every channel must agree on: a finding here
+        must read as error/failure in SARIF/JUnit and breaking in JSON/text;
+        one not here must never read as error/failure.
+        """
+        return self.verdict_of(change) in (Verdict.BREAKING, Verdict.API_BREAK)
 
     @classmethod
     def from_result(

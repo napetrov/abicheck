@@ -64,14 +64,42 @@ with each other and, worse, with the gate/exit code.
 - The verdict axis is documented as canonical, settling the "which severity is
   authoritative?" question for future renderer work.
 
+## Cross-channel invariant (what "unified" actually means)
+
+Investigating the renderers showed they are *not* meant to emit identical
+vocabulary, and forcing that would be wrong:
+
+- **Native channels** (JSON, text/Markdown, JUnit) classify on the verdict axis.
+- **SARIF** keeps a finer **per-kind** level (`policy_for(kind).severity`) — e.g.
+  additions are SARIF `warning`, not `note` (there is a long-standing test for
+  this). On the A4/PolicyFile *override* path it maps the overridden verdict via
+  `VERDICT_TO_SARIF_LEVEL`.
+- **ABICC-compat HTML** uses ABICC's own kind-based HIGH/MEDIUM/LOW so ABICC
+  report parsers/diffs keep working — deliberately *not* the verdict axis.
+
+So "unified" means two concrete, testable guarantees, not identical buckets:
+
+1. **Breaking-boundary consistency.** A finding on the breaking side of the gate
+   (BREAKING/API_BREAK) reads as error/failure/breaking in *every* native
+   channel; one off it never does. (`ReportModel.is_breaking_boundary`.)
+2. **Override propagation.** A PolicyFile/A4 effective-verdict override is
+   honoured by every native channel (the demoted-change case).
+
+`tests/test_report_integrity.py` asserts both across JSON/SARIF/JUnit and pins
+the ABICC-HTML exception as a conscious decision.
+
 ## Rollout
 
 - **Increment 1 (done):** add `ReportModel`; route the Markdown/text reporter
   and the shared classifier through it; golden output unchanged.
-- **Increment 2 (follow-up):** migrate `sarif`, `junit`, `html_report` and
-  `pr_comment` to consume `ReportModel`, deleting their per-format bucketing.
-  Any place a renderer's *current* bucketing differs from the canonical verdict
-  axis is a behaviour change and lands behind golden review.
+- **Increment 2 (done):** consolidate the previously-duplicated verdict→vocabulary
+  maps (`reporter._VERDICT_TO_SEVERITY_LABEL`, `sarif._VERDICT_TO_SARIF_LEVEL`)
+  into `report_model` so they can no longer drift; add the cross-channel
+  integrity tests above. No behaviour change (the maps were identical); the tests
+  are the new guard.
+- **Increment 3 (follow-up):** optionally route `html_report` (native, non-compat
+  path) and `pr_comment` model construction through `ReportModel` to delete their
+  remaining local bucketing. Pure cleanup; the integrity invariant already holds.
 
 ## Alternatives considered
 

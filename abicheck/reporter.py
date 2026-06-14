@@ -38,16 +38,13 @@ from .checker_policy import (
 from .checker_policy import (
     policy_kind_sets as _policy_kind_sets,
 )
+
+# Canonical verdict→label map now lives in report_model (ADR-035); kept under the
+# historical private name so existing call sites are unchanged.
+from .report_model import VERDICT_TO_SEVERITY_LABEL as _VERDICT_TO_SEVERITY_LABEL
 from .report_summary import build_summary, surface_breakdown
 from .schemas import REPORT_SCHEMA_VERSION
 from .semver import recommend_release
-
-_VERDICT_TO_SEVERITY_LABEL = {
-    Verdict.BREAKING: "breaking",
-    Verdict.API_BREAK: "api_break",
-    Verdict.COMPATIBLE_WITH_RISK: "risk",
-    Verdict.COMPATIBLE: "compatible",
-}
 
 
 def _effective_severity_label(
