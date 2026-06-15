@@ -36,7 +36,7 @@ from .diff_cxx_rules import (
     owner_class_of,
     virtual_method_addition,
 )
-from .diff_helpers import bool_transition, diff_by_key
+from .diff_helpers import bool_transition, diff_by_key, make_change
 from .elf_metadata import SymbolType
 from .elf_symbol_filter import (
     FUNCTION_SYMBOL_TYPES,
@@ -387,12 +387,12 @@ def _check_return_type_change(
     # break: same width, signedness, and calling convention.
     if _abi_equivalent_scalar(f_old.return_type, f_new.return_type, is_llp64):
         return []
-    return [Change(
-        kind=ChangeKind.FUNC_RETURN_CHANGED,
+    return [make_change(
+        ChangeKind.FUNC_RETURN_CHANGED,
         symbol=mangled,
-        description=f"Return type changed: {f_old.name}",
-        old_value=f_old.return_type,
-        new_value=f_new.return_type,
+        name=f_old.name,
+        old=f_old.return_type,
+        new=f_new.return_type,
     )]
 
 
@@ -439,12 +439,12 @@ def _check_params_change(
         )
     if not changed:
         return []
-    return [Change(
-        kind=ChangeKind.FUNC_PARAMS_CHANGED,
+    return [make_change(
+        ChangeKind.FUNC_PARAMS_CHANGED,
         symbol=mangled,
-        description=f"Parameters changed: {f_old.name}",
-        old_value=_format_params(f_old.params),
-        new_value=_format_params(f_new.params),
+        name=f_old.name,
+        old=_format_params(f_old.params),
+        new=_format_params(f_new.params),
     )]
 
 
@@ -583,12 +583,12 @@ def _check_inline_transitions(
                 new_value="inline",
             ))
         elif f_old.is_inline and not f_new.is_inline:
-            changes.append(Change(
-                kind=ChangeKind.FUNC_LOST_INLINE,
+            changes.append(make_change(
+                ChangeKind.FUNC_LOST_INLINE,
                 symbol=mangled,
-                description=f"Function lost inline attribute (now has external linkage): {f_old.name}",
-                old_value="inline",
-                new_value="non-inline",
+                name=f_old.name,
+                old="inline",
+                new="non-inline",
             ))
     return changes
 
@@ -761,11 +761,10 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         if mangled not in old_map and f_new.name not in matched_by_name:
             virtual_break = virtual_method_addition(
                 f_new, old_owner_classes, old_types, new_types, old_virtual_sigs)
-            changes.append(virtual_break if virtual_break is not None else Change(
-                kind=ChangeKind.FUNC_ADDED,
+            changes.append(virtual_break if virtual_break is not None else make_change(
+                ChangeKind.FUNC_ADDED,
                 symbol=mangled,
-                description=f"New public function: {f_new.name}",
-                new_value=f_new.name,
+                new=f_new.name,
             ))
 
     old_all = old.function_map
@@ -802,22 +801,20 @@ def _diff_inline_hidden_friends(
             continue
         if mangled in new_all:
             continue
-        changes.append(Change(
-            kind=ChangeKind.HIDDEN_FRIEND_REMOVED,
+        changes.append(make_change(
+            ChangeKind.HIDDEN_FRIEND_REMOVED,
             symbol=mangled,
-            description=f"Hidden friend declaration removed: {f_old.name}",
-            old_value=f_old.name,
+            old=f_old.name,
         ))
     for mangled, f_new in new_all.items():
         if not f_new.is_hidden_friend:
             continue
         if mangled in old_all:
             continue
-        changes.append(Change(
-            kind=ChangeKind.HIDDEN_FRIEND_ADDED,
+        changes.append(make_change(
+            ChangeKind.HIDDEN_FRIEND_ADDED,
             symbol=mangled,
-            description=f"Hidden friend declaration added: {f_new.name}",
-            new_value=f_new.name,
+            new=f_new.name,
         ))
     return changes
 
@@ -828,11 +825,11 @@ def _check_variable(mangled: str, v_old: Variable, v_new: Variable) -> list[Chan
     if _type_unknown(v_old.type) or _type_unknown(v_new.type):
         return []
     if canonicalize_type_name(v_old.type) != canonicalize_type_name(v_new.type):
-        return [Change(
-            kind=ChangeKind.VAR_TYPE_CHANGED,
+        return [make_change(
+            ChangeKind.VAR_TYPE_CHANGED,
             symbol=mangled,
-            description=f"Variable type changed: {v_old.name}",
-            old_value=v_old.type, new_value=v_new.type,
+            name=v_old.name,
+            old=v_old.type, new=v_new.type,
         )]
     # const-qualification transitions only matter when the type is unchanged.
     return bool_transition(
@@ -845,18 +842,18 @@ def _check_variable(mangled: str, v_old: Variable, v_new: Variable) -> list[Chan
 
 
 def _var_removed(mangled: str, v_old: Variable) -> list[Change]:
-    return [Change(
-        kind=ChangeKind.VAR_REMOVED,
+    return [make_change(
+        ChangeKind.VAR_REMOVED,
         symbol=mangled,
-        description=f"Public variable removed: {v_old.name}",
+        name=v_old.name,
     )]
 
 
 def _var_added(mangled: str, v_new: Variable) -> list[Change]:
-    return [Change(
-        kind=ChangeKind.VAR_ADDED,
+    return [make_change(
+        ChangeKind.VAR_ADDED,
         symbol=mangled,
-        description=f"New public variable: {v_new.name}",
+        name=v_new.name,
     )]
 
 

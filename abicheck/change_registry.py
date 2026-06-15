@@ -49,6 +49,16 @@ class ChangeKindMeta:
     impact: str = ""
     is_addition: bool = False
     policy_overrides: dict[str, Verdict] = field(default_factory=dict)
+    # Optional ``str.format``-style template for a finding's per-change
+    # ``description`` (C6). Detectors build their Change via
+    # ``diff_helpers.make_change`` and pass structured fields rather than
+    # hand-rolling an f-string, so the wording for a kind lives in one place.
+    # Placeholders are drawn from the fixed vocabulary
+    # ``{symbol} {name} {old} {new} {detail}`` (``make_change`` validates this).
+    # ``None`` means the kind keeps a *bespoke* per-call-site description — used
+    # when the text embeds computed offsets, demangled signatures, vtable slot
+    # indices, counts, etc. that no fixed template can express.
+    description_template: str | None = None
 
 
 class ChangeKindRegistry:
@@ -103,6 +113,17 @@ class ChangeKindRegistry:
         """Return {kind_value: impact} for all entries with non-empty impact."""
         return {e.kind: e.impact for e in self._entries.values() if e.impact}
 
+    def description_template_for(self, kind_value: str) -> str | None:
+        """Return the description template for a kind, or None if bespoke/unknown."""
+        e = self._entries.get(kind_value)
+        return e.description_template if e is not None else None
+
+    def templated_kinds(self) -> frozenset[str]:
+        """Return kind values that own a description template (C6 migration set)."""
+        return frozenset(
+            e.kind for e in self._entries.values() if e.description_template is not None
+        )
+
     @property
     def entries(self) -> dict[str, ChangeKindMeta]:
         return dict(self._entries)
@@ -125,11 +146,14 @@ REGISTRY = ChangeKindRegistry([
     _E("func_removed_elf_only", _B,
        impact="Exported function symbol removed from the binary; old binaries that link or dlsym() it can fail even without header evidence."),
     _E("func_added", _C, is_addition=True,
-       impact="New function available; existing binaries are unaffected."),
+       impact="New function available; existing binaries are unaffected.",
+       description_template="New public function: {new}"),
     _E("func_return_changed", _B,
-       impact="Callers expect the old return type layout in registers/stack; misinterpretation causes data corruption."),
+       impact="Callers expect the old return type layout in registers/stack; misinterpretation causes data corruption.",
+       description_template="Return type changed: {name}"),
     _E("func_params_changed", _B,
-       impact="Callers push arguments with the old layout; callee reads wrong data from stack/registers."),
+       impact="Callers push arguments with the old layout; callee reads wrong data from stack/registers.",
+       description_template="Parameters changed: {name}"),
     _E("func_noexcept_added", _C,
        impact="In C++17 noexcept is part of the function type; old callers compiled against non-noexcept signature get a different mangled name."),
     _E("func_noexcept_removed", _R,
@@ -157,11 +181,14 @@ REGISTRY = ChangeKindRegistry([
               "\"do not add virtuals to a non-leaf class\" rule, caught even when the "
               "snapshot carries no diff-able vtable array (DWARF/symbol-only mode)."),
     _E("var_removed", _B,
-       impact="Old binaries reference a global variable that no longer exists; link or load failure."),
+       impact="Old binaries reference a global variable that no longer exists; link or load failure.",
+       description_template="Public variable removed: {name}"),
     _E("var_added", _C, is_addition=True,
-       impact="New variable available; existing binaries are unaffected."),
+       impact="New variable available; existing binaries are unaffected.",
+       description_template="New public variable: {name}"),
     _E("var_type_changed", _B,
-       impact="Old binaries read/write the variable with wrong size or layout; data corruption or segfault."),
+       impact="Old binaries read/write the variable with wrong size or layout; data corruption or segfault.",
+       description_template="Variable type changed: {name}"),
 
     # ── Type changes ───────────────────────────────────────────────────────
     _E("type_size_changed", _B,
@@ -453,7 +480,8 @@ REGISTRY = ChangeKindRegistry([
 
     # ── Inline attribute changes ───────────────────────────────────────────
     _E("func_became_inline", _A),
-    _E("func_lost_inline", _C),
+    _E("func_lost_inline", _C,
+       description_template="Function lost inline attribute (now has external linkage): {name}"),
 
     # ── PR #89: ELF fallback ──────────────────────────────────────────────
     _E("func_deleted_elf_fallback", _B),
@@ -898,13 +926,15 @@ REGISTRY = ChangeKindRegistry([
               "every consumer that wrote `a + b` (or any other ADL-driven "
               "call site) fails to compile against the new headers. When "
               "the friend was also defined out-of-line, removal "
-              "additionally surfaces as FUNC_REMOVED at link time."),
+              "additionally surfaces as FUNC_REMOVED at link time.",
+       description_template="Hidden friend declaration removed: {old}"),
     _E("hidden_friend_added", _C, is_addition=True,
        impact="A new in-class `friend` declaration was added. Pure "
               "addition: existing code keeps compiling, no symbol "
               "disappears, and the new operator/function only "
               "participates in overload resolution at call sites that "
-              "trigger ADL on one of its argument types."),
+              "trigger ADL on one of its argument types.",
+       description_template="Hidden friend declaration added: {new}"),
 
     # ── modern-C++ / numerical-library ABI hazards (gap analysis) ───────────
     _E("integer_model_changed", _B,

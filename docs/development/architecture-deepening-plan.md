@@ -265,6 +265,27 @@ post-filter ordering the synthetic detectors need.
 > sites) and is intentionally carved out into a **separate, self-contained PR**,
 > done *after* the C1–C2 work in #395 merges. This section is the spec for that
 > PR — detailed enough to start cold.
+>
+> **Increment 1 landed.** The reusable core is in place: `ChangeKindMeta` gained
+> an optional `description_template` field (`change_registry.py`), and
+> `diff_helpers.make_change(kind, *, symbol, name, old, new, detail,
+> description, **kwargs)` formats it (with explicit-`description=` as the
+> first-class bespoke override). Nine regular kinds in `diff_symbols.py`
+> (`func_return_changed`, `func_params_changed`, `func_added`,
+> `func_lost_inline`, `hidden_friend_removed/added`, `var_type_changed`,
+> `var_removed`, `var_added`) are migrated, byte-for-byte (locked by
+> `tests/test_change_factory.py`). The remaining ~340 sites are the deferred
+> bulk, migrated incrementally per-module behind the same factory.
+>
+> Two deliberate deviations from the spec below: (1) the factory lives in
+> `diff_helpers` rather than `change_registry` — `change_registry` is a
+> dependency-free leaf (`checker_policy → change_registry`), so importing
+> `Change` there would create a `change_registry → checker_types →
+> checker_policy → change_registry` cycle the AI-readiness gate rejects;
+> `diff_helpers` already imports both `Change` and the registry. (2) The
+> placeholder vocabulary adds `{name}` (the demangled declared name, distinct
+> from the mangled `{symbol}`) because nearly every regular description
+> interpolates `f_old.name`, not the symbol field.
 
 **Problem.** `Change(kind=ChangeKind.XXX, description=f"…", old_value=…, new_value=…)`
 is hand-rolled across the `diff_*` modules, each call site inventing its own
@@ -485,7 +506,7 @@ C3  binary-format registry         (parallelisable; needs integration lane)
 C10 split model.py                 ◐ stage-1 done (name predicates moved)
 C8  ABICC compat adapter           (parity-sensitive)
 C5  synthetic detectors → registry ⛔ deferred (entangled; net-negative)
-C6  Change factory                 (widest churn; depends on C2)
+C6  Change factory                 ◐ inc 1 done (factory + templates + diff_symbols slice)
 ```
 
 Rationale: C4 and C9 are mechanical and reversible — do them to build
@@ -503,7 +524,7 @@ parity is contractual and benefits from a stabilised shared layer underneath it.
 | C3 | Binary-format handler registry | Proposed | — |
 | C4 | Detector auto-discovery | Done | #395 |
 | C5 | Synthetic detectors → registry | Deferred (not a clean win) | — |
-| C6 | `Change` factory | Spec'd for own PR | — |
+| C6 | `Change` factory | Increment 1 done (factory + `description_template` registry field + 9 migrated `diff_symbols` kinds; remaining ~340 sites are the deferred bulk) | — |
 | C7 | CLI → service (exit-code unify + cross-flow integrity tests done; command-body extraction follow-up) | Partial | #395 |
 | C8 | ABICC compat adapter | Proposed | — |
 | C9 | Relocate confidence computation | Done | #395 |

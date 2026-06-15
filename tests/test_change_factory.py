@@ -1,0 +1,163 @@
+# Copyright 2026 Nikolay Petrov
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Tests for the C6 change factory (``diff_helpers.make_change``).
+
+The factory keeps a kind's description wording in ``change_registry`` instead
+of hand-rolled f-strings at the call site. These tests lock two things:
+
+* the factory mechanics (template formatting, bespoke override, field
+  forwarding, error path), and
+* that every registered template is *well-formed* (only the fixed vocabulary)
+  and renders the exact legacy wording for each migrated kind — so the
+  migration is byte-identical and golden snapshots do not move.
+"""
+from __future__ import annotations
+
+import string
+
+import pytest
+
+from abicheck.change_registry import REGISTRY
+from abicheck.checker_policy import ChangeKind
+from abicheck.checker_types import Change
+from abicheck.diff_helpers import TEMPLATE_VOCAB, make_change
+
+
+def _template_fields(template: str) -> set[str]:
+    """Return the set of ``{placeholder}`` field names used by a template."""
+    return {
+        field_name
+        for _, field_name, _, _ in string.Formatter().parse(template)
+        if field_name
+    }
+
+
+def test_make_change_formats_from_template() -> None:
+    change = make_change(
+        ChangeKind.FUNC_RETURN_CHANGED,
+        symbol="_Z3foov",
+        name="foo",
+        old="int",
+        new="long",
+    )
+    assert isinstance(change, Change)
+    assert change.kind is ChangeKind.FUNC_RETURN_CHANGED
+    assert change.symbol == "_Z3foov"
+    assert change.description == "Return type changed: foo"
+    # old/new also populate old_value/new_value.
+    assert change.old_value == "int"
+    assert change.new_value == "long"
+
+
+def test_make_change_explicit_description_overrides_template() -> None:
+    # Even for a kind that *has* a template, an explicit description wins
+    # (the bespoke path) and is used verbatim.
+    change = make_change(
+        ChangeKind.FUNC_RETURN_CHANGED,
+        symbol="_Z3foov",
+        description="bespoke wording with offset 0x40",
+    )
+    assert change.description == "bespoke wording with offset 0x40"
+
+
+def test_make_change_requires_template_or_description() -> None:
+    # A kind with no template and no explicit description is a programming error.
+    assert REGISTRY.description_template_for(ChangeKind.FUNC_REMOVED.value) is None
+    with pytest.raises(ValueError, match="requires an explicit description"):
+        make_change(ChangeKind.FUNC_REMOVED, symbol="_Z3foov")
+
+
+def test_make_change_forwards_change_kwargs() -> None:
+    change = make_change(
+        ChangeKind.VAR_TYPE_CHANGED,
+        symbol="g_count",
+        name="g_count",
+        old="int",
+        new="long",
+        caused_by_type="Widget",
+        affected_symbols=["_Z3usev"],
+    )
+    assert change.caused_by_type == "Widget"
+    assert change.affected_symbols == ["_Z3usev"]
+
+
+def test_explicit_old_value_kwarg_overrides_old() -> None:
+    # old/new only set old_value/new_value by default; an explicit kwarg wins.
+    change = make_change(
+        ChangeKind.VAR_TYPE_CHANGED,
+        symbol="g",
+        name="g",
+        old="int",
+        new="long",
+        old_value="explicit",
+    )
+    assert change.old_value == "explicit"
+    assert change.new_value == "long"
+
+
+def test_all_templates_use_only_known_vocabulary() -> None:
+    # Guards against a template referencing a placeholder make_change does not
+    # supply (which would raise KeyError at runtime for that kind).
+    offenders: dict[str, set[str]] = {}
+    for kind_value in REGISTRY.templated_kinds():
+        template = REGISTRY.description_template_for(kind_value)
+        assert template is not None
+        unknown = _template_fields(template) - TEMPLATE_VOCAB
+        if unknown:
+            offenders[kind_value] = unknown
+    assert not offenders, f"templates use unknown placeholders: {offenders}"
+
+
+# Migrated kinds and a (kwargs -> expected description) sample that must match
+# the exact pre-C6 f-string wording, so golden snapshots and any downstream
+# description parsing are unaffected.
+_FAITHFULNESS_CASES = [
+    (ChangeKind.FUNC_RETURN_CHANGED, {"name": "foo"}, "Return type changed: foo"),
+    (ChangeKind.FUNC_PARAMS_CHANGED, {"name": "foo"}, "Parameters changed: foo"),
+    (ChangeKind.FUNC_ADDED, {"new": "foo"}, "New public function: foo"),
+    (
+        ChangeKind.FUNC_LOST_INLINE,
+        {"name": "foo"},
+        "Function lost inline attribute (now has external linkage): foo",
+    ),
+    (
+        ChangeKind.HIDDEN_FRIEND_REMOVED,
+        {"old": "operator=="},
+        "Hidden friend declaration removed: operator==",
+    ),
+    (
+        ChangeKind.HIDDEN_FRIEND_ADDED,
+        {"new": "operator=="},
+        "Hidden friend declaration added: operator==",
+    ),
+    (ChangeKind.VAR_TYPE_CHANGED, {"name": "g"}, "Variable type changed: g"),
+    (ChangeKind.VAR_REMOVED, {"name": "g"}, "Public variable removed: g"),
+    (ChangeKind.VAR_ADDED, {"name": "g"}, "New public variable: g"),
+]
+
+
+@pytest.mark.parametrize("kind,kwargs,expected", _FAITHFULNESS_CASES)
+def test_template_renders_legacy_wording(
+    kind: ChangeKind, kwargs: dict[str, str], expected: str
+) -> None:
+    change = make_change(kind, symbol="_Zsym", **kwargs)
+    assert change.description == expected
+
+
+def test_faithfulness_cases_cover_every_templated_kind() -> None:
+    # Keeps the table honest: if a new template is added it must get a
+    # faithfulness sample here too.
+    covered = {kind.value for kind, _, _ in _FAITHFULNESS_CASES}
+    assert covered == set(REGISTRY.templated_kinds())
