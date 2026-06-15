@@ -312,6 +312,39 @@ def test_ingest_refuses_escaping_source_facts_path(tmp_path: Path) -> None:
     assert any("escaping pack root" in d for d in ingested.diagnostics)
 
 
+def test_ingest_refuses_symlinked_file_inside_source_facts_dir(tmp_path: Path) -> None:
+    # A file *inside* the source_facts/ dir can itself be a symlink to outside
+    # the pack; the per-file resolved-path revalidation must drop it.
+    outside = tmp_path / "evil.jsonl"
+    outside.write_text(json.dumps(_tu("evil", mangled="_Z4evilv").to_dict()) + "\n")
+    pack = _write_inputs_pack(tmp_path, [_tu("foo", mangled="_Z3foov")])
+    link = pack / "source_facts" / "linked.jsonl"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        import pytest
+
+        pytest.skip("platform does not support symlinks")
+    ingested = ingest_inputs_pack(pack)
+    names = {e.qualified_name for e in ingested.pack.source_abi.reachable_declarations}
+    assert "evil" not in names  # the symlinked escapee was refused
+    assert "foo" in names
+    assert any("escaping pack root" in d for d in ingested.diagnostics)
+
+
+def test_ingest_skips_schema_invalid_tu_record(tmp_path: Path) -> None:
+    # A valid-JSON but schema-invalid TU (entity missing required `id`) must be
+    # skipped with a diagnostic, not abort the whole ingest.
+    pack = _write_inputs_pack(tmp_path, [_tu("foo", mangled="_Z3foov")])
+    facts = pack / "source_facts" / "libfoo.jsonl"
+    bad = json.dumps({"tu_id": "cu://bad", "functions": [{}]})  # entity has no id
+    facts.write_text(facts.read_text(encoding="utf-8") + bad + "\n", encoding="utf-8")
+    ingested = ingest_inputs_pack(pack)
+    names = {e.qualified_name for e in ingested.pack.source_abi.reachable_declarations}
+    assert "foo" in names  # the good record survived
+    assert any("schema-invalid TU" in d for d in ingested.diagnostics)
+
+
 def test_ingest_refuses_absolute_compile_db(tmp_path: Path) -> None:
     outside = tmp_path / "evil_cc.json"
     outside.write_text(json.dumps(_compile_db(tmp_path)))

@@ -246,7 +246,18 @@ def _iter_source_fact_files(
             files.extend(target.glob("*.json"))
         elif target.is_file():
             files.append(target)
-    return sorted(set(files))
+    # Re-validate each discovered file on its *resolved* path: a file inside an
+    # in-pack directory can itself be a symlink pointing outside the pack, which
+    # the per-entry guard above does not catch (Codex review). Drop any escapee
+    # with a diagnostic so a third-party pack cannot pull runner-local facts in.
+    root_resolved = root.resolve()
+    safe: list[Path] = []
+    for f in files:
+        if f.resolve().is_relative_to(root_resolved):
+            safe.append(f)
+        else:
+            sink.append(f"refused source-fact file escaping pack root: {f.name}")
+    return sorted(set(safe))
 
 
 def _parse_tu_records(text: str, source: str, diagnostics: list[str]) -> list[SourceAbiTu]:
@@ -256,6 +267,19 @@ def _parse_tu_records(text: str, source: str, diagnostics: list[str]) -> list[So
     JSON array of TU objects, or a single TU object. Malformed lines are skipped
     with a diagnostic rather than aborting the whole ingest (forward-compat).
     """
+    def _convert(obj: Any, where: str) -> SourceAbiTu | None:
+        """Convert one record, skipping (not aborting) a schema-invalid TU.
+
+        ``SourceAbiTu.from_dict`` / ``SourceEntity.from_dict`` require some keys
+        (e.g. an entity ``id``), so a valid-JSON-but-schema-invalid record raises
+        ``KeyError``. Treat that like a malformed line — one bad TU must not
+        reject an otherwise usable pack (Codex review)."""
+        try:
+            return SourceAbiTu.from_dict(obj)
+        except (KeyError, ValueError, TypeError) as exc:
+            diagnostics.append(f"{where}: skipped schema-invalid TU record ({exc})")
+            return None
+
     stripped = text.strip()
     if not stripped:
         return []
@@ -267,9 +291,11 @@ def _parse_tu_records(text: str, source: str, diagnostics: list[str]) -> list[So
     except ValueError:
         whole = None
     if isinstance(whole, list):
-        return [SourceAbiTu.from_dict(x) for x in whole if isinstance(x, dict)]
+        out = [_convert(x, f"{source}[{i}]") for i, x in enumerate(whole) if isinstance(x, dict)]
+        return [t for t in out if t is not None]
     if isinstance(whole, dict):
-        return [SourceAbiTu.from_dict(whole)]
+        tu = _convert(whole, source)
+        return [tu] if tu is not None else []
     tus: list[SourceAbiTu] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
         line = line.strip()
@@ -281,7 +307,9 @@ def _parse_tu_records(text: str, source: str, diagnostics: list[str]) -> list[So
             diagnostics.append(f"{source}:{lineno}: skipped malformed JSON line ({exc})")
             continue
         if isinstance(obj, dict):
-            tus.append(SourceAbiTu.from_dict(obj))
+            tu = _convert(obj, f"{source}:{lineno}")
+            if tu is not None:
+                tus.append(tu)
         else:
             diagnostics.append(f"{source}:{lineno}: skipped non-object record")
     return tus
