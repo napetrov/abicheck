@@ -44,6 +44,9 @@ Usage in checker::
 """
 from __future__ import annotations
 
+import importlib
+import pkgutil
+import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -86,6 +89,63 @@ class DetectorRegistry:
         self._detectors: list[_DetectorEntry] = []
         self._names: set[str] = set()
         self._counter: int = 0
+        self._discovered: bool = False
+        self._discovery_lock = threading.Lock()
+
+    # Modules that host detectors but are NOT named ``diff_*`` and so are not
+    # found by prefix discovery. ``checker`` registers ``_diff_advanced_dwarf``
+    # locally (kept there so tests can monkeypatch ``checker.diff_advanced_dwarf``)
+    # — importing it standalone yields one fewer detector than a real
+    # ``compare()`` run. Keep this list in sync with any such out-of-band
+    # registration.
+    _EXTRA_DETECTOR_MODULES = ("abicheck.checker",)
+
+    def ensure_loaded(self) -> None:
+        """Import every detector-hosting module so its detectors register.
+
+        Safety net against the historical footgun where a new ``diff_*`` module
+        had to be added by hand to ``checker``'s side-effect import block — a
+        module that was forgotten contributed zero detectors with no error.
+
+        Covers both the ``abicheck.diff_*`` modules (by prefix discovery) and the
+        out-of-band detector hosts in :data:`_EXTRA_DETECTOR_MODULES` (currently
+        ``checker``, which registers a monkeypatch-pinned detector locally). This
+        guarantees ``registry.ensure_loaded(); registry.run_all(...)`` registers
+        the *same* set as a real ``compare()`` run, even in a fresh process that
+        never imported ``checker`` first.
+
+        When called from inside ``compare()`` the modules are already in
+        ``sys.modules`` (checker's explicit imports fixed the canonical
+        registration order), so it is a no-op there; re-import does not
+        re-register. A *new* ``diff_*`` module is discovered automatically,
+        appended after the existing detectors in deterministic (sorted-by-name)
+        order — no ``checker`` edit required. Idempotent and cheap after the
+        first call.
+
+        Thread-safe: concurrent callers (e.g. the MCP server handling parallel
+        compare requests) take a lock so discovery runs exactly once. The fast
+        path (already discovered) is lock-free.
+        """
+        if self._discovered:
+            return
+        with self._discovery_lock:
+            # Re-check under the lock: another thread may have finished while we
+            # were blocked.
+            if self._discovered:
+                return
+            import abicheck
+
+            module_names = sorted(
+                f"abicheck.{info.name}"
+                for info in pkgutil.iter_modules(abicheck.__path__)
+                if info.name.startswith("diff_")
+            )
+            module_names.extend(self._EXTRA_DETECTOR_MODULES)
+            for name in module_names:
+                importlib.import_module(name)
+            # Set only after a full successful pass, so a mid-loop import error
+            # does not leave discovery permanently half-done on a retry.
+            self._discovered = True
 
     def detector(
         self,

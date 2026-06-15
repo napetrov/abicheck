@@ -44,6 +44,7 @@ from .model import (
     is_non_abi_surface_type,
     stdlib_namespaces_excluded,
 )
+from .name_classification import RTTI_DATA_PREFIXES
 
 # Module-level constant: ELF visibility values that form the default<->protected pair (case51).
 _ELF_VIS_PROTECTED_PAIR: frozenset[str] = frozenset({"default", "protected"})
@@ -1240,7 +1241,7 @@ def _diff_vtable_identity(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
 
     # Find vtable/typeinfo symbols by mangling convention (_ZTV, _ZTI, _ZTS)
-    _RTTI_PREFIXES = ("_ZTV", "_ZTI", "_ZTS")
+    _RTTI_PREFIXES = RTTI_DATA_PREFIXES
 
     old_filter_transitive_runtime_symbols = _should_filter_transitive_runtime_symbols(old)
     new_filter_transitive_runtime_symbols = _should_filter_transitive_runtime_symbols(new)

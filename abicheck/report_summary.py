@@ -22,28 +22,20 @@ from dataclasses import dataclass
 from .checker import _BREAKING_KINDS, DiffResult
 from .checker_policy import HasKind
 
-# RTTI artifact prefixes (Itanium ABI): vtables, VTT, typeinfo objects/names,
-# and virtual/covariant thunks. Churn in these mirrors churn in their owning
-# type rather than representing independent public-API breaks.
-_RTTI_PREFIXES = ("_ZTV", "_ZTT", "_ZTI", "_ZTS", "_ZTc", "_ZTh", "_ZTv")
-# Length-prefixed Itanium namespace components for the conventional internal
-# namespaces (``<len><name>``). Matching the length prefix avoids false hits on
-# unrelated identifiers that merely contain the substring.
-_INTERNAL_COMPONENTS = ("8internal", "6detail", "4impl", "8__detail", "5_impl")
+# Re-exported under its historical name; the implementation (and the prefix
+# tables it relies on) now lives in the canonical name_classification module.
+# Listed in __all__ so the re-export is explicit (not an implicit re-export).
+from .name_classification import symbol_origin as classify_symbol_origin
 
-
-def classify_symbol_origin(symbol: str) -> str:
-    """Best-effort origin of a (usually mangled) symbol: 'rtti'/'internal'/'public'.
-
-    Used to explain why a large C++ ``breaking`` count is dominated by churn in
-    RTTI artifacts or internal-namespace symbols rather than genuine public-API
-    breaks (a common pattern in libraries built without ``-fvisibility=hidden``).
-    """
-    if symbol.startswith(_RTTI_PREFIXES):
-        return "rtti"
-    if any(comp in symbol for comp in _INTERNAL_COMPONENTS):
-        return "internal"
-    return "public"
+__all__ = [
+    "classify_symbol_origin",
+    "SurfaceBreakdown",
+    "surface_breakdown",
+    "ReportSummary",
+    "CompatibilityMetrics",
+    "compatibility_metrics",
+    "build_summary",
+]
 
 
 @dataclass(frozen=True)

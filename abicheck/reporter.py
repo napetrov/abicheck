@@ -38,16 +38,13 @@ from .checker_policy import (
 from .checker_policy import (
     policy_kind_sets as _policy_kind_sets,
 )
+
+# Canonical verdict→label map now lives in report_model (ADR-036); kept under the
+# historical private name so existing call sites are unchanged.
+from .report_model import VERDICT_TO_SEVERITY_LABEL as _VERDICT_TO_SEVERITY_LABEL
 from .report_summary import build_summary, surface_breakdown
 from .schemas import REPORT_SCHEMA_VERSION
 from .semver import recommend_release
-
-_VERDICT_TO_SEVERITY_LABEL = {
-    Verdict.BREAKING: "breaking",
-    Verdict.API_BREAK: "api_break",
-    Verdict.COMPATIBLE_WITH_RISK: "risk",
-    Verdict.COMPATIBLE: "compatible",
-}
 
 
 def _effective_severity_label(
@@ -1347,25 +1344,13 @@ def _classify_changes_by_kind(
     """Split *changes* into (breaking, source_breaks, risk, compatible) using the
     effective kind sets (respects PolicyFile overrides) and per-finding A4
     ``effective_verdict`` overrides (ADR-027), so a demoted opaque/PIMPL layout
-    change lands in the compatible bucket of the text report too."""
-    breaking = [
-        c for c in changes
-        if result._effective_verdict_for_change(c) == Verdict.BREAKING
-    ]
-    source_breaks = [
-        c for c in changes
-        if result._effective_verdict_for_change(c) == Verdict.API_BREAK
-    ]
-    risk = [
-        c
-        for c in changes
-        if result._effective_verdict_for_change(c) == Verdict.COMPATIBLE_WITH_RISK
-    ]
-    compatible = [
-        c for c in changes
-        if result._effective_verdict_for_change(c) == Verdict.COMPATIBLE
-    ]
-    return breaking, source_breaks, risk, compatible
+    change lands in the compatible bucket of the text report too.
+
+    Thin wrapper over :meth:`ReportModel.classify` (C2/ADR-036) — the single
+    canonical verdict-axis bucketer shared with the report view-model."""
+    from .report_model import ReportModel
+
+    return ReportModel.classify(changes, result)
 
 
 def _build_internal_rtti_note(breaking: list[Change]) -> list[str]:
@@ -1429,9 +1414,13 @@ def to_markdown(
     if show_only:
         changes = apply_show_only(changes, show_only, policy=result.policy)
 
-    # Classify filtered changes using effective kind sets (respects PolicyFile overrides)
-    breaking, source_breaks, risk, compatible = _classify_changes_by_kind(
-        changes, result
+    # Build the render-ready view once (C2/ADR-036): canonical verdict-axis
+    # classification + summary in one place, shared across formats.
+    from .report_model import ReportModel
+
+    model = ReportModel.from_result(result, changes=changes)
+    breaking, source_breaks, risk, compatible = (
+        model.breaking, model.source_breaks, model.risk, model.compatible
     )
 
     lines: list[str] = [

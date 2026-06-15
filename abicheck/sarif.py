@@ -34,6 +34,7 @@ from typing import Any
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
 from abicheck.checker_policy import impact_for, policy_for
+from abicheck.report_model import VERDICT_TO_SARIF_LEVEL as _VERDICT_TO_SARIF_LEVEL
 from abicheck.reporter import apply_show_only
 
 # ---------------------------------------------------------------------------
@@ -51,12 +52,8 @@ def _tool_version() -> str:
         return "unknown"
 
 
-_VERDICT_TO_SARIF_LEVEL = {
-    Verdict.BREAKING: "error",
-    Verdict.API_BREAK: "error",
-    Verdict.COMPATIBLE_WITH_RISK: "warning",
-    Verdict.COMPATIBLE: "note",
-}
+# Canonical verdict→SARIF-level map lives in report_model (ADR-036), imported
+# above under its historical private name so call sites are unchanged.
 
 
 def _severity(change: Change) -> str:

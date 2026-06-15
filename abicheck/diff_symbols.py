@@ -55,20 +55,12 @@ from .model import (
     is_cxx_runtime_library,
     stdlib_namespaces_excluded,
 )
+from .name_classification import is_local_rtti_symbol
 
 _log = logging.getLogger(__name__)
 
 # Visibility levels that constitute the public ABI surface.
 _PUBLIC_VIS = (Visibility.PUBLIC, Visibility.ELF_ONLY)
-
-# Itanium RTTI artifact prefixes (typeinfo, typeinfo-name, vtable, VTT) followed
-# immediately by ``Z`` — the Itanium "local-name" production ``Z <encoding> E``.
-# An RTTI symbol of this shape belongs to a *function-local* type (a lambda
-# closure, or any class/struct declared inside a function body). Such a type can
-# never be named in a public header, so the presence/absence of its typeinfo is
-# build-dependent churn, not a public-ABI break. Filtering it here mirrors how
-# anonymous/lambda *types* are excluded from type diffing (model.is_non_abi_surface_type).
-_LOCAL_RTTI_PREFIXES = ("_ZTIZ", "_ZTSZ", "_ZTVZ", "_ZTTZ")
 
 
 # Sentinel the dumper writes for the type/return type of a symbol whose
@@ -113,7 +105,7 @@ def _is_local_type_rtti(mangled: str) -> bool:
     in ``Printer::WithDefs/WithVars``; they were scored as public ``var_removed``
     and drove a false ``BREAKING`` verdict on an ABI-compatible bump.
     """
-    return mangled.startswith(_LOCAL_RTTI_PREFIXES)
+    return is_local_rtti_symbol(mangled)
 
 
 def _should_filter_transitive_runtime_symbols(snap: AbiSnapshot) -> bool:

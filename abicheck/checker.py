@@ -49,13 +49,13 @@ from .checker_types import (  # noqa: F401
     DiffResult,
     LibraryMetadata,
 )
+from .confidence import _compute_confidence
 from .detector_registry import registry as _detector_registry
 from .diff_elf_layout import (  # noqa: F401 — triggers detector registration
     _diff_elf_layout,
 )
 from .diff_filtering import (  # noqa: F401
     _ROOT_TYPE_CHANGE_KINDS,
-    _compute_confidence,
     _deduplicate_ast_dwarf,
     _deduplicate_cross_detector,
     _downgrade_opaque_struct_changes,
@@ -478,7 +478,11 @@ def compare(
             file (i.e. the file's own ``base_policy`` field takes precedence).
     """
 
-    # Run all registered detectors via the self-registering registry.
+    # Discover any diff_* detector modules not already imported above, then run
+    # all registered detectors via the self-registering registry. ensure_loaded
+    # is a no-op for the modules checker already imports (they fix the canonical
+    # registration order); it only catches newly-added modules.
+    _detector_registry.ensure_loaded()
     changes, detector_results = _detector_registry.run_all(old, new)
 
     # Merge externally-computed findings (e.g. build-configuration / probe-matrix
