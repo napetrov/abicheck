@@ -34,6 +34,7 @@ from abicheck.buildsource import (
 from abicheck.buildsource.inputs_emit import facts_filename
 from abicheck.cc_wrapper import (
     compile_unit_from_command,
+    compile_units_from_command,
     emit_facts_for_command,
     main,
     run_cc_wrapper,
@@ -278,6 +279,38 @@ def test_emit_captures_all_sources_in_multi_source_compile(tmp_path: Path, monke
     assert ingested.tu_count == 2
     names = {e.qualified_name for e in ingested.pack.source_abi.reachable_declarations}
     assert {"a", "b"} <= names
+
+
+def test_compile_units_capture_forced_language_source(tmp_path: Path) -> None:
+    # `clang++ -x c++ -c generated` builds a real TU with no source extension;
+    # forced-language discovery must still capture it.
+    units = compile_units_from_command(["clang++", "-x", "c++", "-c", "generated"], tmp_path)
+    assert [u.source for u in units] == ["generated"]
+    assert units[0].language == "CXX"
+
+
+def test_emit_continues_after_per_tu_extraction_failure(tmp_path: Path, monkeypatch) -> None:
+    # In `g++ -c a.cpp b.cpp`, a backend that raises on a.cpp must not drop b.cpp.
+    def _extract(cu, *, public_header_roots, target_id=""):
+        if Path(cu.source).stem == "a":
+            raise RuntimeError("cannot parse a.cpp")
+        stem = Path(cu.source).stem
+        return _tu(stem, mangled=f"_Z3{stem}v", source=cu.source)
+
+    class _FakeBackend:
+        extract = staticmethod(_extract)
+
+    monkeypatch.setattr(
+        "abicheck.buildsource.source_extractors.resolver.select_source_backend",
+        lambda extractor, **kw: (None, _FakeBackend()),
+    )
+    pack = tmp_path / "abicheck_inputs"
+    emit_facts_for_command(
+        ["g++", "-c", "a.cpp", "b.cpp"], tmp_path, inputs_dir=pack, library="libfoo.so",
+    )
+    ingested = ingest_inputs_pack(pack)
+    names = {e.qualified_name for e in ingested.pack.source_abi.reachable_declarations}
+    assert names == {"b"}  # a.cpp failed, b.cpp survived
 
 
 def test_emit_none_when_no_backend(tmp_path: Path, monkeypatch) -> None:

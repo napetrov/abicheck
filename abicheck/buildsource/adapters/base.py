@@ -193,19 +193,51 @@ SOURCE_OPERAND_FLAGS: frozenset[str] = frozenset({
 })
 
 
-def sources_from_argv(argv: list[str]) -> list[str]:
+def _is_bare_input(arg: str, msvc: bool) -> bool:
+    """Like :func:`_is_source_token` but without the known-extension requirement.
+
+    Used only in forced-language mode to accept an extensionless/generated input
+    (``-x c++ … generated``). ``-``-prefixed tokens stay options, and MSVC option
+    tokens are excluded; value-flag operands (``-o``/``-x``/…) never reach here
+    because the caller skips them via :data:`SOURCE_OPERAND_FLAGS`.
+    """
+    if not arg or arg.startswith("-"):
+        return False
+    if arg.startswith("/") and msvc and _is_msvc_option_token(arg):
+        return False
+    return True
+
+
+def sources_from_argv(argv: list[str], *, accept_forced_language: bool = False) -> list[str]:
     """Return **every** argv token that names a compiled translation unit, in order.
 
     A single compiler invocation may build several TUs (``gcc -c a.c b.c``), so a
     caller that wants all of them (e.g. the ``abicheck-cc`` wrapper) must not stop
     at the first. Same dialect-aware operand recognition as
     :func:`source_from_argv`, which is now the first element of this list.
+
+    With ``accept_forced_language`` (opt-in), a bare input that follows a forced
+    ``-x <lang>`` (other than ``-x none``) is accepted even when its filename has
+    no known source extension — ``clang++ -x c++ -c generated`` compiles a real
+    TU that extension-only discovery would otherwise miss. Off by default so
+    compile-DB parsing keeps its strict extension-based recognition.
     """
     msvc = _is_msvc_command(argv)
     out: list[str] = []
+    forced_active = False  # a non-"none" -x language applies to following inputs
     i = 0
     while i < len(argv):
         arg = argv[i]
+        # Track -x state before the value-flag skip so a forced language is known
+        # for the inputs that follow it.
+        if arg == "-x" and i + 1 < len(argv):
+            forced_active = argv[i + 1].lower() != "none"
+            i += 2
+            continue
+        if arg.startswith("-x") and len(arg) > 2:
+            forced_active = arg[2:].lower() != "none"
+            i += 1
+            continue
         if arg in SOURCE_OPERAND_FLAGS:
             i += 2  # skip the flag and the operand it consumes
             continue
@@ -221,6 +253,8 @@ def sources_from_argv(argv: list[str]) -> list[str]:
             i += 1
             continue
         if _is_source_token(arg, msvc):
+            out.append(arg)
+        elif accept_forced_language and forced_active and _is_bare_input(arg, msvc):
             out.append(arg)
         i += 1
     return out

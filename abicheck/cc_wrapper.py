@@ -55,7 +55,6 @@ import click
 
 from .buildsource.adapters.base import (
     compile_unit_id,
-    detect_language,
     effective_language,
     extract_abi_relevant_flags,
     sources_from_argv,
@@ -92,7 +91,10 @@ def compile_units_from_command(command: Sequence[str], directory: str | Path) ->
     command = list(command)
     if len(command) < 2 or _is_preprocess_only(command):
         return []
-    sources = [s for s in sources_from_argv(command) if detect_language(s)]
+    # accept_forced_language: capture an extensionless/generated source under a
+    # forced `-x <lang>` (clang++ -x c++ -c generated), which extension-only
+    # discovery would miss.
+    sources = sources_from_argv(command, accept_forced_language=True)
     if not sources:
         return []
     # Lazy import keeps the lightweight wrapper's import graph thin. Flags are
@@ -142,11 +144,11 @@ def emit_facts_for_command(
     """Extract the TU's source ABI and append it to the pack; return the dump.
 
     Extracts **every** source TU in the command (``gcc -c a.c b.c`` → both), so
-    a multi-source compile contributes all its objects' facts. Returns the first
-    extracted dump (or ``None`` when there is no source TU or no usable backend);
-    the return value is informational — the caller only cares that the pack grew.
-    Raising backends propagate to the caller, which logs and continues —
-    extraction must never fail the build.
+    a multi-source compile contributes all its objects' facts. A backend that
+    raises on one TU is logged and skipped, leaving the other TUs' facts intact.
+    Returns the first extracted dump (or ``None`` when there is no source TU or no
+    usable backend); the return value is informational — the caller only cares
+    that the pack grew.
     """
     units = compile_units_from_command(command, directory)
     if not units:
@@ -160,7 +162,13 @@ def emit_facts_for_command(
     init_inputs_pack(inputs_dir, library=library, version=version, created_by="abicheck-cc")
     first: SourceAbiTu | None = None
     for cu in units:
-        tu = impl.extract(cu, public_header_roots=list(public_header_roots), target_id=target_id)
+        # Per-TU isolation: one source the backend cannot parse must not drop the
+        # other objects of the same multi-source compile (Codex review).
+        try:
+            tu = impl.extract(cu, public_header_roots=list(public_header_roots), target_id=target_id)
+        except Exception as exc:
+            click.echo(f"abicheck-cc: skipped facts for {cu.source}: {exc}", err=True)
+            continue
         append_source_facts(inputs_dir, [tu], filename=facts_filename(cu.source))
         if first is None:
             first = tu
