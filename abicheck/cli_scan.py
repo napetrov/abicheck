@@ -632,7 +632,12 @@ def scan_cmd(
     sm = SourceMethod(source_method) if source_method else None
     dp = EvidenceDepth(depth) if depth else None
     is_auto = sm is SourceMethod.AUTO
-    auto_method = risk.recommended_method if is_auto else None
+    # auto escalates from the risk score ONLY when the diff seed actually produced
+    # changed paths. With no seed (no --changed-path, or --since failed on a bad
+    # ref / non-repo checkout) the score is 0 → s0 → collect "off", which would
+    # silently skip all L3-L5 source evidence; fall back to the mode preset (broad
+    # scope) instead (Codex review).
+    auto_method = risk.recommended_method if (is_auto and changed) else None
     resolved, eff_depth_enum = resolve_level(
         mode=scan_mode,
         source_method=sm,

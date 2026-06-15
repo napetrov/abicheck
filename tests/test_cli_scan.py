@@ -536,6 +536,28 @@ def test_malformed_risk_rules_yaml_is_click_error(
     assert "cannot read --risk-rules" in res.output
 
 
+def test_auto_without_diff_seed_falls_back_to_preset(runner, new_snap_compatible):
+    # auto + no --changed-path/--since seed must NOT collapse to s0/off — it falls
+    # back to the mode preset so source evidence isn't silently skipped (Codex).
+    res = runner.invoke(
+        main,
+        [
+            "scan",
+            "--binary",
+            str(new_snap_compatible),
+            "--source-method",
+            "auto",
+            "--format",
+            "json",
+            "--audit",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    payload = json.loads(res.output)
+    assert payload["level"]["source_method"] == "s5"
+    assert payload["level"]["collect_mode"] == "source-changed"
+
+
 def test_header_short_alias_works(runner, tmp_path, new_snap_compatible):
     # The --help example uses `-H`; the alias must actually parse (Codex review).
     header = tmp_path / "inc" / "w.h"
