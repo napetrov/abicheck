@@ -107,6 +107,42 @@ def test_explicit_old_value_kwarg_overrides_old() -> None:
     assert change.new_value == "long"
 
 
+def test_repr_wording_keeps_raw_old_value() -> None:
+    # Several kinds render a repr() in the description (e.g. {x!r}) while their
+    # machine-readable old_value/new_value must stay the *raw* value. The factory
+    # supports this by passing old=repr(x) for the template AND an explicit
+    # old_value=x kwarg. This locks the coupling so a future edit can't silently
+    # let the repr leak into old_value (the footgun called out in review).
+    change = make_change(
+        ChangeKind.FUNC_REF_QUAL_CHANGED,
+        symbol="_Z3foov",
+        name="foo",
+        old=repr("&"),
+        new=repr("&&"),
+        old_value="&",
+        new_value="&&",
+    )
+    # description carries the quoted repr form...
+    assert change.description == "Ref-qualifier changed: foo ('&' → '&&')"
+    # ...but the structured fields stay raw, not the repr.
+    assert change.old_value == "&"
+    assert change.new_value == "&&"
+
+
+def test_old_new_default_to_old_value_new_value() -> None:
+    # When no explicit old_value/new_value kwarg is given, old/new populate them
+    # (the common templated path, e.g. type_size_changed).
+    change = make_change(
+        ChangeKind.TYPE_SIZE_CHANGED, symbol="T", name="T", old="64", new="128"
+    )
+    assert change.old_value == "64"
+    assert change.new_value == "128"
+    # and a kind whose template references neither leaves them None.
+    added = make_change(ChangeKind.VAR_ADDED, symbol="g", name="g")
+    assert added.old_value is None
+    assert added.new_value is None
+
+
 def test_all_templates_use_only_known_vocabulary() -> None:
     # Guards against a template referencing a placeholder make_change does not
     # supply (which would raise KeyError at runtime for that kind).
