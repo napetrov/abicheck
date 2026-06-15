@@ -260,10 +260,16 @@ def _iter_source_fact_files(
     root_resolved = root.resolve()
     safe: list[Path] = []
     for f in files:
-        if f.resolve().is_relative_to(root_resolved):
-            safe.append(f)
-        else:
+        if not f.resolve().is_relative_to(root_resolved):
             sink.append(f"refused source-fact file escaping pack root: {f.name}")
+            continue
+        # A glob can match a non-regular entry (a directory named `old.jsonl`, a
+        # FIFO from an unpacked archive); read_text() would error or block on it.
+        # Skip with a diagnostic instead of aborting the ingest (Codex review).
+        if not f.is_file():
+            sink.append(f"skipped non-regular source-fact entry: {f.name}")
+            continue
+        safe.append(f)
     return sorted(set(safe))
 
 

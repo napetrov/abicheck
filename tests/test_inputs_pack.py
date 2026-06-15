@@ -259,6 +259,16 @@ def test_read_source_facts_accepts_json_array_form(tmp_path: Path) -> None:
     assert tus[0].functions[0].qualified_name == "foo"
 
 
+def test_ingest_skips_non_regular_globbed_entry(tmp_path: Path) -> None:
+    # A directory matching the *.jsonl glob (or a FIFO) must be skipped, not
+    # passed to read_text() where it would raise IsADirectoryError.
+    pack = _write_inputs_pack(tmp_path, [_tu("foo", mangled="_Z3foov")])
+    (pack / "source_facts" / "old.jsonl").mkdir()  # directory named like a fact file
+    ingested = ingest_inputs_pack(pack)
+    assert ingested.tu_count == 1  # the real file still read, no crash
+    assert any("non-regular source-fact entry" in d for d in ingested.diagnostics)
+
+
 def test_array_form_non_object_record_is_diagnosed(tmp_path: Path) -> None:
     # `.json` array with a non-dict element must be diagnosed, not silently
     # dropped — the ingest is lossy and must read as partial.
