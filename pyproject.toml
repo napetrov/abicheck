@@ -41,6 +41,7 @@ dependencies = [
 [project.scripts]
 abicheck = "abicheck.cli:main"
 abicheck-mcp = "abicheck.mcp_server:main"
+abicheck-cc = "abicheck.cc_wrapper:main"
 
 [project.urls]
 Repository = "https://github.com/napetrov/abicheck"

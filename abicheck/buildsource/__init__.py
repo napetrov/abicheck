@@ -80,6 +80,19 @@ from .include_graph import (
     augment_graph_with_includes,
     parse_depfile,
 )
+from .inputs_emit import (
+    append_source_facts,
+    init_inputs_pack,
+    write_inputs_pack,
+)
+from .inputs_pack import (
+    ABICHECK_INPUTS_VERSION,
+    IngestedInputs,
+    InputsManifest,
+    ingest_inputs_pack,
+    is_inputs_pack,
+    read_source_facts,
+)
 from .model import (
     BUILD_SOURCE_PACK_VERSION,
     BuildSourceEntity,
@@ -127,7 +140,16 @@ from .source_replay import (
 
 __all__ = [
     "DEFAULT_ALLOWED_ACTIONS",
+    "ABICHECK_INPUTS_VERSION",
     "BUILD_SOURCE_PACK_VERSION",
+    "IngestedInputs",
+    "InputsManifest",
+    "append_source_facts",
+    "ingest_inputs_pack",
+    "init_inputs_pack",
+    "is_inputs_pack",
+    "read_source_facts",
+    "write_inputs_pack",
     "REPLAY_SCOPES",
     "SOURCE_ABI_VERSION",
     "SOURCE_GRAPH_VERSION",

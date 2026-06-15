@@ -116,10 +116,27 @@ authority rule (L0–L2 stay authoritative for `BREAKING`).
   hygiene catalog with no baseline; severity-mapped lint + exit code.
 
 ### Phase 4 — Build-integrated extraction (G19.4)
-- Define the `abicheck_inputs/` dump/facts artifact protocol; ingest via existing
-  `merge`. Normalized `source_facts/*.jsonl` preferred; raw AST debug-only.
-- Clang-plugin + `abicheck-cc` wrapper as ADR-032 manifest extractors. GCC/MSVC
-  dump fallbacks documented, not required.
+- **DONE** — `abicheck/buildsource/inputs_pack.py` defines the Flow-2
+  `abicheck_inputs/` dump/facts artifact protocol (`InputsManifest`,
+  `is_inputs_pack()`, `read_source_facts()`, `ingest_inputs_pack()`): a build
+  drops a self-describing pack (normalized `source_facts/*.jsonl` → L4 surface,
+  `build/compile_commands.json` → L3, L5 graph folded) next to its binary, and
+  abicheck ingests it **without re-running a frontend** — pure parsing, CI-safe.
+  Ingested via the existing `merge` (a directory input is auto-detected and
+  folded into a source-side snapshot; `merge libfoo.bin.json ./abicheck_inputs/
+  -o baseline.json`). Raw AST (`raw_ast/`) is forensic-only, never ingested.
+  Tests: `tests/test_inputs_pack.py`.
+- **DONE** — `abicheck-cc` compiler wrapper (`abicheck/cc_wrapper.py`, console
+  script `abicheck-cc`) is the supported portable **producer**: it runs the real
+  compile (pass-through, exit-code preserving), then best-effort extracts a
+  normalized `SourceAbiTu` via the castxml/clang backends and appends it to an
+  `abicheck_inputs/` pack (`buildsource/inputs_emit.py`). Fact extraction never
+  fails the build (authority rule). Tests: `tests/test_inputs_emit.py`.
+- **DONE (reference)** — Clang plugin under `contrib/abicheck-clang-plugin/`
+  (`-fplugin`, emits the same `source_facts` schema, removes the second frontend
+  pass) — the optional, compiler-version-sensitive optimization; not built in CI.
+  GCC `-fdump-lang-class` / MSVC fallbacks documented. The portable default stays
+  `compile_commands.json` replay.
 
 ## Files & surfaces
 

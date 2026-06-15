@@ -1248,7 +1248,7 @@ def dump_source_only(
     )
 
 @main.command("merge")
-@click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=True, path_type=Path))
 @click.option("-o", "--output", "output", type=click.Path(path_type=Path), required=True,
               help="Output combined baseline snapshot (.abi.json).")
 @click.option("--on-conflict", "on_conflict", type=click.Choice(["warn", "error"]),
@@ -1261,13 +1261,23 @@ def merge_cmd(inputs: tuple[Path, ...], output: Path, on_conflict: str, verbose:
     """Combine independently-produced dumps into one self-contained baseline.
 
     \b
-    Each INPUT is a `.abi.json` produced by `abicheck dump`. The realistic flow
-    is one artifact-side dump plus one source-side dump prepared in parallel:
+    Each INPUT is a `.abi.json` produced by `abicheck dump`, OR a Flow-2
+    `abicheck_inputs/` directory the product build emitted (ADR-035 D5). The
+    realistic flow is one artifact-side dump plus one source-side input prepared
+    in parallel:
 
     \b
       abicheck dump libfoo.so -H include/   -o libfoo.bin.json   # L0/L1/L2
       abicheck dump --sources ./libfoo-src/ -o libfoo.src.json   # L3/L4/L5
       abicheck merge libfoo.bin.json libfoo.src.json -o libfoo.baseline.json
+
+    \b
+    A build that emits normalized facts can skip the source-side replay entirely
+    and drop an `abicheck_inputs/` pack instead — abicheck ingests it without
+    re-running a frontend:
+
+    \b
+      abicheck merge libfoo.bin.json ./abicheck_inputs/ -o libfoo.baseline.json
 
     The binary-bearing snapshot becomes the base (its ABI surface is kept); every
     input's embedded `build_source` facts are folded together per layer (each

@@ -169,6 +169,65 @@ embedded `build_source` facts together per layer (each layer should come from
 exactly one input), so the result is a single `.abi.json` carrying all of
 L0–L5.
 
+### Build-emitted facts — the `abicheck_inputs/` protocol (Flow 2)
+
+When the **product build itself** can emit normalized facts (a Clang plugin, a
+compiler wrapper, or any tooling that writes the schema), it skips the
+source-side replay entirely: the build drops a self-describing
+`abicheck_inputs/` directory next to its binary, and abicheck ingests it
+**without re-running a compiler frontend** (ADR-035 D5). This is the
+vendor/closed-source path — exact build-context facts contribute to the baseline
+without shipping sources or letting abicheck rebuild the project.
+
+```text
+abicheck_inputs/
+  manifest.json                  # kind: abicheck_inputs, library/version, paths
+  binary/…  headers/…            # the shipped artifact + public headers (dumped normally)
+  build/compile_commands.json    # optional → L3 build evidence
+  source_facts/*.jsonl           # PREFERRED — normalized per-TU facts → L4/L5
+  raw_ast/*.json.zst             # optional, forensic only — never ingested
+```
+
+The pack rides the same `merge` flow — a directory input is auto-detected and
+folded just like a source-side dump:
+
+```bash
+abicheck dump libfoo.so -H include/ -o libfoo.bin.json   # artifact side, L0/L1/L2
+abicheck merge libfoo.bin.json ./abicheck_inputs/ -o libfoo.baseline.json
+```
+
+Normalized `source_facts/*.jsonl` are the canonical comparison format; `raw_ast/`
+is an MVP-ingest / forensic fallback that abicheck does not read.
+
+#### Producing a pack — `abicheck-cc` (the supported producer)
+
+Prefix any compile with **`abicheck-cc`** to capture each TU's source ABI *during
+the real build*, with that TU's exact flags and macros:
+
+```bash
+export ABICHECK_INPUTS_DIR=abicheck_inputs
+export ABICHECK_CC_LIBRARY=libfoo.so
+export ABICHECK_CC_HEADERS=include            # public-header roots (ADR-015)
+
+abicheck-cc c++ -std=c++17 -Iinclude -c src/foo.cpp -o foo.o   # …per TU
+abicheck merge libfoo.bin.json ./abicheck_inputs/ -o libfoo.baseline.json
+```
+
+`abicheck-cc` runs the real compile (pass-through, preserving the exit code),
+then best-effort extracts a normalized `SourceAbiTu` and appends it to the pack.
+**Fact extraction never fails the build** (authority rule): a missing front-end
+or a parse error degrades to a warning. Set `ABICHECK_CC_DISABLE=1` for a pure
+pass-through. The wrapper reuses the castxml/clang extractors, so it is the
+**portable, supported producer**.
+
+The **Clang plugin** (`contrib/abicheck-clang-plugin/`) is an optional
+optimization that emits the *same* `source_facts` schema straight from the AST
+Clang already built, removing the second front-end pass — reach for it only when
+that cost is measurable and you control the toolchain image. GCC
+(`-fdump-lang-class`) and MSVC have documented fallbacks. In every case the output
+contract is identical, so `abicheck merge` ingests them the same way. The portable
+default remains `compile_commands.json` replay (`dump --sources`).
+
 ### Choosing how much to collect — `dump --collect-mode`
 
 `dump --collect-mode` (the ADR-033 D2 CI evidence mode) selects *which* layers
