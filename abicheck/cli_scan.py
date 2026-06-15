@@ -357,22 +357,42 @@ def _build_new_snapshot(
     return snap
 
 
-def _audit_exit_code(findings: list[Any]) -> tuple[str, int]:
+def _crosscheck_severity_exit(findings: list[Any], severities: dict[str, str]) -> int:
+    """Exit-code floor from cross-checks the maintainer promoted to ``error``.
+
+    A cross-check stays advisory (exit 0) until the maintainer opts it into
+    gating with ``--crosscheck KEY=error`` (ADR-035 UX step 7 / D6). Once opted
+    in, a finding for that check raises the exit to the source-break tier (2) —
+    even for a RISK-class check — so the documented promotion path actually
+    gates CI. ``info``/``warning`` never gate.
+    """
+    gating = {k for k, level in severities.items() if level == "error"}
+    if gating and any(f.kind.value in gating for f in findings):
+        return 2
+    return 0
+
+
+def _audit_exit_code(
+    findings: list[Any], severities: dict[str, str]
+) -> tuple[str, int]:
     """Verdict/exit for the no-baseline path from cross-source finding tiers.
 
     Cross-source findings are never ``BREAKING`` on their own (authority rule), so
     an audit can reach at most ``API_BREAK`` (exit 2); ``RISK`` stays advisory
-    (exit 0). Adoption never starts by blocking merges (ADR-035 UX step 7).
+    (exit 0) unless the maintainer promoted that check to ``error`` (D6).
+    Adoption never starts by blocking merges (ADR-035 UX step 7).
     """
-    has_api_break = any(f.kind in API_BREAK_KINDS for f in findings)
     # Defensive: a mis-partitioned kind would be caught by the import-time
     # assertion, but never let a cross-source finding gate a BREAKING verdict.
     assert not any(f.kind in BREAKING_KINDS for f in findings), (
         "cross-source findings must never be BREAKING (ADR-035 D1 authority rule)"
     )
-    if has_api_break:
-        return "API_BREAK", 2
-    return "COMPATIBLE", 0
+    has_api_break = any(f.kind in API_BREAK_KINDS for f in findings)
+    exit_code = max(
+        2 if has_api_break else 0,
+        _crosscheck_severity_exit(findings, severities),
+    )
+    return ("API_BREAK" if exit_code >= 2 else "COMPATIBLE"), exit_code
 
 
 @main.command("scan")
@@ -603,12 +623,19 @@ def scan_cmd(
             cc.findings,
             lang,
         )
+        # A cross-check the maintainer promoted to `error` (D6) gates the exit
+        # even when the baseline diff itself is clean.
+        sev_exit = _crosscheck_severity_exit(cc.findings, severities)
+        if sev_exit > exit_code:
+            exit_code = sev_exit
+            if verdict in ("NO_CHANGE", "COMPATIBLE"):
+                verdict = "API_BREAK"
     else:
         if baseline is not None:
             click.echo(
                 "note: --audit ignores --baseline (intra-version scan).", err=True
             )
-        verdict, exit_code = _audit_exit_code(cc.findings)
+        verdict, exit_code = _audit_exit_code(cc.findings, severities)
 
     elapsed = time.monotonic() - start
 

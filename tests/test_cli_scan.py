@@ -308,6 +308,82 @@ def test_crosscheck_off_disables_a_check(runner, tmp_path):
     assert "exported_not_public" not in counts
 
 
+def _accidental_export_snap(tmp_path: Path) -> Path:
+    # `secret` is exported but no public header declares it → exported_not_public.
+    snap = AbiSnapshot(
+        library="libfoo.so",
+        version="1.0",
+        from_headers=True,
+        functions=[_func("foo", "_Z3foov")],
+        elf=_elf("_Z3foov", "_Z6secretv"),
+    )
+    return _write_snapshot(tmp_path / "lib.abi.json", snap)
+
+
+def test_crosscheck_error_severity_gates_exit_code(runner, tmp_path):
+    # A RISK-class check is advisory by default (exit 0) but gates once the
+    # maintainer promotes it to error (ADR-035 UX step 7 / D6).
+    p = _accidental_export_snap(tmp_path)
+    advisory = runner.invoke(main, ["scan", "--binary", str(p), "--audit"])
+    assert advisory.exit_code == 0, advisory.output
+
+    gated = runner.invoke(
+        main,
+        [
+            "scan",
+            "--binary",
+            str(p),
+            "--audit",
+            "--crosscheck",
+            "exported_not_public=error",
+        ],
+    )
+    assert gated.exit_code == 2, gated.output
+
+
+def test_crosscheck_warning_severity_does_not_gate(runner, tmp_path):
+    p = _accidental_export_snap(tmp_path)
+    res = runner.invoke(
+        main,
+        [
+            "scan",
+            "--binary",
+            str(p),
+            "--audit",
+            "--crosscheck",
+            "exported_not_public=warning",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+
+
+def test_crosscheck_error_gates_even_with_clean_baseline(
+    runner, tmp_path, baseline_snap
+):
+    # Baseline diff is clean (NO_CHANGE) but the promoted check still gates.
+    snap = AbiSnapshot(
+        library="libfoo.so",
+        version="1.0",
+        from_headers=True,
+        functions=[_func("foo", "_Z3foov"), _func("bar", "_Z3barv")],
+        elf=_elf("_Z3foov", "_Z3barv", "_Z6secretv"),
+    )
+    p = _write_snapshot(tmp_path / "new.abi.json", snap)
+    res = runner.invoke(
+        main,
+        [
+            "scan",
+            "--binary",
+            str(p),
+            "--baseline",
+            str(baseline_snap),
+            "--crosscheck",
+            "exported_not_public=error",
+        ],
+    )
+    assert res.exit_code == 2, res.output
+
+
 def test_multiple_binaries_rejected(runner, baseline_snap, new_snap_compatible):
     res = runner.invoke(
         main,
