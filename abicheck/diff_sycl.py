@@ -179,10 +179,6 @@ def _diff_plugin_search_paths(
         changes.append(make_change(
             ChangeKind.SYCL_PLUGIN_SEARCH_PATH_CHANGED,
             symbol="sycl::pi::search_paths",
-            description=(
-                "SYCL plugin search paths changed; plugins may not be found "
-                "at runtime without deployment configuration update."
-            ),
             old_value=", ".join(old.plugin_search_paths),
             new_value=", ".join(new.plugin_search_paths),
         ))

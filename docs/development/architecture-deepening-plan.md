@@ -273,7 +273,7 @@ post-filter ordering the synthetic detectors need.
 > `description=` as the first-class bespoke override). **Every `Change(...)`
 > constructor across the `diff_*` modules (~200 sites) now routes through
 > `make_change`** — bespoke findings keep their computed `description=`, and
-> **82 regular kinds own a `description_template`** so their wording lives in the
+> **83 regular kinds own a `description_template`** so their wording lives in the
 > registry (the whole `diff_types` type/field/enum/union/typedef/qualifier
 > family, the `diff_symbols` function/variable/param/access kinds, and the
 > `diff_platform` ELF/PE/Mach-O symbol/version/dependency kinds). All byte-for-byte:
@@ -510,7 +510,7 @@ C3  binary-format registry         (parallelisable; needs integration lane)
 C10 split model.py                 ◐ stage-1 done (name predicates moved)
 C8  ABICC compat adapter           (parity-sensitive)
 C5  synthetic detectors → registry ⛔ deferred (entangled; net-negative)
-C6  Change factory                 ◐ inc 1 done (factory + 82 templates; all ~200 diff_* sites route via make_change)
+C6  Change factory                 ◐ inc 1 done (factory + 83 templates; all ~200 diff_* sites route via make_change)
 ```
 
 Rationale: C4 and C9 are mechanical and reversible — do them to build
@@ -528,7 +528,7 @@ parity is contractual and benefits from a stabilised shared layer underneath it.
 | C3 | Binary-format handler registry | Proposed | — |
 | C4 | Detector auto-discovery | Done | #395 |
 | C5 | Synthetic detectors → registry | Deferred (not a clean win) | — |
-| C6 | `Change` factory | Increment 1 done (factory + `description_template` registry field; all ~200 `diff_*` constructor sites route via `make_change`; 82 regular kinds templated; bespoke long tail remains) | — |
+| C6 | `Change` factory | Increment 1 done (factory + `description_template` registry field; all ~200 `diff_*` constructor sites route via `make_change`; 83 regular kinds templated; bespoke long tail remains) | — |
 | C7 | CLI → service (exit-code unify + cross-flow integrity tests done; command-body extraction follow-up) | Partial | #395 |
 | C8 | ABICC compat adapter | Proposed | — |
 | C9 | Relocate confidence computation | Done | #395 |

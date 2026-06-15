@@ -690,7 +690,8 @@ REGISTRY = ChangeKindRegistry([
        impact="New backend plugin available; broadens hardware support."),
     _E("sycl_plugin_search_path_changed", _R,
        impact="Plugin discovery path changed; plugins may not be found at runtime unless "
-              "deployment configuration is updated."),
+              "deployment configuration is updated.",
+       description_template="SYCL plugin search paths changed; plugins may not be found at runtime without deployment configuration update."),
     _E("sycl_runtime_version_changed", _C,
        impact="SYCL runtime version changed; informational. Actual binary breaks are detected "
               "by symbol/type diff of the runtime library."),
