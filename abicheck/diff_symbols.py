@@ -216,7 +216,7 @@ def _check_removed_function(
         return make_change(
             ChangeKind.FUNC_VISIBILITY_CHANGED,
             symbol=mangled,
-            description=f"Function visibility changed to hidden: {f_old.name}",
+            name=f_old.name,
             old_value=f_old.visibility.value,
             new_value=f_hidden.visibility.value,
         )
@@ -472,9 +472,9 @@ def _check_linkage_change(mangled: str, f_old: Function, f_new: Function) -> lis
     return [make_change(
         ChangeKind.FUNC_LANGUAGE_LINKAGE_CHANGED,
         symbol=mangled,
-        description=f"Language linkage changed: {f_old.name} ({old_linkage} → {new_linkage})",
-        old_value=old_linkage,
-        new_value=new_linkage,
+        name=f_old.name,
+        old=old_linkage,
+        new=new_linkage,
     )]
 
 
@@ -704,7 +704,7 @@ def _detect_newly_deleted_functions(
             changes.append(make_change(
                 kind,
                 symbol=mangled,
-                description=f"Function explicitly deleted (= delete): {f_new.name}",
+                name=f_new.name,
                 old_value="callable",
                 new_value="deleted",
             ))
@@ -911,7 +911,7 @@ def _diff_param_defaults(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 changes.append(make_change(
                     ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,
                     symbol=mangled,
-                    description=f"Parameter default removed: {f_old.name} param {p_old.name or i}",
+                    name=f_old.name, detail=str(p_old.name or i),
                     old_value=p_old.default,
                     new_value=None,
                 ))
@@ -919,7 +919,7 @@ def _diff_param_defaults(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 changes.append(make_change(
                     ChangeKind.PARAM_DEFAULT_VALUE_CHANGED,
                     symbol=mangled,
-                    description=f"Parameter default changed: {f_old.name} param {p_old.name or i}",
+                    name=f_old.name, detail=str(p_old.name or i),
                     old_value=p_old.default,
                     new_value=p_new.default,
                 ))
@@ -951,9 +951,9 @@ def _diff_param_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 changes.append(make_change(
                     ChangeKind.PARAM_RENAMED,
                     symbol=mangled,
-                    description=f"Parameter renamed: {f_old.name} param {i}: {p_old.name} → {p_new.name}",
-                    old_value=p_old.name,
-                    new_value=p_new.name,
+                    name=f_old.name, detail=str(i),
+                    old=p_old.name,
+                    new=p_new.name,
                 ))
 
     return changes
@@ -985,9 +985,9 @@ def _diff_pointer_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             changes.append(make_change(
                 ChangeKind.RETURN_POINTER_LEVEL_CHANGED,
                 symbol=mangled,
-                description=f"Return pointer level changed: {f_old.name} (depth {f_old.return_pointer_depth} → {f_new.return_pointer_depth})",
-                old_value=str(f_old.return_pointer_depth),
-                new_value=str(f_new.return_pointer_depth),
+                name=f_old.name,
+                old=str(f_old.return_pointer_depth),
+                new=str(f_new.return_pointer_depth),
             ))
 
         if params_unconfirmed:
@@ -1005,9 +1005,9 @@ def _diff_pointer_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 changes.append(make_change(
                     ChangeKind.PARAM_POINTER_LEVEL_CHANGED,
                     symbol=mangled,
-                    description=f"Parameter pointer level changed: {f_old.name} param {p_old.name or i} (depth {p_old.pointer_depth} → {p_new.pointer_depth})",
-                    old_value=str(p_old.pointer_depth),
-                    new_value=str(p_new.pointer_depth),
+                    name=f_old.name, detail=str(p_old.name or i),
+                    old=str(p_old.pointer_depth),
+                    new=str(p_new.pointer_depth),
                 ))
 
     return changes
@@ -1038,9 +1038,9 @@ def _check_method_access_changes(
             changes.append(make_change(
                 ChangeKind.METHOD_ACCESS_CHANGED,
                 symbol=mangled,
-                description=f"Method access level narrowed: {f_old.name} ({f_old.access.value} → {f_new.access.value})",
-                old_value=f_old.access.value,
-                new_value=f_new.access.value,
+                name=f_old.name,
+                old=f_old.access.value,
+                new=f_new.access.value,
             ))
     return changes
 
@@ -1065,9 +1065,9 @@ def _check_field_access_changes(
                 changes.append(make_change(
                     ChangeKind.FIELD_ACCESS_CHANGED,
                     symbol=name,
-                    description=f"Field access level narrowed: {name}::{fname} ({f_old_f.access.value} → {f_new_f.access.value})",
-                    old_value=f_old_f.access.value,
-                    new_value=f_new_f.access.value,
+                    name=name, detail=fname,
+                    old=f_old_f.access.value,
+                    new=f_new_f.access.value,
                 ))
     return changes
 
@@ -1278,7 +1278,7 @@ def _diff_param_va_list(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 changes.append(make_change(
                     ChangeKind.PARAM_BECAME_VA_LIST,
                     symbol=mangled,
-                    description=f"Parameter became va_list: {f_old.name} param {p_old.name or i}",
+                    name=f_old.name, detail=str(p_old.name or i),
                     old_value=p_old.type,
                     new_value="va_list",
                 ))
@@ -1286,7 +1286,7 @@ def _diff_param_va_list(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 changes.append(make_change(
                     ChangeKind.PARAM_LOST_VA_LIST,
                     symbol=mangled,
-                    description=f"Parameter was va_list, now fixed: {f_old.name} param {p_old.name or i}",
+                    name=f_old.name, detail=str(p_old.name or i),
                     old_value="va_list",
                     new_value=p_new.type,
                 ))
@@ -1317,7 +1317,7 @@ def _diff_constants(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             changes.append(make_change(
                 ChangeKind.CONSTANT_REMOVED,
                 symbol=name,
-                description=f"Preprocessor constant removed: {name}",
+                name=name,
                 old_value=old_val,
             ))
         elif new_val != old_val:
@@ -1334,7 +1334,7 @@ def _diff_constants(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             changes.append(make_change(
                 ChangeKind.CONSTANT_ADDED,
                 symbol=name,
-                description=f"New preprocessor constant: {name}",
+                name=name,
                 new_value=new_val,
             ))
     return changes
@@ -1356,17 +1356,17 @@ def _diff_var_access(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 changes.append(make_change(
                     ChangeKind.VAR_ACCESS_CHANGED,
                     symbol=mangled,
-                    description=f"Variable access level narrowed: {v_old.name} ({v_old.access.value} → {v_new.access.value})",
-                    old_value=v_old.access.value,
-                    new_value=v_new.access.value,
+                    name=v_old.name,
+                    old=v_old.access.value,
+                    new=v_new.access.value,
                 ))
             else:
                 changes.append(make_change(
                     ChangeKind.VAR_ACCESS_WIDENED,
                     symbol=mangled,
-                    description=f"Variable access level widened: {v_old.name} ({v_old.access.value} → {v_new.access.value})",
-                    old_value=v_old.access.value,
-                    new_value=v_new.access.value,
+                    name=v_old.name,
+                    old=v_old.access.value,
+                    new=v_new.access.value,
                 ))
     return changes
 

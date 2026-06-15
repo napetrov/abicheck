@@ -199,9 +199,8 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         changes.append(make_change(
             ChangeKind.PE_MACHINE_CHANGED,
             symbol="PE_HEADER",
-            old_value=o.machine,
-            new_value=n.machine,
-            description=f"PE machine/architecture changed: {o.machine} → {n.machine}",
+            old=o.machine,
+            new=n.machine,
         ))
 
     # Detect changed import dependencies
@@ -319,9 +318,8 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         changes.append(make_change(
             ChangeKind.COMPAT_VERSION_CHANGED,
             symbol="compat_version",
-            old_value=o.compat_version,
-            new_value=n.compat_version,
-            description=f"compatibility version changed: {o.compat_version} → {n.compat_version}",
+            old=o.compat_version,
+            new=n.compat_version,
         ))
 
     # Detect dependency changes
@@ -598,9 +596,8 @@ def _diff_security_hardening(old_elf: Any, new_elf: Any) -> list[Change]:
         changes.append(make_change(
             ChangeKind.RELRO_WEAKENED,
             symbol="GNU_RELRO",
-            description=f"RELRO weakened: {old_relro} → {new_relro}",
-            old_value=old_relro,
-            new_value=new_relro,
+            old=old_relro,
+            new=new_relro,
         ))
 
     if getattr(old_elf, "is_pie", False) and not getattr(new_elf, "is_pie", False):
@@ -697,15 +694,13 @@ def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
         changes.append(make_change(
             ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
             symbol=ver,
-            description=f"Symbol version removed: {ver}",
-            old_value=ver,
+            old=ver,
         ))
     for ver in sorted(new_def - old_def):
         changes.append(make_change(
             ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
             symbol=ver,
-            description=f"Symbol version definition added: {ver}",
-            new_value=ver,
+            new=ver,
         ))
 
     all_req_libs = set(old_elf.versions_required) | set(new_elf.versions_required)
@@ -747,14 +742,16 @@ def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
                 changes.append(make_change(
                     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
                     symbol=ver,
-                    description=f"New symbol version requirement: {ver} (from {lib})",
+                    name=ver,
+                    detail=lib,
                     new_value=f"{lib}:{ver}",
                 ))
         for ver in sorted(old_vers - new_vers):
             changes.append(make_change(
                 ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
                 symbol=ver,
-                description=f"Symbol version requirement removed: {ver} (from {lib})",
+                name=ver,
+                detail=lib,
                 old_value=f"{lib}:{ver}",
             ))
     return changes
@@ -803,7 +800,7 @@ def _diff_elf_symbol_metadata(
             changes.append(make_change(
                 ChangeKind.COMMON_SYMBOL_RISK,
                 symbol=sym_name,
-                description=f"Exported STT_COMMON symbol: {sym_name} (resolution depends on linker/loader)",
+                name=sym_name,
             ))
     return changes
 
@@ -814,7 +811,7 @@ def _check_ifunc_type_change(sym_name: str, s_old: Any, s_new: Any) -> list[Chan
         return [make_change(
             ChangeKind.IFUNC_INTRODUCED,
             symbol=sym_name,
-            description=f"Symbol became GNU_IFUNC: {sym_name}",
+            name=sym_name,
             old_value=s_old.sym_type.value,
             new_value="ifunc",
         )]
@@ -822,7 +819,7 @@ def _check_ifunc_type_change(sym_name: str, s_old: Any, s_new: Any) -> list[Chan
         return [make_change(
             ChangeKind.IFUNC_REMOVED,
             symbol=sym_name,
-            description=f"Symbol no longer GNU_IFUNC: {sym_name}",
+            name=sym_name,
             old_value="ifunc",
             new_value=s_new.sym_type.value,
         )]
@@ -830,9 +827,9 @@ def _check_ifunc_type_change(sym_name: str, s_old: Any, s_new: Any) -> list[Chan
         return [make_change(
             ChangeKind.SYMBOL_TYPE_CHANGED,
             symbol=sym_name,
-            description=f"Symbol type changed: {sym_name} ({s_old.sym_type.value} → {s_new.sym_type.value})",
-            old_value=s_old.sym_type.value,
-            new_value=s_new.sym_type.value,
+            name=sym_name,
+            old=s_old.sym_type.value,
+            new=s_new.sym_type.value,
         )]
     return []
 
@@ -846,9 +843,9 @@ def _check_binding_change(sym_name: str, s_old: Any, s_new: Any) -> list[Change]
     return [make_change(
         kind,
         symbol=sym_name,
-        description=f"Symbol binding changed: {sym_name} ({s_old.binding.value} → {s_new.binding.value})",
-        old_value=s_old.binding.value,
-        new_value=s_new.binding.value,
+        name=sym_name,
+        old=s_old.binding.value,
+        new=s_new.binding.value,
     )]
 
 
@@ -868,9 +865,9 @@ def _check_elf_visibility_change(sym_name: str, s_old: Any, s_new: Any) -> list[
     return [make_change(
         ChangeKind.SYMBOL_ELF_VISIBILITY_CHANGED,
         symbol=sym_name,
-        description=f"ELF visibility changed: {sym_name} ({old_vis} → {new_vis})",
-        old_value=old_vis,
-        new_value=new_vis,
+        name=sym_name,
+        old=old_vis,
+        new=new_vis,
     )]
 
 
@@ -924,9 +921,9 @@ def _check_symbol_size_change(
     return [make_change(
         size_kind,
         symbol=sym_name,
-        description=f"Symbol size changed: {sym_name} ({s_old.size} → {s_new.size} bytes)",
-        old_value=str(s_old.size),
-        new_value=str(s_new.size),
+        name=sym_name,
+        old=str(s_old.size),
+        new=str(s_new.size),
     )]
 
 
@@ -1605,16 +1602,17 @@ def _diff_struct_layouts(o: object, n: object) -> list[Change]:
                     changes.append(make_change(
                         ChangeKind.USED_RESERVED_FIELD,
                         symbol=name,
-                        description=f"Reserved field put into use: {name}::{fname} → {candidate.name}",
-                        old_value=fname,
-                        new_value=candidate.name,
+                        name=name,
+                        old=fname,
+                        new=candidate.name,
                     ))
                     reserved_matched.add(candidate.name)
                     continue
             changes.append(make_change(
                 ChangeKind.STRUCT_FIELD_REMOVED,
                 symbol=f"{name}::{fname}",
-                description=f"Struct field removed: {name}::{fname}",
+                name=name,
+                detail=fname,
                 old_value=f"{old_fields[fname].type_name}",
             ))
 
@@ -1719,7 +1717,8 @@ def _diff_enum_layouts(o: object, n: object) -> list[Change]:
             changes.append(make_change(
                 ChangeKind.ENUM_MEMBER_REMOVED,
                 symbol=f"{name}::{mname}",
-                description=f"Enum member removed: {name}::{mname}",
+                name=name,
+                detail=mname,
                 old_value=str(old_val),
             ))
 

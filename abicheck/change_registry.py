@@ -247,7 +247,8 @@ REGISTRY = ChangeKindRegistry([
        impact="const/volatile on 'this' changes the mangled name; old binaries link to the wrong symbol.",
        description_template="CV qualifier changed: {name}"),
     _E("func_visibility_changed", _B,
-       impact="Symbol hidden from dynamic linking; old binaries can't find it at load time."),
+       impact="Symbol hidden from dynamic linking; old binaries can't find it at load time.",
+       description_template="Function visibility changed to hidden: {name}"),
     _E("func_visibility_protected_changed", _C,
        impact="Symbol visibility changed to STV_PROTECTED. The symbol remains exported and "
               "is still resolvable by external consumers. Interposition via LD_PRELOAD no "
@@ -302,7 +303,8 @@ REGISTRY = ChangeKindRegistry([
 
     # ── Mach-O specific ───────────────────────────────────────────────────
     _E("compat_version_changed", _B,
-       impact="Mach-O compatibility version changed; dylibs linked against old version may fail to load."),
+       impact="Mach-O compatibility version changed; dylibs linked against old version may fail to load.",
+       description_template="compatibility version changed: {old} → {new}"),
     _E("macho_cpu_type_changed", _B,
        impact="A Mach-O architecture slice that used to ship is gone (e.g. a universal "
               "x86_64+arm64 dylib dropped its x86_64 slice, or x86_64 → arm64). Existing "
@@ -316,7 +318,8 @@ REGISTRY = ChangeKindRegistry([
               "different — and possibly missing — behaviour at load time."),
     _E("pe_machine_changed", _B,
        impact="PE machine/architecture changed (e.g. AMD64 → ARM64); the DLL is a different "
-              "architecture and cannot be loaded by existing clients."),
+              "architecture and cannot be loaded by existing clients.",
+       description_template="PE machine/architecture changed: {old} → {new}"),
 
     # ── ELF security / bad practice ────────────────────────────────────────
     _E("executable_stack", _C,
@@ -327,7 +330,8 @@ REGISTRY = ChangeKindRegistry([
     # surface without failing a normal compatibility gate; the shipped
     # `security` policy (policies/security.yaml) flips them to break.
     _E("relro_weakened", _R,
-       impact="RELRO protection weakened (e.g. full→partial); the GOT is no longer fully read-only, widening the GOT-overwrite attack surface."),
+       impact="RELRO protection weakened (e.g. full→partial); the GOT is no longer fully read-only, widening the GOT-overwrite attack surface.",
+       description_template="RELRO weakened: {old} → {new}"),
     _E("pie_disabled", _R,
        impact="Position-independent executable disabled; the image loads at a fixed address, defeating ASLR."),
     _E("stack_canary_removed", _R,
@@ -339,38 +343,51 @@ REGISTRY = ChangeKindRegistry([
 
     # ── Symbol metadata drift ──────────────────────────────────────────────
     _E("symbol_binding_changed", _C,
-       impact="GLOBAL→WEAK binding lets interposers override unexpectedly; old code may get wrong implementation."),
+       impact="GLOBAL→WEAK binding lets interposers override unexpectedly; old code may get wrong implementation.",
+       description_template="Symbol binding changed: {name} ({old} → {new})"),
     _E("symbol_binding_strengthened", _C,
-       impact="WEAK→GLOBAL binding; safe upgrade, interposition still possible via LD_PRELOAD."),
+       impact="WEAK→GLOBAL binding; safe upgrade, interposition still possible via LD_PRELOAD.",
+       description_template="Symbol binding changed: {name} ({old} → {new})"),
     _E("symbol_type_changed", _B,
-       impact="Symbol type changed (e.g. FUNC→OBJECT); callers using wrong calling convention."),
+       impact="Symbol type changed (e.g. FUNC→OBJECT); callers using wrong calling convention.",
+       description_template="Symbol type changed: {name} ({old} → {new})"),
     _E("symbol_size_changed", _B,
-       impact="ELF symbol size changed; copy relocations or memcpy-based consumers get truncated/oversized data."),
+       impact="ELF symbol size changed; copy relocations or memcpy-based consumers get truncated/oversized data.",
+       description_template="Symbol size changed: {name} ({old} → {new} bytes)"),
     _E("symbol_size_changed_internal", _B,
        impact="ELF size changed on an internal-looking (reserved/underscore-prefixed) exported data symbol; "
               "exported data remains part of the dynamic ABI and size changes can break copy relocations "
-              "or direct data consumers. Override severity via --policy-file only when the symbol is known private."),
+              "or direct data consumers. Override severity via --policy-file only when the symbol is known private.",
+       description_template="Symbol size changed: {name} ({old} → {new} bytes)"),
     _E("symbol_size_changed_const_object", _B,
        impact="ELF size changed on a public const string-like object declared without a fixed bound in headers. "
               "Old non-PIE consumers may have copy relocations sized from the old DSO symbol, so a later DSO can "
-              "truncate or otherwise mis-copy data at load time."),
+              "truncate or otherwise mis-copy data at load time.",
+       description_template="Symbol size changed: {name} ({old} → {new} bytes)"),
     _E("ifunc_introduced", _C,
-       impact="IFUNC resolver indirection added; transparent to well-behaved callers."),
+       impact="IFUNC resolver indirection added; transparent to well-behaved callers.",
+       description_template="Symbol became GNU_IFUNC: {name}"),
     _E("ifunc_removed", _C,
-       impact="IFUNC removed; transparent to callers."),
-    _E("common_symbol_risk", _C),
+       impact="IFUNC removed; transparent to callers.",
+       description_template="Symbol no longer GNU_IFUNC: {name}"),
+    _E("common_symbol_risk", _C,
+       description_template="Exported STT_COMMON symbol: {name} (resolution depends on linker/loader)"),
 
     # ── Symbol versioning ──────────────────────────────────────────────────
     _E("symbol_version_defined_removed", _B,
-       impact="Defined symbol version removed; old binaries requesting that version get link error."),
+       impact="Defined symbol version removed; old binaries requesting that version get link error.",
+       description_template="Symbol version removed: {old}"),
     _E("symbol_version_defined_added", _C,
-       impact="New symbol version defined; transparent to existing consumers."),
+       impact="New symbol version defined; transparent to existing consumers.",
+       description_template="Symbol version definition added: {new}"),
     _E("symbol_version_required_added", _R,
-       impact="Requires a newer symbol version than old system provides; may fail to load on older systems."),
+       impact="Requires a newer symbol version than old system provides; may fail to load on older systems.",
+       description_template="New symbol version requirement: {name} (from {detail})"),
     _E("symbol_version_required_added_compat", _C,
        impact="New version requirement added but older than existing max; safe on current systems."),
     _E("symbol_version_required_removed", _C,
-       impact="Version requirement dropped; broadens compatibility."),
+       impact="Version requirement dropped; broadens compatibility.",
+       description_template="Symbol version requirement removed: {name} (from {detail})"),
 
     # ── DWARF layout (Sprint 3) ───────────────────────────────────────────
     _E("dwarf_info_missing", _C),
@@ -398,7 +415,8 @@ REGISTRY = ChangeKindRegistry([
     _E("struct_field_offset_changed", _B,
        impact="Field moved to different offset; old code accesses wrong memory."),
     _E("struct_field_removed", _B,
-       impact="Field removed from struct; old code accessing it reads/writes garbage."),
+       impact="Field removed from struct; old code accessing it reads/writes garbage.",
+       description_template="Struct field removed: {name}::{detail}"),
     _E("struct_field_type_changed", _B,
        impact="Field type changed in binary; old code misinterprets the field data."),
     _E("struct_alignment_changed", _B,
@@ -436,7 +454,8 @@ REGISTRY = ChangeKindRegistry([
 
     # ── Sprint 2 — gap detectors ──────────────────────────────────────────
     _E("func_deleted", _B,
-       impact="Function marked = delete; old binaries still call it, getting link error or UB."),
+       impact="Function marked = delete; old binaries still call it, getting link error or UB.",
+       description_template="Function explicitly deleted (= delete): {name}"),
     _E("var_became_const", _B,
        impact="Variable moved to read-only section; old code writing to it gets SIGSEGV."),
     _E("var_lost_const", _B,
@@ -453,15 +472,18 @@ REGISTRY = ChangeKindRegistry([
        impact="Enumerator name changed but value is the same; source code using old name won't compile.",
        policy_overrides={"sdk_vendor": _C},
        description_template="Enum member renamed: {name}::{old} → {new} (value={detail})"),
-    _E("param_default_value_changed", _C),
+    _E("param_default_value_changed", _C,
+       description_template="Parameter default changed: {name} param {detail}"),
     _E("param_default_value_removed", _A,
-       policy_overrides={"sdk_vendor": _C}),
+       policy_overrides={"sdk_vendor": _C},
+       description_template="Parameter default removed: {name} param {detail}"),
     _E("field_renamed", _A,
        impact="Field name changed but offset is the same; source code using old name won't compile.",
        policy_overrides={"sdk_vendor": _C},
        description_template="Field renamed: {name}::{old} → {new}"),
     _E("param_renamed", _A,
-       policy_overrides={"sdk_vendor": _C}),
+       policy_overrides={"sdk_vendor": _C},
+       description_template="Parameter renamed: {name} param {detail}: {old} → {new}"),
 
     # ── Field qualifier changes ────────────────────────────────────────────
     _E("field_became_const", _C,
@@ -478,16 +500,20 @@ REGISTRY = ChangeKindRegistry([
        description_template="Field lost mutable: {name}::{detail}"),
 
     # ── Pointer level changes ──────────────────────────────────────────────
-    _E("param_pointer_level_changed", _B),
-    _E("return_pointer_level_changed", _B),
+    _E("param_pointer_level_changed", _B,
+       description_template="Parameter pointer level changed: {name} param {detail} (depth {old} → {new})"),
+    _E("return_pointer_level_changed", _B,
+       description_template="Return pointer level changed: {name} (depth {old} → {new})"),
 
     # ── Access level changes ───────────────────────────────────────────────
     _E("method_access_changed", _A,
        impact="Method access level narrowed (e.g. public→private); old code calling it won't compile.",
-       policy_overrides={"sdk_vendor": _C}),
+       policy_overrides={"sdk_vendor": _C},
+       description_template="Method access level narrowed: {name} ({old} → {new})"),
     _E("field_access_changed", _A,
        impact="Field access level narrowed; old code accessing it won't compile.",
-       policy_overrides={"sdk_vendor": _C}),
+       policy_overrides={"sdk_vendor": _C},
+       description_template="Field access level narrowed: {name}::{detail} ({old} → {new})"),
 
     # ── Anonymous struct/union ─────────────────────────────────────────────
     _E("anon_field_changed", _B),
@@ -506,13 +532,19 @@ REGISTRY = ChangeKindRegistry([
        policy_overrides={"sdk_vendor": _C},
        description_template="Const method overload removed: {name} (non-const version still exists)"),
     _E("param_restrict_changed", _C),
-    _E("param_became_va_list", _C),
-    _E("param_lost_va_list", _C),
+    _E("param_became_va_list", _C,
+       description_template="Parameter became va_list: {name} param {detail}"),
+    _E("param_lost_va_list", _C,
+       description_template="Parameter was va_list, now fixed: {name} param {detail}"),
     _E("constant_changed", _A),
-    _E("constant_added", _C, is_addition=True),
-    _E("constant_removed", _A),
-    _E("var_access_changed", _A),
-    _E("var_access_widened", _C),
+    _E("constant_added", _C, is_addition=True,
+       description_template="New preprocessor constant: {name}"),
+    _E("constant_removed", _A,
+       description_template="Preprocessor constant removed: {name}"),
+    _E("var_access_changed", _A,
+       description_template="Variable access level narrowed: {name} ({old} → {new})"),
+    _E("var_access_widened", _C,
+       description_template="Variable access level widened: {name} ({old} → {new})"),
 
     # ── Inline attribute changes ───────────────────────────────────────────
     _E("func_became_inline", _A),
@@ -535,7 +567,8 @@ REGISTRY = ChangeKindRegistry([
     # ── ELF st_other visibility transitions ────────────────────────────────
     _E("symbol_elf_visibility_changed", _C,
        impact="ELF symbol visibility (st_other) changed (e.g. DEFAULT→PROTECTED). "
-              "Symbol is still exported but interposition via LD_PRELOAD may stop working."),
+              "Symbol is still exported but interposition via LD_PRELOAD may stop working.",
+       description_template="ELF visibility changed: {name} ({old} → {new})"),
 
     # ── Symbol rename detection ────────────────────────────────────────────
     _E("symbol_renamed_batch", _B,
@@ -566,7 +599,8 @@ REGISTRY = ChangeKindRegistry([
     _E("func_language_linkage_changed", _B,
        impact="Language linkage changed (extern \"C\" ↔ C++); the mangled symbol name "
               "changes, so old binaries reference a symbol that no longer exists under "
-              "that name."),
+              "that name.",
+       description_template="Language linkage changed: {name} ({old} → {new})"),
 
     # Symbol version alias (default version) changed
     _E("symbol_version_alias_changed", _R,
@@ -674,7 +708,8 @@ REGISTRY = ChangeKindRegistry([
     # ── DWARF-based = delete detection (P3 gap) ─────────────────────────
     _E("func_deleted_dwarf", _B,
        impact="Function marked as deleted (= delete) detected via DWARF debug info. "
-              "The function was previously callable; callers will fail to link."),
+              "The function was previously callable; callers will fail to link.",
+       description_template="Function explicitly deleted (= delete): {name}"),
 
     # ── Bundle / multi-library findings (ADR-023) ───────────────────────
     _E("bundle_intra_dep_removed", _B,

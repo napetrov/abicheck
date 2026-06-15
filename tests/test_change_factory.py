@@ -190,6 +190,27 @@ _FAITHFULNESS_CASES = [
         {"name": "Widget", "old": "reserved0", "new": "flags"},
         "Reserved field put into use: Widget::reserved0 → flags",
     ),
+    # diff_platform — ELF/PE/Mach-O symbol-level kinds
+    (
+        ChangeKind.SYMBOL_SIZE_CHANGED,
+        {"name": "g_table", "old": "16", "new": "32"},
+        "Symbol size changed: g_table (16 → 32 bytes)",
+    ),
+    (
+        ChangeKind.SYMBOL_TYPE_CHANGED,
+        {"name": "g_table", "old": "FUNC", "new": "OBJECT"},
+        "Symbol type changed: g_table (FUNC → OBJECT)",
+    ),
+    (
+        ChangeKind.PE_MACHINE_CHANGED,
+        {"old": "AMD64", "new": "ARM64"},
+        "PE machine/architecture changed: AMD64 → ARM64",
+    ),
+    (
+        ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+        {"name": "GLIBC_2.34", "detail": "libc.so.6"},
+        "New symbol version requirement: GLIBC_2.34 (from libc.so.6)",
+    ),
 ]
 
 
