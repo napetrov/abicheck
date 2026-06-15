@@ -179,7 +179,8 @@ REGISTRY = ChangeKindRegistry([
               "against the old layout dispatch through the wrong slots and old binaries "
               "embedding the type read the wrong offsets. This is the KDE "
               "\"do not add virtuals to a non-leaf class\" rule, caught even when the "
-              "snapshot carries no diff-able vtable array (DWARF/symbol-only mode)."),
+              "snapshot carries no diff-able vtable array (DWARF/symbol-only mode).",
+       description_template="New virtual method added to existing class {detail}: {new} — grows/relayouts the vtable, breaking derived classes and old binaries"),
     _E("var_removed", _B,
        impact="Old binaries reference a global variable that no longer exists; link or load failure.",
        description_template="Public variable removed: {name}"),
@@ -519,7 +520,8 @@ REGISTRY = ChangeKindRegistry([
     _E("anon_field_changed", _B),
 
     # ── ABICC full parity — remaining gaps ─────────────────────────────────
-    _E("var_value_changed", _C),
+    _E("var_value_changed", _C,
+       description_template="Global data value changed: {name} ({old} → {new})"),
     _E("type_kind_changed", _B,
        description_template="Aggregate kind changed: {name} ({old} → {new})"),
     _E("source_level_kind_changed", _A,
@@ -531,12 +533,14 @@ REGISTRY = ChangeKindRegistry([
        impact="Const overload removed; source code calling const version breaks.",
        policy_overrides={"sdk_vendor": _C},
        description_template="Const method overload removed: {name} (non-const version still exists)"),
-    _E("param_restrict_changed", _C),
+    _E("param_restrict_changed", _C,
+       description_template="Parameter restrict qualifier {detail}: {name} param {old}"),
     _E("param_became_va_list", _C,
        description_template="Parameter became va_list: {name} param {detail}"),
     _E("param_lost_va_list", _C,
        description_template="Parameter was va_list, now fixed: {name} param {detail}"),
-    _E("constant_changed", _A),
+    _E("constant_changed", _A,
+       description_template="Preprocessor constant value changed: {name} ({old} → {new})"),
     _E("constant_added", _C, is_addition=True,
        description_template="New preprocessor constant: {name}"),
     _E("constant_removed", _A,
@@ -555,8 +559,10 @@ REGISTRY = ChangeKindRegistry([
     _E("func_deleted_elf_fallback", _B),
 
     # ── Template inner-type analysis ──────────────────────────────────────
-    _E("template_param_type_changed", _B),
-    _E("template_return_type_changed", _B),
+    _E("template_param_type_changed", _B,
+       description_template="Template parameter inner type changed: {name} param {detail} ({old} → {new})"),
+    _E("template_return_type_changed", _B,
+       description_template="Template return type inner argument changed: {name} ({old} → {new})"),
 
     # ── Version-stamped typedef sentinel ───────────────────────────────────
     _E("typedef_version_sentinel", _C,
@@ -593,7 +599,8 @@ REGISTRY = ChangeKindRegistry([
     _E("func_ref_qual_changed", _B,
        impact="Ref-qualifier (&/&&) on a member function changed; this alters the "
               "Itanium C++ ABI mangled name and overload resolution, so old binaries "
-              "link to the wrong symbol or fail to resolve it."),
+              "link to the wrong symbol or fail to resolve it.",
+       description_template="Ref-qualifier changed: {name} ({old} → {new})"),
 
     # extern "C" ↔ C++ linkage flip
     _E("func_language_linkage_changed", _B,
@@ -646,12 +653,14 @@ REGISTRY = ChangeKindRegistry([
     _E("symbol_version_node_removed", _B,
        impact="A version node (e.g. LIBFOO_1.0) was entirely removed from the "
               "version script. Applications linked against symbols under that "
-              "version node will get unresolved symbol errors at load time."),
+              "version node will get unresolved symbol errors at load time.",
+       description_template="Version node {name} was entirely removed from the version script. Symbols previously under this node: {detail}. Applications linked against {name} will get unresolved symbol errors."),
     _E("symbol_moved_version_node", _R,
        impact="Symbol moved from one version node to another (e.g. LIBFOO_1.0 → "
               "LIBFOO_2.0). Applications linked against the old version node will "
               "not find this symbol at the expected version. This is typically "
-              "intentional during a major release."),
+              "intentional during a major release.",
+       description_template="Symbol {name} moved from version node {old} to {new}. Applications linked against {old} will not find this symbol at the expected version. This is typically intentional during a major release."),
     # TODO(policy): The spec calls for strict_abi to treat this as BREAKING
     # and sdk_vendor as COMPATIBLE_WITH_RISK, but the current policy override
     # mechanism only supports downgrading (not upgrading) verdicts.  Adding
@@ -660,44 +669,55 @@ REGISTRY = ChangeKindRegistry([
     _E("soname_bump_recommended", _C,
        impact="Binary-incompatible changes detected but SONAME was not bumped. "
               "Consumers linked against the current SONAME will encounter runtime "
-              "failures. Recommended: bump the SONAME to signal the ABI break."),
+              "failures. Recommended: bump the SONAME to signal the ABI break.",
+       description_template="{name} binary-incompatible change(s) detected but {detail}. Consumers linked against {old} will encounter runtime failures. Recommended: bump SONAME to signal the ABI break."),
     _E("soname_bump_unnecessary", _C,
        impact="SONAME was bumped but no binary-incompatible changes were detected. "
               "This forces all consumers to relink unnecessarily. Consider whether "
-              "the bump was intentional."),
+              "the bump was intentional.",
+       description_template="SONAME changed from {old} to {new} but no binary-incompatible changes were detected. This forces all consumers to relink unnecessarily. Consider whether the bump was intentional."),
     _E("version_script_missing", _C,
        impact="Library exports symbols without a version script. This is a common "
               "oversight that prevents fine-grained symbol versioning and makes "
-              "future ABI evolution harder to manage."),
+              "future ABI evolution harder to manage.",
+       description_template="Library exports {detail} symbol(s) without a version script. This is a common oversight that prevents fine-grained symbol versioning and makes future ABI evolution harder to manage. Consider adding a version script (--version-script=libfoo.map)."),
 
     # ── SYCL Plugin Interface (PI) ────────────────────────────────────────
     _E("sycl_implementation_changed", _B,
        impact="SYCL implementation changed (e.g., DPC++ to AdaptiveCpp); "
               "entirely different runtime ABI, plugin interface, and binary layout. "
-              "All SYCL consumers must be rebuilt."),
+              "All SYCL consumers must be rebuilt.",
+       description_template="SYCL implementation changed from {old} to {new}; entirely different runtime ABI."),
     _E("sycl_pi_version_changed", _B,
        impact="PI interface version changed; runtime rejects plugins compiled against the old "
-              "PI version. All backend plugins must be rebuilt or upgraded."),
+              "PI version. All backend plugins must be rebuilt or upgraded.",
+       description_template="PI interface version changed from {old} to {new}; backend plugins compiled against the old version may be rejected at runtime."),
     _E("sycl_pi_entrypoint_removed", _B,
        impact="Required PI entry point removed from plugin dispatch table; runtime calls to "
-              "this function will crash or return PI_ERROR_UNKNOWN."),
+              "this function will crash or return PI_ERROR_UNKNOWN.",
+       description_template="{detail} entry point '{name}' removed from plugin '{old}'; runtime calls to this function will fail."),
     _E("sycl_pi_entrypoint_added", _C, is_addition=True,
-       impact="New PI entry point added to dispatch table; existing plugins are unaffected."),
+       impact="New PI entry point added to dispatch table; existing plugins are unaffected.",
+       description_template="{detail} entry point '{name}' added to plugin '{new}'."),
     _E("sycl_plugin_removed", _B,
        impact="Backend plugin removed from distribution; applications targeting this backend "
-              "will fail at runtime with PI_ERROR_DEVICE_NOT_FOUND."),
+              "will fail at runtime with PI_ERROR_DEVICE_NOT_FOUND.",
+       description_template="Backend plugin '{name}' ({detail}) removed; applications targeting the {old} backend will fail at runtime."),
     _E("sycl_plugin_added", _C, is_addition=True,
-       impact="New backend plugin available; broadens hardware support."),
+       impact="New backend plugin available; broadens hardware support.",
+       description_template="Backend plugin '{name}' ({detail}) added; new {new} backend support available."),
     _E("sycl_plugin_search_path_changed", _R,
        impact="Plugin discovery path changed; plugins may not be found at runtime unless "
               "deployment configuration is updated.",
        description_template="SYCL plugin search paths changed; plugins may not be found at runtime without deployment configuration update."),
     _E("sycl_runtime_version_changed", _C,
        impact="SYCL runtime version changed; informational. Actual binary breaks are detected "
-              "by symbol/type diff of the runtime library."),
+              "by symbol/type diff of the runtime library.",
+       description_template="SYCL runtime version changed from {old} to {new}."),
     _E("sycl_backend_driver_req_changed", _R,
        impact="Minimum backend driver version requirement increased; may fail on systems with "
-              "older drivers (e.g., Level Zero, OpenCL ICD)."),
+              "older drivers (e.g., Level Zero, OpenCL ICD).",
+       description_template="Minimum driver requirement for {name} backend changed from {old} to {new}."),
 
     # ── Flexible array member detection (libabigail parity) ──────────────
     _E("flexible_array_member_changed", _C,
@@ -771,7 +791,8 @@ REGISTRY = ChangeKindRegistry([
               "library no longer exports. Consumer source compiles cleanly but fails "
               "to link at load time with an undefined-symbol error. Common when a "
               "build trim drops a Float/Method/Task combination without updating "
-              "the public header's `extern template` declarations."),
+              "the public header's `extern template` declarations.",
+       description_template="Template instantiation '{name}' was exported by the old library but is missing from the new binary. Other instantiations of '{detail}' still exist, so the public header very likely still advertises this one. Consumers built against the old header link cleanly but fail at load time with an undefined-symbol error."),
 
     _E("serialization_tag_changed", _B,
        impact="A serialization tag ID (or equivalent constant identifying a class "
@@ -788,7 +809,8 @@ REGISTRY = ChangeKindRegistry([
               "disabled at build time). Reported as one grouped finding rather "
               "than N independent func_removed entries to make the deployment-"
               "level event ('the GPU/SYCL overload family was withdrawn') "
-              "visible at a glance."),
+              "visible at a glance.",
+       description_template="SYCL overload family withdrawn: {detail}. This is the deployment-level event 'DPC++ build disabled' rather than independent API removals — consumers built against the SYCL surface need a DPC++-enabled rebuild."),
 
     _E("cpu_dispatch_isa_dropped", _R,
        impact="An entire CPU ISA tier (e.g. avx512) of dispatched specializations "
@@ -796,7 +818,8 @@ REGISTRY = ChangeKindRegistry([
               "that did not pin a specific ISA, but consumers that linked directly "
               "against a now-removed ISA-specific symbol get unresolved symbols. "
               "Reported as one grouped finding listing the affected algorithm "
-              "stems."),
+              "stems.",
+       description_template="CPU dispatch ISA '{name}' tier removed: {detail}. Runtime dispatcher continues to work; consumers that pinned directly to '{name}' symbols get unresolved references at load time."),
 
     _E("bundle_soname_skew", _B,
        impact="A co-versioned bundle of shared libraries (e.g. libfoo_core, "
@@ -814,7 +837,8 @@ REGISTRY = ChangeKindRegistry([
               "instantiation that referenced the old tag is re-mangled and the "
               "old symbol disappears. Consumers built against the old header get "
               "unresolved-symbol errors at load time. Common with "
-              "method::* / task::* tag families."),
+              "method::* / task::* tag families.",
+       description_template="Empty tag struct '{old}' renamed to '{new}'. The type has no fields or vtable, so layout-based detectors see no change, but {detail}. Consumers built against the old header fail to resolve the instantiation at load time."),
 
     _E("default_template_arg_changed", _B,
        impact="A default template argument changed (e.g. `Distance = "
@@ -824,7 +848,8 @@ REGISTRY = ChangeKindRegistry([
               "ships only one instantiation; consumers built against the old "
               "default reference a symbol that no longer exists. Unlike function "
               "default parameter changes (NO_CHANGE), template default arguments "
-              "ARE part of the substituted type and affect mangling."),
+              "ARE part of the substituted type and affect mangling.",
+       description_template="Template instantiation '{name}' substitutes to different arguments than its surviving sibling '{detail}'. This is consistent with a change to a default template argument in the declaring header: consumer source compiles unchanged, but the substituted mangled symbol differs. Consumers built against the old default get unresolved symbols."),
 
     _E("inline_body_references_renamed_member", _B,
        impact="An inline public accessor (header-emitted into every consumer "
@@ -834,7 +859,8 @@ REGISTRY = ChangeKindRegistry([
               "consumers compiled against the OLD header have the old field "
               "name baked into their binary. At runtime, the inline body "
               "accesses a field at the wrong offset (or by a name that no "
-              "longer exists), producing silent wrong data or crashes."),
+              "longer exists), producing silent wrong data or crashes.",
+       description_template="Public class '{name}' has inline accessors {detail} by name. Field '{old}' was renamed to '{new}' in the new internal layout. Consumers compiled against the old header have the old member name baked into their inline accessor bodies; running against the new library reads the wrong offset or fails to resolve the member."),
 
     # ── Explicit specifier transitions ───────────────────────────────────
     _E("ctor_explicit_added", _A,
@@ -882,7 +908,8 @@ REGISTRY = ChangeKindRegistry([
               "(or similar) namespace is now also available at a stable name "
               "in the same library, while the experimental alias is retained. "
               "Compatible: existing consumers keep compiling; new consumers "
-              "are encouraged to migrate to the stable name."),
+              "are encouraged to migrate to the stable name.",
+       description_template="Experimental {detail} '{old}' graduated to stable name '{new}'; experimental alias retained."),
 
     _E("experimental_removed_without_replacement", _A,
        impact="A declaration that previously lived under an `experimental::` "
@@ -892,7 +919,8 @@ REGISTRY = ChangeKindRegistry([
               "no longer compile. The mangled name change is the same as a "
               "func_removed/type_removed for an instantiated template, but "
               "the experimental graduation pattern is named explicitly so "
-              "users see whether a replacement was published."),
+              "users see whether a replacement was published.",
+       description_template="Experimental {detail} '{old}' was removed and no {detail} with leaf '{name}' was published at a stable namespace in the new headers."),
 
     _E("std_reexport_removed", _A,
        impact="A public header used to re-export a name from `std::` "
@@ -901,7 +929,8 @@ REGISTRY = ChangeKindRegistry([
               "the library-qualified name (`lib::par`) no longer compiles "
               "even though the underlying `std::par` is still available. "
               "Source break only — no symbol disappears, but every TU that "
-              "named the library alias must be edited."),
+              "named the library alias must be edited.",
+       description_template="Public re-export '{name}' of standard-library entity '{detail}' was removed. Consumer code that named '{name}' no longer compiles; '{detail}' is still available under its std:: name."),
 
     _E("inline_namespace_version_bumped", _B,
        impact="A header-declared symbol or type lives under a versioned "
@@ -911,7 +940,8 @@ REGISTRY = ChangeKindRegistry([
               "a different mangled symbol; old TUs in the same program ODR-"
               "violate against new TUs. Specialisation of inline_namespace_"
               "moved that fires from declared-name evidence (works even "
-              "when the library ships no .so)."),
+              "when the library ships no .so).",
+       description_template="Inline namespace version bumped: '{old}' → '{new}' (version segment changed from {detail}); mangled names change so old and new TUs of the same program ODR-violate."),
 
     # ── Template / overload-set patterns (PR-B) ─────────────────────────
     _E("internal_template_leaks_via_public_api", _B,
@@ -921,7 +951,8 @@ REGISTRY = ChangeKindRegistry([
               "symbol tables because public algorithms inline-dispatch "
               "through it. The internal helper is part of the effective "
               "public ABI — every consumer must be rebuilt. Function-"
-              "template analogue of INTERNAL_TYPE_LEAKS_VIA_PUBLIC_API."),
+              "template analogue of INTERNAL_TYPE_LEAKS_VIA_PUBLIC_API.",
+       description_template="Internal-namespace function template '{name}' has changed instantiations: {detail}. These mangled names participate in consumer symbol tables; every consumer must rebuild."),
 
     _E("cpo_kind_changed", _B,
        impact="A public customization point object (CPO) changed kind: "
@@ -930,7 +961,8 @@ REGISTRY = ChangeKindRegistry([
               "Call syntax (`lib::sort(args...)`) keeps working but "
               "`decltype(lib::sort)` is now a different type, breaking "
               "extern templates, trait specializations, and any code that "
-              "took the CPO's address."),
+              "took the CPO's address.",
+       description_template="Public name '{name}' was a {old} in old and is a {new} in new. Call syntax preserved; decltype, extern templates, and trait specializations break."),
 
     _E("overload_set_rerouted", _R,
        impact="The overload set under a public name changed in a way "
@@ -939,7 +971,8 @@ REGISTRY = ChangeKindRegistry([
               "overload now resolve to a different overload (often via "
               "implicit conversion or a templated catch-all), silently "
               "changing the called function. Compiles, links, runs — but "
-              "runs different code."),
+              "runs different code.",
+       description_template="Overload set for '{name}' changed: {detail}. Call sites that previously resolved to a removed overload may silently re-route to a different overload."),
 
     _E("overload_added", _R,
        impact="A new overload was added under a public name that previously had "
@@ -957,7 +990,8 @@ REGISTRY = ChangeKindRegistry([
               "(or deduced) became mandatory. Consumer source that wrote "
               "`Foo<int>` without supplying the new parameter no longer "
               "compiles. Mangled symbols also change because the "
-              "instantiation tuple differs."),
+              "instantiation tuple differs.",
+       description_template="Template '{name}' minimum effective argument count grew from {old} to {new}. Consumers that wrote '{name}<...{old} args...>' without supplying the new parameter no longer compile."),
 
     _E("unspecified_return_now_named", _A,
        impact="A factory function's return type changed between an "
@@ -974,7 +1008,8 @@ REGISTRY = ChangeKindRegistry([
               "and absent under another. Source that compiled on the "
               "library author's machine may not compile on the consumer's. "
               "Detected only when abicheck is given a probe matrix "
-              "(snapshots taken under multiple configurations)."),
+              "(snapshots taken under multiple configurations).",
+       description_template="{detail} '{name}' is present in configurations {old} but absent in {new}. Consumers compiling under different toolchains see different public APIs."),
 
     _E("cxx_standard_floor_raised", _A,
        impact="The library's minimum required C++ standard increased "
@@ -982,7 +1017,8 @@ REGISTRY = ChangeKindRegistry([
               "building with the old standard no longer get a working "
               "header set; standard-library facilities removed in newer "
               "standards (e.g. std::result_of) may also disappear from "
-              "the API surface."),
+              "the API surface.",
+       description_template="C++ standard floor raised from {old} to {new}. Consumers still building with the old standard get a degraded or non-functional API surface."),
 
     _E("behavioural_default_changed", _R,
        impact="A documented default value changed without altering any "
@@ -1019,31 +1055,36 @@ REGISTRY = ChangeKindRegistry([
               "`INT` typedef built for the 32-bit vs 64-bit integer interface). "
               "Every caller "
               "passes/reads integers with the wrong width; arguments and array "
-              "indices are silently truncated or sign-extended."),
+              "indices are silently truncated or sign-extended.",
+       description_template="Integer model changed ({new}): {detail}. This is the signature of an LP64↔ILP64 switch (e.g. oneMKL's 32-bit vs 64-bit MKL_INT interface); every caller passes/reads integers with the wrong width."),
     _E("abi_tag_changed", _B,
        impact="The Itanium ABI-tag set on a symbol changed (e.g. it gained or "
               "lost `[abi:cxx11]` / a `[[gnu::abi_tag]]`). The mangled name "
               "encodes the tag, so old binaries reference a symbol that no "
               "longer exists under that name. Distinct from a mass dual-ABI "
-              "flip: this is a per-symbol tag change."),
+              "flip: this is a per-symbol tag change.",
+       description_template="ABI-tag set changed for '{name}': {detail}. The mangled name encodes the tag, so the old symbol ({old}) no longer exists under that name ({new})."),
     _E("char8t_migration", _B,
        impact="A public parameter, return, or field type changed between a "
               "char-family spelling (char / unsigned char) and C++20 `char8_t`. "
               "`char8_t` is a distinct type that participates in overload "
               "resolution and name mangling, so the mangled symbol changes and "
-              "old binaries fail to resolve it."),
+              "old binaries fail to resolve it.",
+       description_template="char8_t migration ({detail}) on {name}: {old} → {new}. char8_t is a distinct C++20 type that changes overload identity and name mangling."),
     _E("bit_int_width_changed", _B,
        impact="A public use of C23 `_BitInt(N)` changed its width N between "
               "versions, or a field/param type changed to/from `_BitInt(N)`. "
               "The bit width determines the storage size and calling-convention "
               "treatment, so old code reads/writes the value with the wrong "
-              "width."),
+              "width.",
+       description_template="_BitInt change on {name}: {detail} ({old} → {new}). The bit width determines storage size and ABI treatment."),
     _E("atomic_qualifier_changed", _B,
        impact="The `_Atomic` qualifier was added to or removed from a public "
               "field/param/return type. Per WG14 the size and alignment of an "
               "_Atomic-qualified type may differ from the unqualified type and "
               "varies across compilers, so layout and calling convention "
-              "diverge and old code is miscompiled."),
+              "diverge and old code is miscompiled.",
+       description_template="_Atomic {detail} on {name}: {old} → {new}. _Atomic size/alignment may differ from the unqualified type and varies across compilers."),
 
     # ── API-surface intelligence anti-patterns (ADR-027 A2 / D2.2) ──────────
     _E("public_api_exposes_stl_by_value", _R,
@@ -1080,17 +1121,20 @@ REGISTRY = ChangeKindRegistry([
               "types, enums) increased between versions. Informational only — the "
               "individual additions are reported separately; this is the net "
               "signal for CI dashboards and release notes. Emitted only with "
-              "--surface-metrics."),
+              "--surface-metrics.",
+       description_template="public surface grew: {old} → {new} declarations (+{detail})"),
     _E("public_surface_shrank", _C,
        impact="The aggregate count of public declarations decreased between "
               "versions. Informational roll-up only — individual removals are "
               "reported (and may be breaking) on their own. Emitted only with "
-              "--surface-metrics."),
+              "--surface-metrics.",
+       description_template="public surface shrank: {old} → {new} declarations ({detail})"),
     _E("undocumented_export_ratio_increased", _C,
        impact="The fraction of exported symbols with no public-header declaration "
               "(EXPORT_ONLY origin) rose between versions — a packaging-hygiene "
               "regression: a symbol was exported without a corresponding public "
-              "header. Informational; emitted only with --surface-metrics."),
+              "header. Informational; emitted only with --surface-metrics.",
+       description_template="undocumented-export ratio rose: {old} → {new} (symbols exported without a public header)"),
 
     # ── Build-context evidence (ADR-028 L3 / ADR-029 D9) ────────────────────
     # Produced by the build-evidence diff over two BuildSourcePacks. Per ADR-028
@@ -1334,7 +1378,8 @@ REGISTRY = ChangeKindRegistry([
               "libc++ selects incompatible internal layouts for std:: types via an "
               "inline namespace (std::__1 vs std::__2), so types embedding them by "
               "value are laid out differently. Rebuild consumers against the matching "
-              "libc++ ABI version."),
+              "libc++ ABI version.",
+       description_template="libc++ ABI version changed ({old} → {new}). libc++ selects incompatible internal layouts for std:: types via an inline namespace (std::__{old} vs std::__{new}); types embedding them by value are laid out differently. Rebuild consumers against the matching libc++ ABI version."),
 
     # ── Fine-grained class-layout descriptor (layout-closure work) ───────────
     # Produced by diff_layout.py from the optional RecordType layout fields
@@ -1388,7 +1433,8 @@ REGISTRY = ChangeKindRegistry([
               "removed, or reordered). Existing binaries dispatch through fixed vtable "
               "offsets, so they call the wrong slot or run off the end of the table. "
               "Recovered from the ELF symbol size without DWARF — the binary-only analogue "
-              "of FUNC_VIRTUAL_ADDED / TYPE_VTABLE_CHANGED."),
+              "of FUNC_VIRTUAL_ADDED / TYPE_VTABLE_CHANGED.",
+       description_template="Vtable for '{name}' changed size: {old} → {new} bytes ({detail}). A virtual method was added, removed, or reordered; existing binaries dispatch through fixed vtable offsets and will call the wrong slot. Detected from the ELF symbol size without debug info."),
     _E("rtti_inheritance_changed", _B,
        impact="A polymorphic class's RTTI typeinfo (`_ZTI`) object changed size, which in "
               "the Itanium C++ ABI means its base-class shape changed: no-base "
@@ -1397,5 +1443,6 @@ REGISTRY = ChangeKindRegistry([
               "number of bases differs. Base-class changes shift `this`-pointer "
               "adjustments, member offsets, and the vtable, so derived classes and "
               "by-value users are miscompiled. Recovered from the ELF symbol size without "
-              "DWARF — the binary-only analogue of TYPE_BASE_CHANGED."),
+              "DWARF — the binary-only analogue of TYPE_BASE_CHANGED.",
+       description_template="RTTI typeinfo for '{name}' changed size: {old} → {new} bytes ({detail}). The base-class shape changed, which shifts this-pointer adjustments, member offsets, and the vtable. Detected from the ELF symbol size without debug info."),
 ])

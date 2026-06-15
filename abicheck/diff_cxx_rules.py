@@ -429,9 +429,6 @@ def virtual_method_addition(
     return make_change(
         ChangeKind.VIRTUAL_METHOD_ADDED,
         symbol=f_new.mangled,
-        description=(
-            f"New virtual method added to existing class {owner}: {f_new.name} "
-            "— grows/relayouts the vtable, breaking derived classes and old binaries"
-        ),
-        new_value=f_new.name,
+        detail=owner,
+        new=f_new.name,
     )

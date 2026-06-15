@@ -457,7 +457,7 @@ def _check_ref_qualifier_change(mangled: str, f_old: Function, f_new: Function) 
     return [make_change(
         ChangeKind.FUNC_REF_QUAL_CHANGED,
         symbol=mangled,
-        description=f"Ref-qualifier changed: {f_old.name} ({old_rq!r} → {new_rq!r})",
+        name=f_old.name, old=repr(old_rq), new=repr(new_rq),
         old_value=old_rq or "(none)",
         new_value=new_rq or "(none)",
     )]
@@ -1255,7 +1255,7 @@ def _diff_param_restrict(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 changes.append(make_change(
                     ChangeKind.PARAM_RESTRICT_CHANGED,
                     symbol=mangled,
-                    description=f"Parameter restrict qualifier {direction}: {f_old.name} param {p_old.name or i}",
+                    name=f_old.name, detail=direction, old=str(p_old.name or i),
                     old_value=f"restrict={p_old.is_restrict}",
                     new_value=f"restrict={p_new.is_restrict}",
                 ))
@@ -1324,7 +1324,7 @@ def _diff_constants(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             changes.append(make_change(
                 ChangeKind.CONSTANT_CHANGED,
                 symbol=name,
-                description=f"Preprocessor constant value changed: {name} ({old_val!r} → {new_val!r})",
+                name=name, old=repr(old_val), new=repr(new_val),
                 old_value=old_val,
                 new_value=new_val,
             ))

@@ -50,12 +50,8 @@ def _diff_implementation(old: SyclMetadata, new: SyclMetadata) -> list[Change]:
         changes.append(make_change(
             ChangeKind.SYCL_IMPLEMENTATION_CHANGED,
             symbol="sycl::implementation",
-            description=(
-                f"SYCL implementation changed from {old.implementation} to "
-                f"{new.implementation}; entirely different runtime ABI."
-            ),
-            old_value=old.implementation,
-            new_value=new.implementation,
+            old=old.implementation,
+            new=new.implementation,
         ))
     return changes
 
@@ -67,13 +63,8 @@ def _diff_pi_version(old: SyclMetadata, new: SyclMetadata) -> list[Change]:
         changes.append(make_change(
             ChangeKind.SYCL_PI_VERSION_CHANGED,
             symbol="sycl::pi",
-            description=(
-                f"PI interface version changed from {old.pi_version} to "
-                f"{new.pi_version}; backend plugins compiled against the old "
-                f"version may be rejected at runtime."
-            ),
-            old_value=old.pi_version,
-            new_value=new.pi_version,
+            old=old.pi_version,
+            new=new.pi_version,
         ))
     return changes
 
@@ -94,11 +85,9 @@ def _diff_plugins(old: SyclMetadata, new: SyclMetadata) -> list[Change]:
         changes.append(make_change(
             ChangeKind.SYCL_PLUGIN_REMOVED,
             symbol=f"sycl::{iface}::{name}",
-            description=(
-                f"Backend plugin '{old_plugin.library}' ({name}) removed; "
-                f"applications targeting the {old_plugin.backend_type} backend "
-                f"will fail at runtime."
-            ),
+            name=old_plugin.library,
+            detail=name,
+            old=old_plugin.backend_type,
             old_value=old_plugin.library,
             new_value=None,
         ))
@@ -109,10 +98,9 @@ def _diff_plugins(old: SyclMetadata, new: SyclMetadata) -> list[Change]:
         changes.append(make_change(
             ChangeKind.SYCL_PLUGIN_ADDED,
             symbol=f"sycl::{iface}::{name}",
-            description=(
-                f"Backend plugin '{new_plugin.library}' ({name}) added; "
-                f"new {new_plugin.backend_type} backend support available."
-            ),
+            name=new_plugin.library,
+            detail=name,
+            new=new_plugin.backend_type,
             old_value=None,
             new_value=new_plugin.library,
         ))
@@ -141,11 +129,9 @@ def _diff_plugin_entrypoints(
             changes.append(make_change(
                 ChangeKind.SYCL_PI_ENTRYPOINT_REMOVED,
                 symbol=f"sycl::{new_plugin.interface_type}::{name}::{ep}",
-                description=(
-                    f"{iface} entry point '{ep}' removed from plugin "
-                    f"'{old_plugin.library}'; runtime calls to this function "
-                    f"will fail."
-                ),
+                name=ep,
+                detail=iface,
+                old=old_plugin.library,
                 old_value=ep,
                 new_value=None,
             ))
@@ -154,10 +140,9 @@ def _diff_plugin_entrypoints(
             changes.append(make_change(
                 ChangeKind.SYCL_PI_ENTRYPOINT_ADDED,
                 symbol=f"sycl::{new_plugin.interface_type}::{name}::{ep}",
-                description=(
-                    f"{iface} entry point '{ep}' added to plugin "
-                    f"'{new_plugin.library}'."
-                ),
+                name=ep,
+                detail=iface,
+                new=new_plugin.library,
                 old_value=None,
                 new_value=ep,
             ))
@@ -198,12 +183,8 @@ def _diff_runtime_version(
         changes.append(make_change(
             ChangeKind.SYCL_RUNTIME_VERSION_CHANGED,
             symbol="sycl::runtime",
-            description=(
-                f"SYCL runtime version changed from {old.runtime_version} "
-                f"to {new.runtime_version}."
-            ),
-            old_value=old.runtime_version,
-            new_value=new.runtime_version,
+            old=old.runtime_version,
+            new=new.runtime_version,
         ))
     return changes
 
@@ -224,12 +205,9 @@ def _diff_backend_driver_reqs(
             changes.append(make_change(
                 ChangeKind.SYCL_BACKEND_DRIVER_REQ_CHANGED,
                 symbol=f"sycl::pi::{name}::driver",
-                description=(
-                    f"Minimum driver requirement for {name} backend changed "
-                    f"from {old_drv} to {new_drv}."
-                ),
-                old_value=old_drv,
-                new_value=new_drv,
+                name=name,
+                old=old_drv,
+                new=new_drv,
             ))
 
     return changes

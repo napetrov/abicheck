@@ -852,7 +852,7 @@ def _diff_method_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             changes.append(make_change(
                 ChangeKind.FUNC_REF_QUAL_CHANGED,
                 symbol=f_old.mangled,
-                description=f"Ref-qualifier changed: {f_old.name} ({old_rq!r} → {new_rq!r})",
+                name=f_old.name, old=repr(old_rq), new=repr(new_rq),
                 old_value=old_rq or "(none)",
                 new_value=new_rq or "(none)",
             ))
@@ -1197,7 +1197,7 @@ def _diff_var_values(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             changes.append(make_change(
                 ChangeKind.VAR_VALUE_CHANGED,
                 symbol=mangled,
-                description=f"Global data value changed: {v_old.name} ({v_old.value!r} → {v_new.value!r})",
+                name=v_old.name, old=repr(v_old.value), new=repr(v_new.value),
                 old_value=v_old.value,
                 new_value=v_new.value,
             ))

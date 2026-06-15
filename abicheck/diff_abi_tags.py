@@ -135,12 +135,10 @@ def _diff_abi_tags(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         changes.append(make_change(
             ChangeKind.ABI_TAG_CHANGED,
             symbol=old_map[r].name,
-            description=(
-                f"ABI-tag set changed for '{old_map[r].name}': "
-                + "; ".join(parts)
-                + f". The mangled name encodes the tag, so the old symbol "
-                f"({r}) no longer exists under that name ({a})."
-            ),
+            name=old_map[r].name,
+            detail="; ".join(parts),
+            old=r,
+            new=a,
             old_value=", ".join(sorted(old_tags)) or "(none)",
             new_value=", ".join(sorted(new_tags)) or "(none)",
         ))

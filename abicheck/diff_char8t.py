@@ -53,12 +53,9 @@ def _diff_char8t(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         changes.append(make_change(
             ChangeKind.CHAR8T_MIGRATION,
             symbol=ch.symbol,
-            description=(
-                f"char8_t migration ({direction}) on {ch.slot} of '{ch.symbol}': "
-                f"{ch.old_type} → {ch.new_type}. char8_t is a distinct C++20 type "
-                f"that changes overload identity and name mangling."
-            ),
-            old_value=ch.old_type,
-            new_value=ch.new_type,
+            name=f"{ch.slot} of '{ch.symbol}'",
+            detail=direction,
+            old=ch.old_type,
+            new=ch.new_type,
         ))
     return changes

@@ -52,12 +52,9 @@ def _diff_atomic(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         changes.append(make_change(
             ChangeKind.ATOMIC_QUALIFIER_CHANGED,
             symbol=ch.symbol,
-            description=(
-                f"_Atomic {direction} on {ch.slot} of '{ch.symbol}': "
-                f"{ch.old_type} → {ch.new_type}. _Atomic size/alignment may "
-                f"differ from the unqualified type and varies across compilers."
-            ),
-            old_value=ch.old_type,
-            new_value=ch.new_type,
+            name=f"{ch.slot} of '{ch.symbol}'",
+            detail=direction,
+            old=ch.old_type,
+            new=ch.new_type,
         ))
     return changes

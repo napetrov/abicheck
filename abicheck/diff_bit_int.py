@@ -64,12 +64,9 @@ def _diff_bit_int(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         changes.append(make_change(
             ChangeKind.BIT_INT_WIDTH_CHANGED,
             symbol=ch.symbol,
-            description=(
-                f"_BitInt change on {ch.slot} of '{ch.symbol}': {detail} "
-                f"({ch.old_type} → {ch.new_type}). The bit width determines "
-                f"storage size and ABI treatment."
-            ),
-            old_value=ch.old_type,
-            new_value=ch.new_type,
+            name=f"{ch.slot} of '{ch.symbol}'",
+            detail=detail,
+            old=ch.old_type,
+            new=ch.new_type,
         ))
     return changes

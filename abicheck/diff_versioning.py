@@ -184,11 +184,8 @@ def detect_version_node_changes(
             make_change(
                 ChangeKind.SYMBOL_VERSION_NODE_REMOVED,
                 symbol=node,
-                description=(
-                    f"Version node {node} was entirely removed from the version script. "
-                    f"Symbols previously under this node: {sample}{suffix}. "
-                    f"Applications linked against {node} will get unresolved symbol errors."
-                ),
+                name=node,
+                detail=f"{sample}{suffix}",
                 old_value=node,
             )
         )
@@ -205,14 +202,9 @@ def detect_version_node_changes(
                 make_change(
                     ChangeKind.SYMBOL_MOVED_VERSION_NODE,
                     symbol=sym_name,
-                    description=(
-                        f"Symbol {sym_name} moved from version node {old_node} to "
-                        f"{new_node}. Applications linked against {old_node} will not "
-                        f"find this symbol at the expected version. This is typically "
-                        f"intentional during a major release."
-                    ),
-                    old_value=old_node,
-                    new_value=new_node,
+                    name=sym_name,
+                    old=old_node,
+                    new=new_node,
                 )
             )
 
@@ -264,13 +256,7 @@ def detect_version_script_missing(
         make_change(
             ChangeKind.VERSION_SCRIPT_MISSING,
             symbol="<version-script>",
-            description=(
-                f"Library exports {len(new_elf.symbols)} symbol(s) without "
-                f"a version script. This is a common oversight that prevents "
-                f"fine-grained symbol versioning and makes future ABI evolution "
-                f"harder to manage. Consider adding a version script "
-                f"(--version-script=libfoo.map)."
-            ),
+            detail=str(len(new_elf.symbols)),
         )
     ]
 
@@ -329,12 +315,9 @@ def check_soname_bump_policy(
             make_change(
                 ChangeKind.SONAME_BUMP_RECOMMENDED,
                 symbol="DT_SONAME",
-                description=(
-                    f"{breaking_count} binary-incompatible change(s) detected but "
-                    f"{detail}. Consumers linked against "
-                    f"{old_elf.soname!r} will encounter runtime failures. "
-                    f"Recommended: bump SONAME to signal the ABI break."
-                ),
+                name=str(breaking_count),
+                detail=detail,
+                old=repr(old_elf.soname),
                 old_value=old_elf.soname,
                 new_value=new_elf.soname,
             )
@@ -345,12 +328,8 @@ def check_soname_bump_policy(
             make_change(
                 ChangeKind.SONAME_BUMP_UNNECESSARY,
                 symbol="DT_SONAME",
-                description=(
-                    f"SONAME changed from {old_elf.soname!r} to {new_elf.soname!r} "
-                    f"but no binary-incompatible changes were detected. This forces "
-                    f"all consumers to relink unnecessarily. Consider whether the "
-                    f"bump was intentional."
-                ),
+                old=repr(old_elf.soname),
+                new=repr(new_elf.soname),
                 old_value=old_elf.soname,
                 new_value=new_elf.soname,
             )

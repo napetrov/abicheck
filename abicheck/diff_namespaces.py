@@ -261,22 +261,16 @@ def _emit_experimental_change(
         return make_change(
             ChangeKind.EXPERIMENTAL_GRADUATED,
             symbol=new_q,
-            description=(
-                f"Experimental {kind_label} '{old_q}' graduated to stable "
-                f"name '{new_q}'; experimental alias retained."
-            ),
-            old_value=old_q,
-            new_value=new_q,
+            detail=kind_label,
+            old=old_q,
+            new=new_q,
         )
     return make_change(
         ChangeKind.EXPERIMENTAL_REMOVED_WITHOUT_REPLACEMENT,
         symbol=old_q,
-        description=(
-            f"Experimental {kind_label} '{old_q}' was removed and no "
-            f"{kind_label} with leaf '{leaf}' was published at a stable "
-            f"namespace in the new headers."
-        ),
-        old_value=old_q,
+        name=leaf,
+        detail=kind_label,
+        old=old_q,
         new_value=None,
     )
 
@@ -426,12 +420,8 @@ def _build_std_reexport_change(declared: str, underlying: str) -> Change:
     return make_change(
         ChangeKind.STD_REEXPORT_REMOVED,
         symbol=declared,
-        description=(
-            f"Public re-export '{declared}' of standard-library entity "
-            f"'{underlying}' was removed. Consumer code that named "
-            f"'{declared}' no longer compiles; '{underlying}' is "
-            f"still available under its std:: name."
-        ),
+        name=declared,
+        detail=underlying,
         old_value=f"{declared} → {underlying}",
         new_value=None,
     )
@@ -588,14 +578,9 @@ def _emit_version_bumps(
         changes.append(make_change(
             ChangeKind.INLINE_NAMESPACE_VERSION_BUMPED,
             symbol=new_q,
-            description=(
-                f"Inline namespace version bumped: '{old_q}' → '{new_q}' "
-                f"(version segment changed from {sorted(old_versions)} to "
-                f"{sorted(new_versions)}); mangled names change so old "
-                f"and new TUs of the same program ODR-violate."
-            ),
-            old_value=old_q,
-            new_value=new_q,
+            old=old_q,
+            new=new_q,
+            detail=f"{sorted(old_versions)} to {sorted(new_versions)}",
         ))
     return changes
 

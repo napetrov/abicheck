@@ -103,11 +103,10 @@ def _env_dependence_change(
     return make_change(
         ChangeKind.API_DEPENDS_ON_CONSUMER_ENV,
         symbol=name,
-        description=(
-            f"{kind_label} '{name}' is present in configurations "
-            f"{present} but absent in {absent}. Consumers compiling "
-            f"under different toolchains see different public APIs."
-        ),
+        name=name,
+        detail=kind_label,
+        old=f"{present}",
+        new=f"{absent}",
         old_value=",".join(present),
         new_value=",".join(absent),
     )
@@ -169,13 +168,8 @@ def detect_cxx_standard_floor_raised(
     return [make_change(
         ChangeKind.CXX_STANDARD_FLOOR_RAISED,
         symbol="__cplusplus",
-        description=(
-            f"C++ standard floor raised from C++{old_floor} to "
-            f"C++{new_floor}. Consumers still building with the old "
-            f"standard get a degraded or non-functional API surface."
-        ),
-        old_value=f"C++{old_floor}",
-        new_value=f"C++{new_floor}",
+        old=f"C++{old_floor}",
+        new=f"C++{new_floor}",
     )]
 
 

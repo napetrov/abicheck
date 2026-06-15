@@ -429,15 +429,8 @@ def _diff_stdlib_implementation(old: AbiSnapshot, new: AbiSnapshot) -> list[Chan
             make_change(
                 ChangeKind.LIBCPP_ABI_VERSION_CHANGED,
                 symbol=_STDLIB_IMPL_MARKER,
-                description=(
-                    f"libc++ ABI version changed ({old_v} → {new_v}). libc++ selects "
-                    "incompatible internal layouts for std:: types via an inline "
-                    f"namespace (std::__{old_v} vs std::__{new_v}); types embedding "
-                    "them by value are laid out differently. Rebuild consumers against "
-                    "the matching libc++ ABI version."
-                ),
-                old_value=str(old_v),
-                new_value=str(new_v),
+                old=str(old_v),
+                new=str(new_v),
             )
         )
 
