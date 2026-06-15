@@ -49,19 +49,55 @@ def _exported_symbols_from_snapshot(snap: AbiSnapshot) -> tuple[str, ...]:
     return tuple(sorted(syms))
 
 
+def _ingest_inputs_pack_snapshot(path: Path) -> AbiSnapshot:
+    """Ingest a Flow-2 ``abicheck_inputs/`` directory into a source-side snapshot.
+
+    The build-emitted normalized facts (ADR-035 D5) become a binary-less
+    ``AbiSnapshot`` carrying the embedded L3/L4/L5 ``build_source`` pack, so the
+    existing ``merge`` fold combines them with the artifact-side dump — no
+    compiler frontend is re-run.
+    """
+    from .buildsource.inputs_pack import ingest_inputs_pack
+    from .model import AbiSnapshot
+
+    ingested = ingest_inputs_pack(path)
+    snap = AbiSnapshot(
+        library=ingested.manifest.library or path.name,
+        version=ingested.manifest.version,
+    )
+    snap.build_source = ingested.pack
+    return snap
+
+
 def _merge_load_snapshots(inputs: tuple[Path, ...]) -> list[tuple[Path, AbiSnapshot]]:
-    """Load and validate all input snapshots, raising clean Click errors on failure."""
+    """Load and validate all input snapshots, raising clean Click errors on failure.
+
+    An input may be a ``.abi.json`` dump or a Flow-2 ``abicheck_inputs/``
+    directory (ADR-035 D5); the latter is ingested into a source-side snapshot so
+    build-emitted facts ride the existing fold.
+    """
+    from .buildsource.inputs_pack import is_inputs_pack
     from .serialization import load_snapshot
 
     if len(inputs) < 2:
-        raise click.UsageError("merge needs at least two input snapshots.")
+        raise click.UsageError("merge needs at least two inputs.")
     snaps: list[tuple[Path, AbiSnapshot]] = []
     for path in inputs:
         try:
-            snaps.append((path, load_snapshot(path)))
-        except Exception as exc:  # malformed/corrupted .abi.json → clean error
+            if path.is_dir():
+                if not is_inputs_pack(path):
+                    raise click.ClickException(
+                        f"{path.name} is a directory but not an abicheck_inputs/ pack "
+                        f"(no manifest.json with kind: abicheck_inputs)."
+                    )
+                snaps.append((path, _ingest_inputs_pack_snapshot(path)))
+            else:
+                snaps.append((path, load_snapshot(path)))
+        except click.ClickException:
+            raise
+        except Exception as exc:  # malformed/corrupted input → clean error
             raise click.ClickException(
-                f"could not read snapshot {path.name}: {exc}"
+                f"could not read input {path.name}: {exc}"
             ) from exc
     return snaps
 

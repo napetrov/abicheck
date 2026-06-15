@@ -1323,7 +1323,7 @@ def test_merge_corrupted_input_errors_cleanly(tmp_path):
     out = tmp_path / "baseline.json"
     result = CliRunner().invoke(main, ["merge", str(good), str(bad), "-o", str(out)])
     assert result.exit_code != 0
-    assert "could not read snapshot" in result.output
+    assert "could not read input" in result.output
     assert not out.exists()
 
 

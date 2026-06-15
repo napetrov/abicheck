@@ -169,6 +169,39 @@ embedded `build_source` facts together per layer (each layer should come from
 exactly one input), so the result is a single `.abi.json` carrying all of
 L0–L5.
 
+### Build-emitted facts — the `abicheck_inputs/` protocol (Flow 2)
+
+When the **product build itself** can emit normalized facts (a Clang plugin, a
+compiler wrapper, or any tooling that writes the schema), it skips the
+source-side replay entirely: the build drops a self-describing
+`abicheck_inputs/` directory next to its binary, and abicheck ingests it
+**without re-running a compiler frontend** (ADR-035 D5). This is the
+vendor/closed-source path — exact build-context facts contribute to the baseline
+without shipping sources or letting abicheck rebuild the project.
+
+```text
+abicheck_inputs/
+  manifest.json                  # kind: abicheck_inputs, library/version, paths
+  binary/…  headers/…            # the shipped artifact + public headers (dumped normally)
+  build/compile_commands.json    # optional → L3 build evidence
+  source_facts/*.jsonl           # PREFERRED — normalized per-TU facts → L4/L5
+  raw_ast/*.json.zst             # optional, forensic only — never ingested
+```
+
+The pack rides the same `merge` flow — a directory input is auto-detected and
+folded just like a source-side dump:
+
+```bash
+abicheck dump libfoo.so -H include/ -o libfoo.bin.json   # artifact side, L0/L1/L2
+abicheck merge libfoo.bin.json ./abicheck_inputs/ -o libfoo.baseline.json
+```
+
+Normalized `source_facts/*.jsonl` are the canonical comparison format; `raw_ast/`
+is an MVP-ingest / forensic fallback that abicheck does not read. The Clang
+plugin / `abicheck-cc` wrapper that *produce* such a pack are an optional
+performance optimization (they remove the second frontend pass) — the portable
+default stays `compile_commands.json` replay (`dump --sources`).
+
 ### Choosing how much to collect — `dump --collect-mode`
 
 `dump --collect-mode` (the ADR-033 D2 CI evidence mode) selects *which* layers
