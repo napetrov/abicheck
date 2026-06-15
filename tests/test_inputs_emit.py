@@ -91,6 +91,26 @@ def test_incremental_init_then_append_round_trips(tmp_path: Path) -> None:
     assert {"foo", "bar"} <= names
 
 
+def test_manifest_write_is_atomic_no_temp_leftover(tmp_path: Path) -> None:
+    pack = tmp_path / "abicheck_inputs"
+    init_inputs_pack(pack, library="libfoo.so", created_by="abicheck-cc")
+    # No straggler temp files from the atomic temp+replace write.
+    assert not list(pack.glob(".manifest.*.tmp"))
+    assert (pack / "manifest.json").is_file()
+
+
+def test_init_recovers_from_partial_manifest(tmp_path: Path) -> None:
+    # A manifest left half-written by some non-atomic writer must re-initialize,
+    # not raise (which would lose this TU's facts in the wrapper's best-effort path).
+    pack = tmp_path / "abicheck_inputs"
+    (pack / "source_facts").mkdir(parents=True)
+    (pack / "manifest.json").write_text('{"kind": "abicheck_inputs"', encoding="utf-8")  # truncated JSON
+    m = init_inputs_pack(pack, library="libfoo.so", created_by="abicheck-cc")
+    assert m.library == "libfoo.so"
+    # Manifest is now valid and round-trips.
+    assert json.loads((pack / "manifest.json").read_text())["library"] == "libfoo.so"
+
+
 def test_init_inputs_pack_is_idempotent(tmp_path: Path) -> None:
     pack = tmp_path / "abicheck_inputs"
     m1 = init_inputs_pack(pack, library="libfoo.so", created_by="abicheck-cc")
@@ -125,6 +145,17 @@ def test_compile_unit_from_command_parses_flags(tmp_path: Path) -> None:
 def test_compile_unit_from_command_none_for_link_or_no_source(tmp_path: Path) -> None:
     assert compile_unit_from_command(["c++", "-shared", "foo.o", "-o", "libfoo.so"], tmp_path) is None
     assert compile_unit_from_command(["c++"], tmp_path) is None
+
+
+def test_compile_unit_skips_preprocess_only_invocations(tmp_path: Path) -> None:
+    # Preprocess-/dependency-only runs produce no shipped object → no facts, so
+    # a build that pipes -E/-M steps through the wrapper can't pollute the pack.
+    assert compile_unit_from_command(["c++", "-E", "src/foo.cpp"], tmp_path) is None
+    assert compile_unit_from_command(["c++", "-M", "src/foo.cpp"], tmp_path) is None
+    assert compile_unit_from_command(["c++", "-MM", "src/foo.cpp"], tmp_path) is None
+    # -MD/-MMD are additive with a real -c compile and must NOT be skipped.
+    cu = compile_unit_from_command(["c++", "-MD", "-c", "src/foo.cpp"], tmp_path)
+    assert cu is not None and cu.source == "src/foo.cpp"
 
 
 # -- run_cc_wrapper pass-through + best-effort -------------------------------

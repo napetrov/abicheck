@@ -33,9 +33,12 @@ Pure I/O — never runs a compiler. A pack written here round-trips through
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import json
+import os
 import shutil
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -58,11 +61,24 @@ def _now() -> str:
 
 
 def _write_manifest(root: Path, manifest: InputsManifest) -> None:
-    (root / INPUTS_MANIFEST_NAME).write_text(
-        json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    """Atomically write ``manifest.json`` (temp file + ``os.replace``).
+
+    The wrapper is built for **parallel per-TU invocations** sharing one pack, so
+    a plain truncate-then-write would let a concurrent ``init_inputs_pack`` reader
+    observe a half-written manifest, raise on ``json.loads``, and lose that TU's
+    facts (Codex review). ``os.replace`` is atomic, so a reader sees either the
+    old file or the fully-written new one — never a partial.
+    """
+    data = json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n"
+    fd, tmp = tempfile.mkstemp(dir=str(root), prefix=".manifest.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(data)
+        os.replace(tmp, root / INPUTS_MANIFEST_NAME)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def facts_filename(source: str) -> str:
@@ -95,7 +111,11 @@ def init_inputs_pack(
     (root / SOURCE_FACTS_DIR).mkdir(parents=True, exist_ok=True)
     mpath = root / INPUTS_MANIFEST_NAME
     if mpath.is_file():
-        return InputsManifest.from_dict(json.loads(mpath.read_text(encoding="utf-8")))
+        # Defensive: a manifest left partial by a non-atomic writer on an old pack
+        # (our writes are atomic) re-initializes rather than raising and losing
+        # this TU's facts.
+        with contextlib.suppress(ValueError, OSError):
+            return InputsManifest.from_dict(json.loads(mpath.read_text(encoding="utf-8")))
     manifest = InputsManifest(
         library=library, version=version, created_by=created_by, created_at=_now()
     )

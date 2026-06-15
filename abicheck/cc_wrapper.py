@@ -68,16 +68,31 @@ from .buildsource.inputs_emit import (
 )
 from .buildsource.source_abi import SourceAbiTu
 
+#: Tokens that mark an invocation as preprocess-/dependency-only — it produces no
+#: object that ships in the artifact, so capturing facts for it would pollute the
+#: Flow-2 baseline with TUs that are not part of the build (Codex review). GNU/
+#: clang: ``-E`` (preprocess), ``-M``/``-MM`` (standalone dependency scan — note
+#: ``-MD``/``-MMD``/``-MF`` are *different* tokens used alongside a real ``-c``,
+#: so exact-token matching leaves those compiles untouched). MSVC: ``/E /P /EP``.
+_PREPROCESS_ONLY_FLAGS = frozenset({"-E", "-M", "-MM", "/E", "/P", "/EP"})
+
+
+def _is_preprocess_only(command: Sequence[str]) -> bool:
+    return any(arg in _PREPROCESS_ONLY_FLAGS for arg in command)
+
 
 def compile_unit_from_command(command: Sequence[str], directory: str | Path) -> CompileUnit | None:
     """Build a :class:`CompileUnit` from a full compiler command, or ``None``.
 
     *command* is ``[driver, args…]`` exactly as invoked. Returns ``None`` when no
-    source translation unit is present (e.g. a link-only or ``-E`` preprocess
-    step), so those invocations are pure pass-through.
+    source translation unit is present (e.g. a link-only step) or the invocation
+    is preprocess-/dependency-only (``-E``/``-M``…), so those runs are pure
+    pass-through and never add a non-shipped TU to the pack.
     """
     command = list(command)
     if len(command) < 2:
+        return None
+    if _is_preprocess_only(command):
         return None
     source = source_from_argv(command)
     if not source or not detect_language(source):
