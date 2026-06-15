@@ -483,7 +483,7 @@ def _run_adapters(
         ))
 
     if bazel_cquery is not None or bazel_aquery is not None:
-        ev = BazelAdapter(cquery=bazel_cquery, aquery=bazel_aquery).collect()
+        ev = BazelAdapter(workspace=build_dir, cquery=bazel_cquery, aquery=bazel_aquery).collect()
         merged.merge(ev)
         inputs = [DEFAULT_REDACTION.path(str(p)) for p in (bazel_cquery, bazel_aquery) if p is not None]
         extractors.append(ExtractorRecord(
