@@ -259,6 +259,24 @@ def test_read_source_facts_accepts_json_array_form(tmp_path: Path) -> None:
     assert tus[0].functions[0].qualified_name == "foo"
 
 
+def test_array_form_non_object_record_is_diagnosed(tmp_path: Path) -> None:
+    # `.json` array with a non-dict element must be diagnosed, not silently
+    # dropped — the ingest is lossy and must read as partial.
+    pack = tmp_path / "abicheck_inputs"
+    (pack / "source_facts").mkdir(parents=True)
+    arr = [_tu("foo", mangled="_Z3foov").to_dict(), 42, None]
+    (pack / "source_facts" / "libfoo.json").write_text(json.dumps(arr), encoding="utf-8")
+    (pack / "manifest.json").write_text(
+        json.dumps({"kind": INPUTS_KIND, "library": "libfoo.so", "version": "1.0"}),
+        encoding="utf-8",
+    )
+    ingested = ingest_inputs_pack(pack)
+    assert ingested.tu_count == 1
+    assert sum("non-object record" in d for d in ingested.diagnostics) == 2
+    rec = next(e for e in ingested.pack.manifest.extractors if e.name == "abicheck_inputs")
+    assert rec.status == "partial"
+
+
 def test_read_source_facts_skips_malformed_lines(tmp_path: Path) -> None:
     pack = _write_inputs_pack(tmp_path, [_tu("foo", mangled="_Z3foov")])
     facts = pack / "source_facts" / "libfoo.jsonl"

@@ -298,8 +298,15 @@ def _parse_tu_records(text: str, source: str, diagnostics: list[str]) -> list[So
     except ValueError:
         whole = None
     if isinstance(whole, list):
-        out = [_convert(x, f"{source}[{i}]") for i, x in enumerate(whole) if isinstance(x, dict)]
-        return [t for t in out if t is not None]
+        out: list[SourceAbiTu] = []
+        for i, x in enumerate(whole):
+            if not isinstance(x, dict):
+                diagnostics.append(f"{source}[{i}]: skipped non-object record")
+                continue
+            tu = _convert(x, f"{source}[{i}]")
+            if tu is not None:
+                out.append(tu)
+        return out
     if isinstance(whole, dict):
         tu = _convert(whole, source)
         return [tu] if tu is not None else []
