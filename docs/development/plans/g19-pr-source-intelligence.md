@@ -90,10 +90,18 @@ authority rule (L0–L2 stay authoritative for `BREAKING`).
   ordering) → an S-method, used **only** for `--source-method auto` (opt-in),
   never to change a pinned/deterministic CI run.
   Tests: `tests/test_risk.py`, `tests/test_scan_levels.py`, `tests/test_cli_scan.py`.
-- **TODO (Phase 3b/3c)** — the POI work-list (`buildsource/poi.py`), the typed
-  `ScanRequest`/`ScanResult` + provider protocol + `--estimate` in `service.py`,
-  MCP `scan`/`audit`/`estimate` tools, and the `surface-report`-reuse single-
-  release audit catalog. `scan --audit` already runs the D2+D4 intra-version pass.
+- **DONE** — the baseline compare folds embedded L3/L4/L5 evidence in via
+  `prepare_embedded_build_source` (the same path `compare` uses), and an
+  explicit `--changed-path`/`--since` set is threaded through
+  `embed_build_source` → `collect_inline_pack` → `run_source_replay` so a
+  `source-changed` collection narrows to the affected TUs (D7 focusing for the
+  supplied changed set) instead of replaying the whole target.
+- **TODO (Phase 3b/3c)** — the *automatic* POI work-list (`buildsource/poi.py`)
+  computed from L0/L1/L2 deltas (vs. the explicit changed-path set already
+  threaded), the typed `ScanRequest`/`ScanResult` + provider protocol +
+  `--estimate` in `service.py`, MCP `scan`/`audit`/`estimate` tools, and the
+  `surface-report`-reuse single-release audit catalog. `scan --audit` already
+  runs the D2+D4 intra-version pass.
 
 ### Phase 3b — Evidence-directed focusing + API/estimate (G19.5, G19.7)
 - POI builder: from L0/L1/L2 deltas + risk score, produce a work-list consumed by

@@ -339,8 +339,15 @@ def _build_new_snapshot(
     collect_mode: str,
     lang: str,
     allow_build_query: bool,
+    changed_paths: tuple[str, ...] = (),
 ) -> Any:
-    """Dump the candidate's L0-L2 surface and embed L3-L5 inline at *collect_mode*."""
+    """Dump the candidate's L0-L2 surface and embed L3-L5 inline at *collect_mode*.
+
+    The resolved ``changed_paths`` (from ``--changed-path``/``--since``) are
+    threaded into the inline source replay so a ``source-changed`` collection
+    actually narrows to the affected TUs — the ADR-035 D7 POI-focused cost model —
+    instead of falling back to a full ``target`` replay.
+    """
     from .errors import AbicheckError
     from .service import resolve_input
 
@@ -357,6 +364,7 @@ def _build_new_snapshot(
             sources=sources,
             allow_build_query=allow_build_query,
             collect_mode=collect_mode,
+            changed_paths=changed_paths,
         )
     return snap
 
@@ -607,6 +615,7 @@ def scan_cmd(
         collect_mode,
         lang,
         allow_build_query,
+        changed_paths=tuple(changed),
     )
 
     # --- always-on tier: compiler-free pattern pre-scan (S3) ------------------
@@ -626,6 +635,7 @@ def scan_cmd(
             new_snap,
             cc.findings,
             lang,
+            collect_mode,
         )
         # A cross-check the maintainer promoted to `error` (D6) gates the exit
         # even when the baseline diff itself is clean.
@@ -713,6 +723,7 @@ def _run_baseline_compare(
     new_snap: Any,
     extra_changes: list[Any],
     lang: str,
+    collect_mode: str,
 ) -> tuple[str, int, dict[str, Any]]:
     """Compare *new_snap* against *baseline*, folding cross-source findings in.
 
@@ -720,8 +731,15 @@ def _run_baseline_compare(
     diff and the verdict reflects them — but, being partitioned into
     ``RISK``/``API_BREAK`` only, they can never push the verdict to ``BREAKING``
     (ADR-035 D1 authority rule).
+
+    The embedded L3/L4/L5 build/source packs on either snapshot are diffed via
+    :func:`prepare_embedded_build_source` — the same path ``abicheck compare``
+    uses — so source-only / graph findings the collected evidence reveals are
+    folded into the verdict too (``checker.compare`` itself does not read
+    ``build_source``).
     """
     from .checker import compare
+    from .cli_buildsource import prepare_embedded_build_source
     from .errors import AbicheckError
     from .service import resolve_input
 
@@ -731,10 +749,28 @@ def _run_baseline_compare(
         raise click.ClickException(
             f"Failed to load --baseline {baseline}: {exc}"
         ) from exc
+    # Fold embedded build-info/source (L3/L4/L5) diff findings into extra_changes
+    # before comparing — mirrors the compare command (Codex review). Only engage
+    # when a snapshot actually carries an embedded pack; otherwise pass
+    # ``collect_mode="off"`` so the pipeline stays inert (no spurious collection
+    # attempt / output noise on a plain artifact-only baseline compare).
+    has_embedded = (
+        old_snap.build_source is not None or new_snap.build_source is not None
+    )
+    merged_extra, _coverage_rows, _metrics, _ev = prepare_embedded_build_source(
+        old_snap,
+        new_snap,
+        collect_mode if has_embedded else "off",
+        list(extra_changes),
+        None,
+        None,
+        None,
+        None,
+    )
     diff = compare(
         old_snap,
         new_snap,
-        extra_changes=list(extra_changes),
+        extra_changes=merged_extra,
         scope_to_public_surface=True,
     )
     summary = {

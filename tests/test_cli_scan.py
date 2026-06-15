@@ -384,6 +384,62 @@ def test_crosscheck_error_gates_even_with_clean_baseline(
     assert res.exit_code == 2, res.output
 
 
+def _snap_with_build_flag(tmp_path: Path, name: str, value: str) -> Path:
+    # Embed an L3 build-evidence pack carrying one ABI-relevant define, so a
+    # baseline compare exercises the embedded-source diff path (no compiler).
+    from abicheck.buildsource.build_evidence import BuildEvidence, BuildOption
+    from abicheck.buildsource.pack import BuildSourcePack
+
+    snap = AbiSnapshot(
+        library="libfoo.so",
+        version="1.0",
+        from_headers=True,
+        functions=[_func("foo", "_Z3foov")],
+        elf=_elf("_Z3foov"),
+    )
+    snap.build_source = BuildSourcePack(
+        root=Path(""),
+        build_evidence=BuildEvidence(
+            build_options=[
+                BuildOption(key="define:FEATURE_X", value=value, abi_relevant=True)
+            ]
+        ),
+    )
+    return _write_snapshot(tmp_path / name, snap)
+
+
+def test_baseline_compare_folds_embedded_source_findings(runner, tmp_path):
+    # ABI-relevant build-flag drift lives only in the embedded L3 pack; the scan
+    # baseline compare must route through prepare_embedded_build_source so the
+    # finding folds into the verdict (Codex review L738). Write JSON to a file so
+    # the assertion is immune to CliRunner's stdout/stderr capture behaviour.
+    old = _snap_with_build_flag(tmp_path, "old.abi.json", "0")
+    new = _snap_with_build_flag(tmp_path, "new.abi.json", "1")
+    out = tmp_path / "scan.json"
+    res = runner.invoke(
+        main,
+        [
+            "scan",
+            "--binary",
+            str(new),
+            "--baseline",
+            str(old),
+            "--format",
+            "json",
+            "-o",
+            str(out),
+        ],
+    )
+    # A scan verdict exit code (0/2/4) — not a crash; the fold may reach API_BREAK.
+    assert res.exit_code in (0, 2, 4), res.output
+    payload = json.loads(out.read_text())
+    # Without the fix the embedded pack is never diffed and every bucket is 0;
+    # the fix folds the ABI-relevant define drift in (here: RISK + API_BREAK).
+    d = payload["diff"]
+    assert d["risk"] >= 1, d
+    assert d["risk"] + d["api_break"] + d["breaking"] >= 1, d
+
+
 def test_multiple_binaries_rejected(runner, baseline_snap, new_snap_compatible):
     res = runner.invoke(
         main,
