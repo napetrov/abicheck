@@ -277,6 +277,11 @@ def test_bazel_param_file_arguments_are_expanded():
     assert cu.standard == "c++20"
 
 
+def test_bazel_workspace_sets_compile_unit_directory(tmp_path):
+    cu = BazelAdapter(workspace=tmp_path, aquery=AQUERY).collect().compile_units[0]
+    assert Path(cu.directory).expanduser() == tmp_path.resolve()
+
+
 def test_bazel_param_file_expanded_at_token_position():
     # Param-file args expand at the @token position, not at the end, so a
     # later command-line -std wins (matching the real compiler's last-wins rule).
@@ -595,6 +600,27 @@ def test_collect_evidence_bazel_files(tmp_path):
     assert pack.build_evidence is not None
     assert any(t.build_system == "bazel" for t in pack.build_evidence.targets)
     assert any(e.name == "bazel" and e.status == "ok" for e in pack.manifest.extractors)
+
+
+def test_collect_evidence_bazel_files_uses_build_dir_as_workspace(tmp_path):
+    aq = tmp_path / "aquery.json"
+    aq.write_text(AQUERY)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    out = tmp_path / "e"
+    result = CliRunner().invoke(
+        main,
+        [
+            "collect",
+            "--build-dir", str(workspace),
+            "--bazel-aquery", str(aq),
+            "-o", str(out),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    pack = BuildSourcePack.load(out)
+    assert pack.build_evidence is not None
+    assert Path(pack.build_evidence.compile_units[0].directory).expanduser() == workspace.resolve()
 
 
 def test_collect_evidence_bazel_link_only_pack_preserved(tmp_path):

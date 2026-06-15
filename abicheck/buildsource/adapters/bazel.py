@@ -93,7 +93,7 @@ class BazelAdapter:
         allow_query: bool = True,
         redaction: RedactionPolicy | None = None,
     ) -> None:
-        self.workspace = Path(workspace) if workspace is not None else None
+        self.workspace = Path(workspace).resolve() if workspace is not None else None
         self.target = target
         self._cquery = cquery
         self._aquery = aquery
@@ -251,17 +251,20 @@ class BazelAdapter:
         source = source_from_argv(argv)
         if not source:
             return None
-        ctx = _extract_flags(argv, Path("."))
+        directory = self.workspace or Path(".")
+        ctx = _extract_flags(argv, directory)
         output = graph.path(action.get("primaryOutputId"))
         red_argv = self.redaction.argv(argv)
         red_source = self.redaction.path(source)
         red_output = self.redaction.path(output)
+        red_directory = self.redaction.path(str(directory)) if self.workspace is not None else ""
         return CompileUnit(
             # Derive the id from redacted values only so host-specific paths
             # never leak through the id (ADR-028 D4: normalized facts only).
             id=compile_unit_id(red_source, red_argv, red_output),
             source=red_source,
             output=red_output,
+            directory=red_directory,
             target_id=graph.target_id(action.get("targetId")),
             argv=red_argv,
             language=effective_language(argv, source),

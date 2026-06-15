@@ -15,6 +15,8 @@
 """Make adapter coverage (ADR-029 D7)."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from click.testing import CliRunner
 
 from abicheck.buildsource.adapters import MakeAdapter
@@ -77,6 +79,44 @@ def test_make_cd_prefixed_recipe_resolves_in_subdir():
     # Path separators differ across OSes (sub\include on Windows); normalize.
     assert cu.directory.replace("\\", "/").endswith("sub")    # advanced into cd target
     assert any(p.replace("\\", "/").endswith("sub/include") for p in cu.include_paths)
+
+
+def test_make_entering_directory_sets_compile_cwd(tmp_path):
+    src = tmp_path / "src" / "foo.cc"
+    src.parent.mkdir()
+    src.write_text("int f() { return 0; }\n")
+    dry = (
+        f"make: Entering directory '{tmp_path}'\n"
+        "g++ -std=c++17 -c src/foo.cc -o build/foo.o\n"
+        f"make: Leaving directory '{tmp_path}'\n"
+    )
+    cu = MakeAdapter(dry_run=dry).collect().compile_units[0]
+    assert Path(cu.directory).expanduser() == tmp_path
+    assert (Path(cu.directory).expanduser() / cu.source).is_file()
+
+
+def test_make_expands_response_file_and_truncates_shell_suffix(tmp_path):
+    src = tmp_path / "src" / "foo.cc"
+    inc = tmp_path / "include"
+    build = tmp_path / "build"
+    src.parent.mkdir()
+    inc.mkdir()
+    build.mkdir()
+    src.write_text("int f() { return 0; }\n")
+    rsp = build / "inc.rsp"
+    rsp.write_text("-Iinclude -DMODE=1\n")
+    dry = (
+        f"make: Entering directory '{tmp_path}'\n"
+        "g++ @build/inc.rsp -std=c++17 -c src/foo.cc "
+        "-obuild/foo.o && sed -n ignored.d\n"
+        f"make: Leaving directory '{tmp_path}'\n"
+    )
+    cu = MakeAdapter(dry_run=dry).collect().compile_units[0]
+    assert "&&" not in cu.argv
+    assert "@build/inc.rsp" not in cu.argv
+    assert cu.defines["MODE"] == "1"
+    assert cu.output == "build/foo.o"
+    assert any(Path(p).expanduser() == inc for p in cu.include_paths)
 
 
 def test_make_msvc_combined_forced_include_not_source():

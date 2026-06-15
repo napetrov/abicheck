@@ -38,6 +38,7 @@ is not an authoritative target graph), recorded via a diagnostic.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 from pathlib import Path
 
@@ -80,17 +81,31 @@ class MakeAdapter:
             return ev
 
         directory = self.build_dir or Path(".")
+        directory_stack: list[Path] = []
         for line in text.splitlines():
+            event, event_dir = _directory_event(line)
+            if event == "enter" and event_dir is not None:
+                directory_stack.append(directory)
+                directory = event_dir
+                continue
+            if event == "leave":
+                directory = directory_stack.pop() if directory_stack else (self.build_dir or Path("."))
+                continue
             cu = self._compile_unit(line, directory)
             if cu is not None:
                 ev.compile_units.append(cu)
 
         if ev.compile_units:
             ev.build_options = derive_build_options(ev.compile_units)
+            existing_sources = _count_existing_sources(ev.compile_units)
             ev.diagnostics.append(
                 f"make: {len(ev.compile_units)} compile units derived from a make "
                 "dry-run transcript — reduced confidence (not an authoritative "
                 "target graph); prefer a generated compile_commands.json"
+            )
+            ev.diagnostics.append(
+                f"make: {existing_sources}/{len(ev.compile_units)} compile-unit "
+                "source paths exist relative to their recorded directories"
             )
         return ev
 
@@ -119,6 +134,7 @@ class MakeAdapter:
         # Recursive recipes prefix the compile with `cd sub && …`; the source and
         # `-I` paths are then relative to `sub/`, not the parent build dir.
         argv, directory = _consume_cd_prefix(argv, directory)
+        argv = _truncate_shell_pipeline(argv)
         # A translation-unit compile is a `-c` (GNU) / `/c` (MSVC, clang-cl)
         # invocation that names a source; link/info/`Entering directory` lines
         # lack one of those and are skipped.
@@ -127,12 +143,16 @@ class MakeAdapter:
         source = source_from_argv(argv)
         if not source:
             return None
+        argv, _expanded_rsp = _expand_response_files(argv, directory)
         ctx = _extract_flags(argv, directory)
+        output = _output_from_argv(argv)
         red_argv = self.redaction.argv(argv)
         red_source = self.redaction.path(source)
+        red_output = self.redaction.path(output)
         return CompileUnit(
-            id=compile_unit_id(red_source, red_argv),
+            id=compile_unit_id(red_source, red_argv, red_output),
             source=red_source,
+            output=red_output,
             directory=self.redaction.path(str(directory)),
             argv=red_argv,
             language=effective_language(argv, source),
@@ -169,6 +189,82 @@ def _split_recipe(line: str) -> list[str]:
         return shlex.split(stripped, posix=os.name != "nt")
     except ValueError:
         return []  # unbalanced quotes / non-command line — skip
+
+
+_ENTER_RE = re.compile(r"^make(?:\[\d+\])?: Entering directory ['`](.+)['`]$")
+_LEAVE_RE = re.compile(r"^make(?:\[\d+\])?: Leaving directory ['`](.+)['`]$")
+
+
+def _directory_event(line: str) -> tuple[str, Path | None]:
+    """Return make directory transitions from ``make -C`` / recursive logs."""
+    stripped = line.strip()
+    m = _ENTER_RE.match(stripped)
+    if m:
+        return "enter", Path(m.group(1))
+    if _LEAVE_RE.match(stripped):
+        return "leave", None
+    return "", None
+
+
+def _truncate_shell_pipeline(argv: list[str]) -> list[str]:
+    """Keep only the compiler invocation before shell control operators."""
+    for i, arg in enumerate(argv):
+        if arg in {"&&", ";", "||", "|"}:
+            return argv[:i]
+    return argv
+
+
+def _expand_response_files(argv: list[str], directory: Path) -> tuple[list[str], bool]:
+    """Inline readable compiler response-file tokens (``@file``)."""
+    expanded: list[str] = []
+    changed = False
+    for arg in argv:
+        if not arg.startswith("@") or len(arg) == 1:
+            expanded.append(arg)
+            continue
+        path = Path(arg[1:])
+        if not path.is_absolute():
+            path = directory / path
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            expanded.append(arg)
+            continue
+        try:
+            expanded.extend(shlex.split(text, posix=os.name != "nt"))
+            changed = True
+        except ValueError:
+            expanded.append(arg)
+    return expanded, changed
+
+
+def _output_from_argv(argv: list[str]) -> str:
+    """Extract the object output path from GNU/MSVC compile argv."""
+    out = ""
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ("-o", "/Fo") and i + 1 < len(argv):
+            out = argv[i + 1]
+            i += 2
+            continue
+        if arg.startswith("-o") and len(arg) > 2:
+            out = arg[2:]
+        elif arg.startswith("/Fo") and len(arg) > 3:
+            out = arg[3:]
+        i += 1
+    return out
+
+
+def _count_existing_sources(units: list[CompileUnit]) -> int:
+    count = 0
+    for cu in units:
+        source = Path(os.path.expanduser(cu.source))
+        if not source.is_absolute() and cu.directory:
+            source = Path(os.path.expanduser(cu.directory)) / source
+        if source.is_file():
+            count += 1
+    return count
 
 
 def _as_text(value: str | Path | None) -> str | None:
