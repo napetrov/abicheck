@@ -249,7 +249,7 @@ def test_pr_deep_is_distinct_from_pr(runner, new_snap_compatible):
     payload = json.loads(res.output)
     # pr-deep keeps GRAPH depth and a distinct graph collect-mode (Codex review).
     assert payload["level"]["depth"] == "graph"
-    assert payload["level"]["collect_mode"] == "graph-summary"
+    assert payload["level"]["collect_mode"] == "graph-full"
 
 
 def test_reported_depth_matches_resolved_source_method(runner, new_snap_compatible):
@@ -551,6 +551,32 @@ def test_source_method_s2_is_rejected_as_unimplemented(runner, new_snap_compatib
     )
     assert res.exit_code != 0
     assert "s2" in res.output and "not yet implemented" in res.output
+
+
+def test_auto_seeded_empty_diff_uses_s0(runner, new_snap_compatible):
+    # A *successful* empty diff (no-op PR) is a valid seed → auto picks s0/off,
+    # distinct from a missing/failed seed which falls back to the preset (Codex).
+    # `HEAD...HEAD` is an empty diff in this repo's git.
+    res = runner.invoke(
+        main,
+        [
+            "scan",
+            "--binary",
+            str(new_snap_compatible),
+            "--source-method",
+            "auto",
+            "--since",
+            "HEAD",
+            "--format",
+            "json",
+            "--audit",
+        ],
+    )
+    if res.exit_code != 0 or "seed failed" in res.output:
+        pytest.skip("git unavailable / not a repo in this environment")
+    payload = json.loads(res.output)
+    assert payload["level"]["source_method"] == "s0"
+    assert payload["level"]["collect_mode"] == "off"
 
 
 def test_auto_without_diff_seed_falls_back_to_preset(runner, new_snap_compatible):

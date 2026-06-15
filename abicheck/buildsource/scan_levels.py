@@ -237,13 +237,14 @@ def level_to_collect_mode(method: SourceMethod, depth: EvidenceDepth) -> str:
     """The ADR-033 D2 CI evidence mode for a resolved (method, depth) level.
 
     Depth-aware for the S5 graph case only: ``pr-deep`` ((S5, GRAPH)) resolves to
-    ``graph-summary`` (L3+L4+L5 with the graph built) instead of ``pr``'s
-    ``source-changed``, so the deeper preset actually collects more (Codex
-    review). S4 (``--depth graph``) keeps its own ``graph-build`` mode (L3+L5, no
-    costly L4 replay) — it is graph-only, not source-ABI (Codex review). All other
-    levels use the method's default mode.
+    ``graph-full`` — a genuinely deeper collection than ``pr``'s ``source-changed``
+    (full replay scope vs. changed-only), not just a relabel; ``graph-summary``
+    maps to the *same* changed scope/layers as ``source-changed`` downstream, so
+    it would not actually collect more (Codex review). S4 (``--depth graph``) keeps
+    its own ``graph-build`` mode (L3+L5, no costly L4 replay) — it is graph-only,
+    not source-ABI (Codex review). All other levels use the method's default mode.
     """
     base = method_to_collect_mode(method)
     if depth is EvidenceDepth.GRAPH and base == "source-changed":
-        return "graph-summary"
+        return "graph-full"
     return base

@@ -46,7 +46,7 @@ def test_pr_and_pr_deep_resolve_to_distinct_levels():
     pr_mode = level_to_collect_mode(pr_method, pr_depth)
     deep_mode = level_to_collect_mode(deep_method, deep_depth)
     assert pr_mode == "source-changed"
-    assert deep_mode == "graph-summary"
+    assert deep_mode == "graph-full"
     assert pr_mode != deep_mode
 
 

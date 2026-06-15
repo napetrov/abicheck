@@ -106,12 +106,14 @@ def _parse_budget(value: str | None) -> float | None:
     return amount * unit
 
 
-def _git_changed_paths(since: str, cwd: Path | None) -> list[str]:
-    """Return paths changed vs. a git ref via ``git diff --name-only`` (no shell).
+def _git_changed_paths(since: str, cwd: Path | None) -> list[str] | None:
+    """Paths changed vs. a git ref via ``git diff --name-only`` (no shell).
 
-    Best-effort: a non-repo / bad ref / missing git degrades to an empty list and
-    a warning, so ``scan`` falls back to a broader (un-focused) scope rather than
-    aborting — and the report says the changed-path seed was empty (ADR-035 D7).
+    Returns the changed-path list on success (possibly **empty** for a no-op
+    diff), or ``None`` when the seed could not be produced (missing git / non-repo
+    / bad ref). The caller distinguishes the two: a successful empty diff is a
+    valid "nothing changed" seed (auto → s0), whereas ``None`` means no seed and
+    auto falls back to the mode preset (ADR-035 D7 / Codex review).
     """
     try:
         proc = subprocess.run(
@@ -124,14 +126,14 @@ def _git_changed_paths(since: str, cwd: Path | None) -> list[str]:
         )
     except (OSError, subprocess.SubprocessError) as exc:
         click.echo(f"warning: --since: could not run git diff: {exc}", err=True)
-        return []
+        return None
     if proc.returncode != 0:
         click.echo(
             f"warning: --since {since!r}: git diff failed "
             f"({proc.stderr.strip() or 'non-zero exit'}); scanning broadly.",
             err=True,
         )
-        return []
+        return None
     return [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
 
 
@@ -613,14 +615,25 @@ def scan_cmd(
     budget_s = _parse_budget(budget)
     enabled_checks, severities = _parse_crosschecks(crosschecks)
 
-    # Changed-path seed: --changed-path wins; else --since via git; else none
-    # (a broader, un-focused scope — reported honestly, ADR-035 D7).
+    # Changed-path seed: --changed-path wins; else --since via git; else none.
+    # ``seeded`` tracks whether a *valid* seed was produced — a successful empty
+    # diff (seeded, no paths) is distinct from a missing/failed seed (not seeded):
+    # the former lets auto pick s0 (no-op PR), the latter falls back to the broad
+    # mode preset (ADR-035 D7 / Codex review).
+    seeded = False
     if changed_paths_opt:
         changed = list(changed_paths_opt)
         changed_src = "--changed-path"
+        seeded = True
     elif since:
-        changed = _git_changed_paths(since, sources)
-        changed_src = f"--since {since}"
+        git_changed = _git_changed_paths(since, sources)
+        if git_changed is None:
+            changed = []
+            changed_src = f"--since {since} (seed failed; broad scope)"
+        else:
+            changed = git_changed
+            changed_src = f"--since {since}"
+            seeded = True
     else:
         changed = []
         changed_src = "none (no diff seed; broad scope)"
@@ -640,12 +653,11 @@ def scan_cmd(
         )
     dp = EvidenceDepth(depth) if depth else None
     is_auto = sm is SourceMethod.AUTO
-    # auto escalates from the risk score ONLY when the diff seed actually produced
-    # changed paths. With no seed (no --changed-path, or --since failed on a bad
-    # ref / non-repo checkout) the score is 0 → s0 → collect "off", which would
-    # silently skip all L3-L5 source evidence; fall back to the mode preset (broad
-    # scope) instead (Codex review).
-    auto_method = risk.recommended_method if (is_auto and changed) else None
+    # auto uses the risk score ONLY when a valid diff seed was produced. A seeded
+    # empty diff (no-op PR) correctly yields s0 (skip the scan); a missing/failed
+    # seed instead falls back to the mode preset, so a bad-ref / non-repo CI run
+    # does not silently drop all L3-L5 source evidence (Codex review).
+    auto_method = risk.recommended_method if (is_auto and seeded) else None
     resolved, eff_depth_enum = resolve_level(
         mode=scan_mode,
         source_method=sm,
