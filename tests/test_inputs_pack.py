@@ -140,6 +140,31 @@ def test_manifest_from_dict_is_forward_compatible() -> None:
     assert m.abicheck_inputs_version == ABICHECK_INPUTS_VERSION
 
 
+def test_manifest_null_optional_strings_become_empty_not_none_literal() -> None:
+    # A producer that serializes unset optionals as JSON null must not coerce to
+    # the literal "None" — for compile_db that would point at a missing file.
+    m = InputsManifest.from_dict(
+        {"kind": None, "library": None, "compile_db": None, "created_by": None}
+    )
+    assert m.kind == INPUTS_KIND  # null kind falls back to the default
+    assert m.library == ""
+    assert m.compile_db == ""
+    assert m.created_by == ""
+
+
+def test_ingest_with_null_compile_db_still_finds_default(tmp_path: Path) -> None:
+    # compile_db: null in the manifest must fall back to build/compile_commands.json.
+    pack = _write_inputs_pack(
+        tmp_path,
+        [_tu("foo", mangled="_Z3foov")],
+        compile_db=_compile_db(tmp_path),
+        manifest_extra={"compile_db": None},
+    )
+    ingested = ingest_inputs_pack(pack)
+    assert ingested.pack.build_evidence is not None
+    assert ingested.pack.build_evidence.compile_units
+
+
 # -- detection ----------------------------------------------------------------
 
 
@@ -236,6 +261,30 @@ def test_read_source_facts_skips_malformed_lines(tmp_path: Path) -> None:
     # The good record still ingests; the junk line is dropped, not fatal.
     tus = read_source_facts(pack)
     assert len(tus) == 1
+
+
+def test_read_source_facts_threads_diagnostics_sink(tmp_path: Path) -> None:
+    pack = _write_inputs_pack(tmp_path, [_tu("foo", mangled="_Z3foov")])
+    facts = pack / "source_facts" / "libfoo.jsonl"
+    facts.write_text(facts.read_text(encoding="utf-8") + "not json\n", encoding="utf-8")
+    diags: list[str] = []
+    tus = read_source_facts(pack, diagnostics=diags)
+    assert len(tus) == 1
+    assert diags and "skipped malformed JSON" in diags[0]
+
+
+def test_ingest_surfaces_malformed_record_diagnostics(tmp_path: Path) -> None:
+    # A skipped TU must not vanish silently — it rides in IngestedInputs and the
+    # extractor ledger, and downgrades the record to `partial`.
+    pack = _write_inputs_pack(tmp_path, [_tu("foo", mangled="_Z3foov")])
+    facts = pack / "source_facts" / "libfoo.jsonl"
+    facts.write_text(facts.read_text(encoding="utf-8") + "{bad json\n", encoding="utf-8")
+    ingested = ingest_inputs_pack(pack)
+    assert ingested.tu_count == 1
+    assert ingested.diagnostics
+    rec = next(e for e in ingested.pack.manifest.extractors if e.name == "abicheck_inputs")
+    assert rec.status == "partial"
+    assert rec.diagnostics
 
 
 def test_multiple_jsonl_records_ingest(tmp_path: Path) -> None:

@@ -75,6 +75,18 @@ DEFAULT_COMPILE_DB_REL = "build/compile_commands.json"
 SOURCE_FACTS_DIR = "source_facts"
 
 
+def _opt_str(raw: Any, default: str = "") -> str:
+    """Coerce an optional manifest string, treating JSON ``null`` as the default.
+
+    A producer that serializes an unset optional field as ``null`` would
+    otherwise become the literal ``"None"`` via ``str(None)`` — and for a path
+    field like ``compile_db`` that silently points at a nonexistent file and
+    drops the layer (Codex review). ``None`` → *default*; anything else →
+    ``str(raw)``.
+    """
+    return default if raw is None else str(raw)
+
+
 @dataclass
 class InputsManifest:
     """Declarative manifest for an ``abicheck_inputs/`` pack (Flow 2).
@@ -125,17 +137,17 @@ class InputsManifest:
             return [str(x) for x in raw if x] if isinstance(raw, list) else []
 
         return cls(
-            kind=str(d.get("kind", INPUTS_KIND)),
+            kind=_opt_str(d.get("kind"), INPUTS_KIND),
             abicheck_inputs_version=int(
                 d.get("abicheck_inputs_version", ABICHECK_INPUTS_VERSION) or ABICHECK_INPUTS_VERSION
             ),
-            library=str(d.get("library", "")),
-            version=str(d.get("version", "")),
-            created_by=str(d.get("created_by", "")),
-            created_at=str(d.get("created_at", "")),
-            binary=str(d.get("binary", "")),
+            library=_opt_str(d.get("library")),
+            version=_opt_str(d.get("version")),
+            created_by=_opt_str(d.get("created_by")),
+            created_at=_opt_str(d.get("created_at")),
+            binary=_opt_str(d.get("binary")),
             headers=_str_list("headers"),
-            compile_db=str(d.get("compile_db", "")),
+            compile_db=_opt_str(d.get("compile_db")),
             source_facts=_str_list("source_facts"),
             exported_symbols=_str_list("exported_symbols"),
         )
@@ -247,14 +259,24 @@ def _parse_tu_records(text: str, source: str, diagnostics: list[str]) -> list[So
     return tus
 
 
-def read_source_facts(root: Path | str, manifest: InputsManifest | None = None) -> list[SourceAbiTu]:
-    """Read every normalized per-TU dump from a pack's ``source_facts/`` files."""
+def read_source_facts(
+    root: Path | str,
+    manifest: InputsManifest | None = None,
+    *,
+    diagnostics: list[str] | None = None,
+) -> list[SourceAbiTu]:
+    """Read every normalized per-TU dump from a pack's ``source_facts/`` files.
+
+    When a *diagnostics* sink is supplied, per-record parse warnings (malformed
+    or non-object lines that were skipped) are appended to it, so a caller can
+    surface them instead of silently dropping bad TUs (Codex review).
+    """
     root = Path(root)
     manifest = manifest or load_inputs_manifest(root)
-    diagnostics: list[str] = []
+    sink = diagnostics if diagnostics is not None else []
     tus: list[SourceAbiTu] = []
     for path in _iter_source_fact_files(root, manifest):
-        tus.extend(_parse_tu_records(path.read_text(encoding="utf-8"), path.name, diagnostics))
+        tus.extend(_parse_tu_records(path.read_text(encoding="utf-8"), path.name, sink))
     return tus
 
 
@@ -290,7 +312,9 @@ def ingest_inputs_pack(
     manifest = load_inputs_manifest(root)
     diagnostics: list[str] = []
 
-    tus = read_source_facts(root, manifest)
+    # Thread the diagnostics sink so skipped/malformed source-fact records are
+    # surfaced in the extractor ledger + IngestedInputs, not silently dropped.
+    tus = read_source_facts(root, manifest, diagnostics=diagnostics)
     exports = sorted(set(manifest.exported_symbols) | set(exported_symbols))
 
     surface = None
@@ -316,10 +340,12 @@ def ingest_inputs_pack(
     extractor = ExtractorRecord(
         name="abicheck_inputs",
         version=str(manifest.abicheck_inputs_version),
-        status="ok" if tus or has_build else "partial",
+        # Any skipped record (a diagnostic) means the ingest was lossy → partial.
+        status="ok" if (tus or has_build) and not diagnostics else "partial",
         detail=(
             f"Flow-2 ingest: {len(tus)} source-fact TUs"
             + (f", L3 from {manifest.compile_db or DEFAULT_COMPILE_DB_REL}" if has_build else "")
+            + (f", {len(diagnostics)} skipped/diagnostic" if diagnostics else "")
             + (f" (produced by {manifest.created_by})" if manifest.created_by else "")
         ),
         diagnostics=list(diagnostics),
