@@ -645,7 +645,11 @@ def scan_cmd(
         sev_exit = _crosscheck_severity_exit(cc.findings, severities)
         if sev_exit > exit_code:
             exit_code = sev_exit
-            if verdict in ("NO_CHANGE", "COMPATIBLE"):
+            # Keep the reported verdict in sync with the promoted exit code so a
+            # consumer keying off the verdict string isn't misled (Codex review).
+            # Only a non-breaking verdict is promoted — never downgrade a real
+            # BREAKING/API_BREAK from the artifact diff.
+            if verdict in ("NO_CHANGE", "COMPATIBLE", "COMPATIBLE_WITH_RISK"):
                 verdict = "API_BREAK"
     else:
         if baseline is not None:
@@ -711,11 +715,14 @@ def _load_risk_rules(path: Path | None) -> RiskRules:
     """Load a ``risk_rules:`` profile from a YAML file, or the shipped default."""
     if path is None:
         return RiskRules.default()
-    try:
-        import yaml
+    import yaml  # hard dep (pyyaml); import out of the try so the except can name it
 
+    try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, ImportError) as exc:
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        # yaml.YAMLError (e.g. ParserError) is not a ValueError, so catch it
+        # explicitly — else malformed --risk-rules YAML escapes as a traceback
+        # through the installed console script (Codex review).
         raise click.ClickException(f"cannot read --risk-rules {path}: {exc}") from exc
     block = raw.get("risk_rules") if isinstance(raw, dict) else None
     return RiskRules.from_dict(block if isinstance(block, dict) else raw)

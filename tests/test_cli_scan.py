@@ -463,6 +463,58 @@ def test_baseline_compare_folds_embedded_source_findings(runner, tmp_path):
     assert d["risk"] + d["api_break"] + d["breaking"] >= 1, d
 
 
+def test_promoted_risk_verdict_matches_exit_code(runner, tmp_path, baseline_snap):
+    # Baseline diff is clean but a promoted RISK check gates: verdict string must
+    # not stay COMPATIBLE_WITH_RISK while the process exits 2 (Codex review).
+    snap = AbiSnapshot(
+        library="libfoo.so",
+        version="1.0",
+        from_headers=True,
+        functions=[_func("foo", "_Z3foov"), _func("bar", "_Z3barv")],
+        elf=_elf("_Z3foov", "_Z3barv", "_Z6secretv"),
+    )
+    p = _write_snapshot(tmp_path / "new.abi.json", snap)
+    res = runner.invoke(
+        main,
+        [
+            "scan",
+            "--binary",
+            str(p),
+            "--baseline",
+            str(baseline_snap),
+            "--crosscheck",
+            "exported_not_public=error",
+            "--format",
+            "json",
+        ],
+    )
+    assert res.exit_code == 2, res.output
+    payload = json.loads(res.output)
+    assert payload["verdict"] == "API_BREAK"
+
+
+def test_malformed_risk_rules_yaml_is_click_error(
+    runner, tmp_path, new_snap_compatible
+):
+    bad = tmp_path / "rules.yml"
+    # Invalid YAML (unbalanced brackets) → yaml.YAMLError, must be a clean CLI error.
+    bad.write_text("risk_rules: { unclosed: [1, 2", encoding="utf-8")
+    res = runner.invoke(
+        main,
+        [
+            "scan",
+            "--binary",
+            str(new_snap_compatible),
+            "--audit",
+            "--risk-rules",
+            str(bad),
+        ],
+    )
+    assert res.exit_code != 0
+    assert res.exception is None or isinstance(res.exception, SystemExit)
+    assert "cannot read --risk-rules" in res.output
+
+
 def test_multiple_binaries_rejected(runner, baseline_snap, new_snap_compatible):
     res = runner.invoke(
         main,
