@@ -36,11 +36,19 @@ from typing import TYPE_CHECKING, cast
 
 from .checker_policy import HasKind
 
-# Page chrome (DOCTYPE/head/stylesheet/body frame, verdict palette, footer) lives
-# in one shared seam (``html_template``). ``_CSS`` / ``_VERDICT_STYLE`` are
-# re-exported here so the satellite renderers that historically imported them
-# from this module keep working.
-from .html_template import _CSS, _VERDICT_STYLE, render_document, render_footer
+# Page chrome (DOCTYPE/head/stylesheet/body frame, verdict palette, footer) now
+# lives in one shared seam (``html_template``). ``_VERDICT_STYLE`` /
+# ``render_document`` / ``render_footer`` are used below; ``_CSS`` is re-exported
+# via redundant alias (it was previously defined in this module) so any code that
+# imported it from here keeps working.
+from .html_template import (
+    _CSS as _CSS,
+)
+from .html_template import (
+    _VERDICT_STYLE,
+    render_document,
+    render_footer,
+)
 from .report_classifications import (
     ADDED_KINDS,
     CATEGORY_PREFIXES,
@@ -55,8 +63,6 @@ from .report_summary import compatibility_metrics
 
 if TYPE_CHECKING:
     from .checker import DiffResult
-
-__all__ = ["_CSS", "_VERDICT_STYLE", "render_document", "render_footer"]
 
 
 def _change_bucket(change: object) -> str:
