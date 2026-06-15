@@ -640,23 +640,29 @@ use_cases:
   - id: UC-TC-build-emitted-facts
     axis: toolchain
     name: Build-emitted source facts (artifact protocol + Clang plugin/wrapper)
-    status: partial
+    status: complete
     gap: G19
     plan: docs/development/plans/g19-pr-source-intelligence.md
     evidence:
       modules:
         - abicheck/buildsource/inputs_pack.py
+        - abicheck/buildsource/inputs_emit.py
+        - abicheck/cc_wrapper.py
+        - contrib/abicheck-clang-plugin/README.md
       tests:
         - tests/test_inputs_pack.py
+        - tests/test_inputs_emit.py
     next_steps: >
-      ADR-035 D5. DONE: the `abicheck_inputs/` dump/facts artifact protocol
+      ADR-035 D5, complete. The `abicheck_inputs/` dump/facts artifact protocol
       (normalized source_facts/*.jsonl canonical → L4, build/compile_commands.json
       → L3; raw AST forensic-only) is ingested without re-running a frontend via
-      the existing `merge` (`ingest_inputs_pack`, dir input auto-detected). TODO:
-      a Clang plugin and `abicheck-cc` compiler wrapper as ADR-032 extractor
-      providers (the optional optimization that removes the second frontend
-      pass). Lets vendor/closed builds contribute exact-build-context facts
-      without shipping sources; replay stays the portable default.
+      the existing `merge` (`ingest_inputs_pack`, dir input auto-detected). The
+      supported portable producer is the `abicheck-cc` compiler wrapper
+      (pass-through compile + best-effort castxml/clang extraction →
+      `inputs_emit`); the Clang plugin (`contrib/abicheck-clang-plugin/`) is the
+      optional optimization that removes the second frontend pass, with GCC/MSVC
+      fallbacks documented. Lets vendor/closed builds contribute exact-build-context
+      facts without shipping sources; replay stays the portable default.
 
   - id: UC-REPORTING-scan-coverage-estimate
     axis: reporting

@@ -126,9 +126,17 @@ authority rule (L0–L2 stay authoritative for `BREAKING`).
   folded into a source-side snapshot; `merge libfoo.bin.json ./abicheck_inputs/
   -o baseline.json`). Raw AST (`raw_ast/`) is forensic-only, never ingested.
   Tests: `tests/test_inputs_pack.py`.
-- **TODO** — Clang-plugin + `abicheck-cc` wrapper as ADR-032 manifest extractors
-  (the optional performance optimization that removes the second frontend pass).
-  GCC/MSVC dump fallbacks documented, not required.
+- **DONE** — `abicheck-cc` compiler wrapper (`abicheck/cc_wrapper.py`, console
+  script `abicheck-cc`) is the supported portable **producer**: it runs the real
+  compile (pass-through, exit-code preserving), then best-effort extracts a
+  normalized `SourceAbiTu` via the castxml/clang backends and appends it to an
+  `abicheck_inputs/` pack (`buildsource/inputs_emit.py`). Fact extraction never
+  fails the build (authority rule). Tests: `tests/test_inputs_emit.py`.
+- **DONE (reference)** — Clang plugin under `contrib/abicheck-clang-plugin/`
+  (`-fplugin`, emits the same `source_facts` schema, removes the second frontend
+  pass) — the optional, compiler-version-sensitive optimization; not built in CI.
+  GCC `-fdump-lang-class` / MSVC fallbacks documented. The portable default stays
+  `compile_commands.json` replay.
 
 ## Files & surfaces
 

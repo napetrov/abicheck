@@ -197,10 +197,36 @@ abicheck merge libfoo.bin.json ./abicheck_inputs/ -o libfoo.baseline.json
 ```
 
 Normalized `source_facts/*.jsonl` are the canonical comparison format; `raw_ast/`
-is an MVP-ingest / forensic fallback that abicheck does not read. The Clang
-plugin / `abicheck-cc` wrapper that *produce* such a pack are an optional
-performance optimization (they remove the second frontend pass) — the portable
-default stays `compile_commands.json` replay (`dump --sources`).
+is an MVP-ingest / forensic fallback that abicheck does not read.
+
+#### Producing a pack — `abicheck-cc` (the supported producer)
+
+Prefix any compile with **`abicheck-cc`** to capture each TU's source ABI *during
+the real build*, with that TU's exact flags and macros:
+
+```bash
+export ABICHECK_INPUTS_DIR=abicheck_inputs
+export ABICHECK_CC_LIBRARY=libfoo.so
+export ABICHECK_CC_HEADERS=include            # public-header roots (ADR-015)
+
+abicheck-cc c++ -std=c++17 -Iinclude -c src/foo.cpp -o foo.o   # …per TU
+abicheck merge libfoo.bin.json ./abicheck_inputs/ -o libfoo.baseline.json
+```
+
+`abicheck-cc` runs the real compile (pass-through, preserving the exit code),
+then best-effort extracts a normalized `SourceAbiTu` and appends it to the pack.
+**Fact extraction never fails the build** (authority rule): a missing front-end
+or a parse error degrades to a warning. Set `ABICHECK_CC_DISABLE=1` for a pure
+pass-through. The wrapper reuses the castxml/clang extractors, so it is the
+**portable, supported producer**.
+
+The **Clang plugin** (`contrib/abicheck-clang-plugin/`) is an optional
+optimization that emits the *same* `source_facts` schema straight from the AST
+Clang already built, removing the second front-end pass — reach for it only when
+that cost is measurable and you control the toolchain image. GCC
+(`-fdump-lang-class`) and MSVC have documented fallbacks. In every case the output
+contract is identical, so `abicheck merge` ingests them the same way. The portable
+default remains `compile_commands.json` replay (`dump --sources`).
 
 ### Choosing how much to collect — `dump --collect-mode`
 
